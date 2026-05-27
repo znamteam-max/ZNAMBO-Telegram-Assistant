@@ -5,7 +5,7 @@ import { deleteMemoryForUser, exportOwnerData, listActiveMemories } from "@/db/q
 import { listItemsBetween, listOpenTasks } from "@/db/queries/items";
 import { markUserOnboarded, updateUserTimezone } from "@/db/queries/users";
 import { assertValidZone } from "@/domain/dateTime";
-import { getEnv, isGoogleCalendarConfigured } from "@/lib/env";
+import { getCalendarProvider, getEnv, isGoogleCalendarConfigured } from "@/lib/env";
 import { createGoogleCalendarAuthUrl } from "@/integrations/googleCalendar";
 
 import type { BotContext } from "./context";
@@ -16,7 +16,7 @@ import { formatItemList } from "./formatters";
 export function registerCommands(bot: Bot<BotContext>) {
   bot.command("start", async (ctx) => {
     const owner = requireOwner(ctx);
-    const calendarUrl = buildCalendarStartUrl(ctx.from?.id);
+    const calendarLink = buildStartCalendarLink(ctx.from?.id);
     await markUserOnboarded(owner.id);
     await ctx.reply(
       [
@@ -30,7 +30,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         `Часовой пояс сейчас: ${owner.timezone}.`,
         "Подтверди или измени его в /settings.",
       ].join("\n"),
-      { reply_markup: startKeyboard(calendarUrl) },
+      { reply_markup: startKeyboard(calendarLink) },
     );
   });
 
@@ -68,6 +68,11 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
 
   bot.command("calendar", async (ctx) => {
+    if (getCalendarProvider() === "yandex") {
+      await ctx.reply("Яндекс Календарь подключён через CalDAV. Новые встречи буду синхронизировать туда.");
+      return;
+    }
+
     if (!isGoogleCalendarConfigured()) {
       await ctx.reply(
         "Google Calendar пока отключён: не заданы GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI.",
@@ -139,4 +144,22 @@ function buildCalendarStartUrl(telegramUserId?: number): string {
   const baseUrl = getEnv().NEXT_PUBLIC_APP_URL;
   if (!telegramUserId) return baseUrl;
   return `${baseUrl}/api/google/oauth/start?telegram_user_id=${telegramUserId}`;
+}
+
+function buildStartCalendarLink(telegramUserId?: number) {
+  const env = getEnv();
+  const provider = getCalendarProvider();
+  if (provider === "google") {
+    return {
+      label: "Подключить Google Calendar",
+      url: buildCalendarStartUrl(telegramUserId),
+    };
+  }
+  if (provider === "yandex" && env.YANDEX_CALENDAR_URL) {
+    return {
+      label: "Открыть Яндекс Календарь",
+      url: env.YANDEX_CALENDAR_URL,
+    };
+  }
+  return undefined;
 }

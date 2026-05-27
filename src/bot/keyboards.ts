@@ -2,9 +2,9 @@ import { InlineKeyboard } from "grammy";
 
 export function pendingActionKeyboard(pendingActionId: string) {
   return new InlineKeyboard()
-    .text("✅ Подтвердить", `pa:ok:${pendingActionId}`)
-    .text("✏️ Изменить", `pa:edit:${pendingActionId}`)
-    .text("❌ Отменить", `pa:no:${pendingActionId}`);
+    .text("Подтвердить", `pa:ok:${pendingActionId}`)
+    .text("Изменить", `pa:edit:${pendingActionId}`)
+    .text("Отменить", `pa:no:${pendingActionId}`);
 }
 
 export function afterEventKeyboard(itemId: string) {
@@ -26,12 +26,17 @@ export function calendarConnectKeyboard(url: string) {
   return new InlineKeyboard().url("Подключить Google Calendar", url);
 }
 
-export function startKeyboard(connectCalendarUrl: string) {
-  return new InlineKeyboard()
+export function startKeyboard(calendarLink?: { label: string; url: string }) {
+  const keyboard = new InlineKeyboard()
     .text("Всё верно", "tz:ok")
     .text("Изменить часовой пояс", "tz:edit")
-    .row()
-    .url("Подключить Google Calendar", connectCalendarUrl);
+    .row();
+
+  if (calendarLink) {
+    keyboard.url(calendarLink.label, calendarLink.url);
+  }
+
+  return keyboard;
 }
 
 export function memoryDeleteKeyboard(memoryId: string) {
