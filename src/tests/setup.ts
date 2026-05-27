@@ -10,5 +10,10 @@ beforeEach(() => {
   process.env.ALLOWED_TELEGRAM_USER_IDS = "42";
   process.env.OPENAI_TEXT_MODEL = "gpt-4o-mini";
   process.env.OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
+  delete process.env.CALENDAR_PROVIDER;
+  delete process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_CLIENT_SECRET;
+  delete process.env.YANDEX_CALDAV_USERNAME;
+  delete process.env.YANDEX_CALDAV_APP_PASSWORD;
   resetEnvCacheForTests();
 });

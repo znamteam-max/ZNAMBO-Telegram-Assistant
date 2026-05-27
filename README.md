@@ -25,7 +25,7 @@ Postgres
 
 ## Что уже входит в MVP
 
-- Next.js App Router API routes for Telegram, reminders, Google OAuth, health and export.
+- Next.js App Router API routes for Telegram, reminders, calendar integrations, health and export.
 - Drizzle/Postgres schema and migration for users, messages, attachments, pending actions, planner items, reminders, memories, Google Calendar connections, sync state and audit log.
 - grammY bot with `/start`, `/today`, `/tomorrow`, `/week`, `/tasks`, `/settings`, `/calendar`, `/export`, `/forget`.
 - Confirmation-before-write flow with inline buttons.
@@ -45,7 +45,7 @@ Postgres
 - OpenAI API key.
 - Vercel project for the Next.js app.
 - Cloudflare account for the minute cron Worker.
-- Google OAuth credentials are optional until `/calendar` is used.
+- Google OAuth credentials are optional unless `CALENDAR_PROVIDER=google` is used.
 
 ## Local Setup
 
