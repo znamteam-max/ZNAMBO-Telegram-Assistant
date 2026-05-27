@@ -11,6 +11,7 @@ import { registerMessageHandlers } from "./messageHandlers";
 import { recordUpdateOnce } from "./updateRecorder";
 
 let bot: Bot<BotContext> | null = null;
+let botInitPromise: Promise<void> | null = null;
 
 export function createBot() {
   const instance = new Bot<BotContext>(requireEnv("TELEGRAM_BOT_TOKEN"));
@@ -34,4 +35,11 @@ export function createBot() {
 export function getBot() {
   if (!bot) bot = createBot();
   return bot;
+}
+
+export async function getInitializedBot() {
+  const instance = getBot();
+  botInitPromise ??= instance.init();
+  await botInitPromise;
+  return instance;
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getBot } from "@/bot/createBot";
+import { getInitializedBot } from "@/bot/createBot";
 import { requireEnv } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { constantTimeEquals } from "@/lib/secrets";
@@ -17,7 +17,7 @@ export async function POST(request: Request) {
 
   const update = await request.json();
   try {
-    await getBot().handleUpdate(update);
+    await (await getInitializedBot()).handleUpdate(update);
     return NextResponse.json({ ok: true });
   } catch (error) {
     logger.error("Telegram webhook failed", {
