@@ -1,0 +1,10 @@
+name = "personal-assistant-reminder-worker"
+main = "src/index.ts"
+compatibility_date = "2026-05-26"
+
+[triggers]
+crons = ["* * * * *"]
+
+# Configure secrets and vars:
+# wrangler secret put CRON_SECRET
+# wrangler secret put APP_REMINDER_RUN_URL

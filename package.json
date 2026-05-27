@@ -1,0 +1,48 @@
+{
+  "name": "personal-telegram-daily-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "telegram:webhook": "tsx scripts/set-telegram-webhook.ts"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
+    "googleapis": "^172.0.0",
+    "grammy": "^1.43.0",
+    "luxon": "^3.7.2",
+    "next": "^16.2.6",
+    "openai": "^6.39.0",
+    "postgres": "^3.4.9",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@eslint/js": "^9.39.4",
+    "@types/luxon": "^3.7.1",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.6",
+    "prettier": "^3.8.3",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  }
+}
