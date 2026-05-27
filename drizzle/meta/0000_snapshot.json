@@ -1,12 +1,12 @@
 {
-  "id": "140b4709-d9db-4447-aa9d-01ab75e70206",
+  "id": "9583e6c6-acb9-4c4d-a998-987b3dd0d970",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.audit_log": {
+    "assistant.audit_log": {
       "name": "audit_log",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",
@@ -82,6 +82,7 @@
           "name": "audit_log_user_id_users_id_fk",
           "tableFrom": "audit_log",
           "tableTo": "users",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "user_id"
           ],
@@ -98,9 +99,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.google_calendar_connections": {
+    "assistant.google_calendar_connections": {
       "name": "google_calendar_connections",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",
@@ -184,6 +185,7 @@
           "name": "google_calendar_connections_user_id_users_id_fk",
           "tableFrom": "google_calendar_connections",
           "tableTo": "users",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "user_id"
           ],
@@ -200,9 +202,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.item_sync_state": {
+    "assistant.item_sync_state": {
       "name": "item_sync_state",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",
@@ -292,6 +294,7 @@
           "name": "item_sync_state_planner_item_id_planner_items_id_fk",
           "tableFrom": "item_sync_state",
           "tableTo": "planner_items",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "planner_item_id"
           ],
@@ -308,9 +311,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.memories": {
+    "assistant.memories": {
       "name": "memories",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",
@@ -400,6 +403,7 @@
           "name": "memories_user_id_users_id_fk",
           "tableFrom": "memories",
           "tableTo": "users",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "user_id"
           ],
@@ -413,6 +417,7 @@
           "name": "memories_source_message_id_telegram_messages_id_fk",
           "tableFrom": "memories",
           "tableTo": "telegram_messages",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "source_message_id"
           ],
@@ -429,9 +434,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.message_attachments": {
+    "assistant.message_attachments": {
       "name": "message_attachments",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",
@@ -497,6 +502,7 @@
           "name": "message_attachments_message_id_telegram_messages_id_fk",
           "tableFrom": "message_attachments",
           "tableTo": "telegram_messages",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "message_id"
           ],
@@ -513,9 +519,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.pending_actions": {
+    "assistant.pending_actions": {
       "name": "pending_actions",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",
@@ -637,6 +643,7 @@
           "name": "pending_actions_user_id_users_id_fk",
           "tableFrom": "pending_actions",
           "tableTo": "users",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "user_id"
           ],
@@ -650,6 +657,7 @@
           "name": "pending_actions_source_message_id_telegram_messages_id_fk",
           "tableFrom": "pending_actions",
           "tableTo": "telegram_messages",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "source_message_id"
           ],
@@ -666,9 +674,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.planner_items": {
+    "assistant.planner_items": {
       "name": "planner_items",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",
@@ -872,6 +880,7 @@
           "name": "planner_items_user_id_users_id_fk",
           "tableFrom": "planner_items",
           "tableTo": "users",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "user_id"
           ],
@@ -885,6 +894,7 @@
           "name": "planner_items_pending_action_id_pending_actions_id_fk",
           "tableFrom": "planner_items",
           "tableTo": "pending_actions",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "pending_action_id"
           ],
@@ -901,9 +911,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.reminders": {
+    "assistant.reminders": {
       "name": "reminders",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",
@@ -1087,6 +1097,7 @@
           "name": "reminders_user_id_users_id_fk",
           "tableFrom": "reminders",
           "tableTo": "users",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "user_id"
           ],
@@ -1100,6 +1111,7 @@
           "name": "reminders_planner_item_id_planner_items_id_fk",
           "tableFrom": "reminders",
           "tableTo": "planner_items",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "planner_item_id"
           ],
@@ -1116,9 +1128,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.telegram_messages": {
+    "assistant.telegram_messages": {
       "name": "telegram_messages",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",
@@ -1240,6 +1252,7 @@
           "name": "telegram_messages_user_id_users_id_fk",
           "tableFrom": "telegram_messages",
           "tableTo": "users",
+          "schemaTo": "assistant",
           "columnsFrom": [
             "user_id"
           ],
@@ -1256,9 +1269,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.users": {
+    "assistant.users": {
       "name": "users",
-      "schema": "",
+      "schema": "assistant",
       "columns": {
         "id": {
           "name": "id",

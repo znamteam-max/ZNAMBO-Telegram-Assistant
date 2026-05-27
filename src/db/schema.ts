@@ -5,12 +5,15 @@ import {
   index,
   integer,
   jsonb,
-  pgTable,
+  pgSchema,
   text,
   timestamp,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+
+const assistantSchema = pgSchema("assistant");
+const assistantTable = assistantSchema.table;
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -20,7 +23,7 @@ const timestamps = {
 const emptyJson = sql`'{}'::jsonb`;
 const emptyArrayJson = sql`'[]'::jsonb`;
 
-export const users = pgTable(
+export const users = assistantTable(
   "users",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -35,7 +38,7 @@ export const users = pgTable(
   (table) => [uniqueIndex("users_telegram_user_id_uq").on(table.telegramUserId)],
 );
 
-export const telegramMessages = pgTable(
+export const telegramMessages = assistantTable(
   "telegram_messages",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -57,7 +60,7 @@ export const telegramMessages = pgTable(
   ],
 );
 
-export const messageAttachments = pgTable("message_attachments", {
+export const messageAttachments = assistantTable("message_attachments", {
   id: uuid("id").primaryKey().defaultRandom(),
   messageId: uuid("message_id").references(() => telegramMessages.id, { onDelete: "cascade" }),
   telegramFileId: text("telegram_file_id").notNull(),
@@ -69,7 +72,7 @@ export const messageAttachments = pgTable("message_attachments", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const pendingActions = pgTable(
+export const pendingActions = assistantTable(
   "pending_actions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -94,7 +97,7 @@ export const pendingActions = pgTable(
   ],
 );
 
-export const plannerItems = pgTable(
+export const plannerItems = assistantTable(
   "planner_items",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -127,7 +130,7 @@ export const plannerItems = pgTable(
   ],
 );
 
-export const itemSyncState = pgTable(
+export const itemSyncState = assistantTable(
   "item_sync_state",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -146,7 +149,7 @@ export const itemSyncState = pgTable(
   ],
 );
 
-export const reminders = pgTable(
+export const reminders = assistantTable(
   "reminders",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -180,7 +183,7 @@ export const reminders = pgTable(
   ],
 );
 
-export const memories = pgTable(
+export const memories = assistantTable(
   "memories",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -199,7 +202,7 @@ export const memories = pgTable(
   (table) => [index("memories_user_status_idx").on(table.userId, table.status)],
 );
 
-export const googleCalendarConnections = pgTable(
+export const googleCalendarConnections = assistantTable(
   "google_calendar_connections",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -216,7 +219,7 @@ export const googleCalendarConnections = pgTable(
   (table) => [uniqueIndex("google_calendar_connections_user_uq").on(table.userId)],
 );
 
-export const auditLog = pgTable(
+export const auditLog = assistantTable(
   "audit_log",
   {
     id: uuid("id").primaryKey().defaultRandom(),
