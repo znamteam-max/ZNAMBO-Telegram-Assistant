@@ -14,6 +14,7 @@ export function getDb() {
     queryClient = postgres(databaseUrl, {
       max: getEnv().NODE_ENV === "production" ? 5 : 1,
       prepare: false,
+      ssl: databaseUrl.includes("sslmode=require") ? "require" : undefined,
     });
     db = drizzle(queryClient, { schema });
   }

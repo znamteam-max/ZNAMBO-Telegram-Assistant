@@ -195,7 +195,9 @@ function buildIcs(item: PlannerItem, href: string): string {
 }
 
 function firstProp(response: Record<string, unknown> | undefined) {
-  const propstat = toArray(response?.propstat as Record<string, unknown> | Record<string, unknown>[] | undefined);
+  const propstat = toArray(
+    response?.propstat as Record<string, unknown> | Record<string, unknown>[] | undefined,
+  );
   return propstat.find((entry) => entry?.prop)?.prop as
     | Record<string, Record<string, unknown> | string | undefined>
     | undefined;
