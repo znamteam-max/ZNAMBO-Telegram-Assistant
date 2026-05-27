@@ -12,7 +12,7 @@ Telegram
   -> OpenAI Responses / transcription
   -> pending_actions confirmation
   -> planner_items + reminders + memories + audit_log
-  -> optional Google Calendar sync
+  -> optional Google/Yandex Calendar sync
 
 Cloudflare Cron Worker
   -> /api/reminders/run
@@ -34,6 +34,7 @@ Postgres
 - Protected reminder dispatcher with atomic `FOR UPDATE SKIP LOCKED` claiming.
 - Cloudflare Worker cron project.
 - Google Calendar OAuth, encrypted refresh token storage and event sync.
+- Yandex Calendar sync via CalDAV as an alternative calendar provider.
 - Vitest coverage for allowlist, idempotency middleware, date conversion, reminder policy, pending action double-click safety, oversized media, agenda ordering and calendar failure preservation.
 
 ## Prerequisites
@@ -79,6 +80,12 @@ GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=
 GOOGLE_TOKEN_ENCRYPTION_KEY=
 GOOGLE_CALENDAR_ID=primary
+CALENDAR_PROVIDER=none
+YANDEX_CALDAV_URL=https://caldav.yandex.ru
+YANDEX_CALDAV_USERNAME=
+YANDEX_CALDAV_APP_PASSWORD=
+YANDEX_CALDAV_CALENDAR_URL=
+YANDEX_CALENDAR_URL=
 ```
 
 Models are configurable:
@@ -141,6 +148,21 @@ https://<your-app>/api/google/oauth/callback
 Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `APP_ENCRYPTION_KEY` and preferably `GOOGLE_TOKEN_ENCRYPTION_KEY`.
 
 Then send `/calendar` in Telegram and open the generated authorization link. If Calendar sync fails later, the local item and reminders remain active and sync error is recorded.
+
+## Yandex Calendar
+
+Set:
+
+```env
+CALENDAR_PROVIDER=yandex
+YANDEX_CALDAV_URL=https://caldav.yandex.ru
+YANDEX_CALDAV_USERNAME=<yandex-email>
+YANDEX_CALDAV_APP_PASSWORD=<app-password>
+```
+
+`YANDEX_CALDAV_CALENDAR_URL` is optional. If omitted, the app discovers the first CalDAV calendar collection through `current-user-principal` and `calendar-home-set`.
+
+`YANDEX_CALENDAR_URL` can store the human web URL for reference; it is not used for CalDAV unless it starts with `https://caldav.`.
 
 ## Deploy on Vercel
 
@@ -246,5 +268,6 @@ npm run telegram:webhook
 - [OpenAI speech-to-text](https://platform.openai.com/docs/guides/speech-to-text)
 - [Telegram Bot API](https://core.telegram.org/bots/api)
 - [Google Calendar events](https://developers.google.com/workspace/calendar/api/guides/create-events)
+- [Yandex Calendar CalDAV sync](https://yandex.com/support/yandex-360/customers/calendar/web/en/sync/sync-desktop)
 - [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
 - [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs)

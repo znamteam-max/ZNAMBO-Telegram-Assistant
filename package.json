@@ -23,6 +23,7 @@
     "@opentelemetry/api": "^1.9.1",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "^5.8.0",
     "googleapis": "^172.0.0",
     "grammy": "^1.43.0",
     "luxon": "^3.7.2",

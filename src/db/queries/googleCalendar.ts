@@ -66,13 +66,14 @@ export async function markGoogleCalendarSync(params: {
   externalId?: string | null;
   status: "synced" | "error" | "not_synced";
   lastError?: string | null;
+  provider?: string;
 }) {
   const now = new Date();
   await getDb()
     .insert(itemSyncState)
     .values({
       plannerItemId: params.item.id,
-      provider: "google_calendar",
+      provider: params.provider ?? "google_calendar",
       externalId: params.externalId,
       status: params.status,
       lastError: params.lastError?.slice(0, 1000),

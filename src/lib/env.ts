@@ -20,6 +20,12 @@ const envSchema = z.object({
   GOOGLE_REDIRECT_URI: z.string().url().default("http://localhost:3000/api/google/oauth/callback"),
   GOOGLE_CALENDAR_ID: z.string().default("primary"),
   GOOGLE_TOKEN_ENCRYPTION_KEY: z.string().optional(),
+  CALENDAR_PROVIDER: z.enum(["none", "google", "yandex"]).default("none"),
+  YANDEX_CALDAV_URL: z.string().url().default("https://caldav.yandex.ru"),
+  YANDEX_CALDAV_USERNAME: z.string().optional(),
+  YANDEX_CALDAV_APP_PASSWORD: z.string().optional(),
+  YANDEX_CALDAV_CALENDAR_URL: z.string().url().optional(),
+  YANDEX_CALENDAR_URL: z.string().url().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -60,4 +66,16 @@ export function getAllowedTelegramUserIds(): Set<string> {
 export function isGoogleCalendarConfigured(): boolean {
   const env = getEnv();
   return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI);
+}
+
+export function isYandexCalendarConfigured(): boolean {
+  const env = getEnv();
+  return Boolean(env.YANDEX_CALDAV_USERNAME && env.YANDEX_CALDAV_APP_PASSWORD);
+}
+
+export function getCalendarProvider(): "none" | "google" | "yandex" {
+  const env = getEnv();
+  if (env.CALENDAR_PROVIDER === "google" && isGoogleCalendarConfigured()) return "google";
+  if (env.CALENDAR_PROVIDER === "yandex" && isYandexCalendarConfigured()) return "yandex";
+  return "none";
 }

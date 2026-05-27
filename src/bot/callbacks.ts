@@ -3,7 +3,7 @@ import type { Bot } from "grammy";
 import { confirmPendingActionInDb, cancelPendingAction } from "@/db/queries/pendingActions";
 import { getPlannerItemById, markPlannerItemCompleted } from "@/db/queries/items";
 import { deleteMemoryForUser } from "@/db/queries/memories";
-import { syncPlannerItemToGoogle } from "@/integrations/googleCalendar";
+import { syncPlannerItemToCalendar } from "@/integrations/calendar";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -35,12 +35,12 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     });
 
     if (result.status === "created") {
-      const sync = await syncPlannerItemToGoogle(result.item);
+      const sync = await syncPlannerItemToCalendar(result.item);
       const syncLine =
         sync.status === "synced"
-          ? "\nGoogle Calendar: синхронизировано."
+          ? "\nКалендарь: синхронизировано."
           : sync.status === "error"
-            ? "\nВ боте сохранил, но Google Calendar не обновился. Можно повторить позже."
+            ? "\nВ боте сохранил, но календарь не обновился. Можно повторить позже."
             : "";
 
       await ctx.reply(`${formatCreatedItem(result.item, result.reminders.length)}${syncLine}`, {
