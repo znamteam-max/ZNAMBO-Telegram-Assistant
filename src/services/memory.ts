@@ -18,7 +18,7 @@ export async function listRelevantMemoryFacts(params: {
       .filter((term) => term.length >= 4)
       .slice(0, 6);
     if (terms.length) {
-      return getDb()
+      const matches = await getDb()
         .select()
         .from(memoryFacts)
         .where(
@@ -30,6 +30,7 @@ export async function listRelevantMemoryFacts(params: {
         )
         .orderBy(desc(memoryFacts.updatedAt))
         .limit(limit);
+      if (matches.length) return matches;
     }
   }
 

@@ -108,7 +108,6 @@ function nextRetryAt(reminder: ClaimedReminder, now: Date): Date | null {
 async function scheduleRepeatUntilAck(reminder: ClaimedReminder, now: Date) {
   if (!reminder.repeatUntilAck || reminder.ackedAt) return;
   const payload = (reminder.payload ?? {}) as Record<string, unknown>;
-  if (payload.untilAckRepeat === true) return;
 
   const user = await getUserById(reminder.userId);
   if (!user) return;

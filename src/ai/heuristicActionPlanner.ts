@@ -7,6 +7,7 @@ import type { ActionPlan, ActionPlanItem, ActionPlanReminder } from "./schemas";
 
 const dayCodes = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] as const;
 type DayCode = (typeof dayCodes)[number];
+type MemoryCandidate = ActionPlan["memoryCandidates"][number];
 
 const weekdayPatterns: Array<[DayCode, RegExp]> = [
   ["MO", /понедельник|понедельникам|понедельник(?:,|$)|пн\b/i],
@@ -33,6 +34,16 @@ export function heuristicBuildActionPlan(params: {
       intent: "answer",
       reply: "Покажу расписание через команды /today, /tomorrow, /week и /tasks.",
       confidence: 0.9,
+    });
+  }
+
+  const memoryOnly = extractMemoryOnly(source, lower);
+  if (memoryOnly) {
+    return basePlan({
+      intent: "answer",
+      reply: "Запомнил. Буду учитывать это в следующих планах.",
+      confidence: 0.95,
+      memoryCandidates: [memoryOnly],
     });
   }
 
@@ -81,7 +92,6 @@ export function heuristicBuildActionPlan(params: {
           confidence: 0.94,
           risk: "low",
           reminders: [
-            reminder("preparation", localAt(nowLocal, 18, 15)),
             reminder("preparation", localAt(nowLocal, 18, 30)),
           ],
         }),
@@ -160,7 +170,10 @@ export function heuristicBuildActionPlan(params: {
 
   if (isNightSportsCase(lower)) {
     const time = extractLastTime(lower) ?? { hour: 3, minute: 30 };
-    const start = nextLocalTime(nowLocal, time.hour, time.minute, true);
+    const weekday = extractFirstWeekday(lower);
+    const start = weekday
+      ? nextWeekdayLocal(nowLocal, weekday, time.hour, time.minute)
+      : nextLocalTime(nowLocal, time.hour, time.minute, true);
     return basePlan({
       summary: "Записал ночной спортивный эфир как рабочее событие, не как поездку.",
       confidence: 0.9,
@@ -356,6 +369,47 @@ function extractWeekdays(lower: string): DayCode[] {
   return weekdayPatterns
     .filter(([, pattern]) => pattern.test(lower))
     .map(([code]) => code);
+}
+
+function extractFirstWeekday(lower: string): DayCode | null {
+  return extractWeekdays(lower)[0] ?? null;
+}
+
+function nextWeekdayLocal(nowLocal: DateTime, day: DayCode, hour: number, minute: number): string {
+  const targetWeekday = dayCodes.indexOf(day) + 1;
+  let delta = (targetWeekday - nowLocal.weekday + 7) % 7;
+  let candidate = nowLocal
+    .startOf("day")
+    .plus({ days: delta })
+    .set({ hour, minute, second: 0, millisecond: 0 });
+  if (candidate <= nowLocal) {
+    delta = delta === 0 ? 7 : delta + 7;
+    candidate = nowLocal
+      .startOf("day")
+      .plus({ days: delta })
+      .set({ hour, minute, second: 0, millisecond: 0 });
+  }
+  return candidate.toFormat("yyyy-MM-dd'T'HH:mm:ss");
+}
+
+function extractMemoryOnly(source: string, lower: string): MemoryCandidate | null {
+  if (!/^(запомни|запомнить|важно[:\s])/i.test(source.trim())) return null;
+  const content = source
+    .replace(/^(запомни|запомнить|важно)[:\s-]*/i, "")
+    .trim();
+  if (!content) return null;
+
+  const isNightSportsRule =
+    /(nba|нба|оклахом|сан[-\s]?антонио|матч|эфир)/i.test(lower) &&
+    /(3[:.]00|3[:.]30|03[:.]00|03[:.]30)/i.test(lower);
+
+  return {
+    category: isNightSportsRule ? "meeting_pattern" : "preference",
+    content,
+    searchTags: isNightSportsRule
+      ? ["NBA", "ночной эфир", "03:00", "03:30", "Оклахома", "Сан-Антонио"]
+      : [],
+  };
 }
 
 export function nextOccurrence(nowLocal: DateTime, daysOfWeek: readonly DayCode[], timeLocal: string): string {

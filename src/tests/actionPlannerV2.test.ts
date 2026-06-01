@@ -16,6 +16,31 @@ function plan(text: string, nowIso: string) {
 }
 
 describe("Smart planner V2 acceptance cases", () => {
+  it("extracts the exact Zoom multi-action scenario without collapsing it to one event", () => {
+    const result = plan(
+      "Сегодня в 19:00 запись Больше Zoom. В 18:30 напомни начать всё настраивать. После записи, если не будет созвона по коротким видео, я хочу сделать часовой велосипед во второй зоне очень легко. Созвон по коротким видео возможен около 19:30, пока не точно.",
+      "2026-05-27T12:51:00.000Z",
+    );
+
+    expect(result.intent).toBe("plan");
+    expect(result.actions.map((action) => action.actionType)).toEqual([
+      "preparation",
+      "event",
+      "tentative_event",
+      "training",
+    ]);
+    expect(result.actions[0].dueAtLocal).toBe("2026-05-27T18:30:00");
+    expect(result.actions[0].reminders.map((reminder) => reminder.scheduledAtLocal)).toContain(
+      "2026-05-27T18:30:00",
+    );
+    expect(result.actions[1].title).toBe("Запись Больше Zoom");
+    expect(result.actions[1].startAtLocal).toBe("2026-05-27T19:00:00");
+    expect(result.actions[2].kind).toBe("tentative_event");
+    expect(result.actions[2].startAtLocal).toBe("2026-05-27T19:30:00");
+    expect(result.actions[3].kind).toBe("training");
+    expect(result.actions[3].durationMinutes).toBe(60);
+  });
+
   it("extracts today's basketball call with sane future reminders", () => {
     const result = plan(
       "Сегодня созвон в 17.00 по русскому баскетболу",
@@ -65,6 +90,26 @@ describe("Smart planner V2 acceptance cases", () => {
     expect(recurring.recurrence?.repeatUntilAck).toBe(true);
     expect(recurring.reminders[0].type).toBe("recurring");
     expect(recurring.reminders[0].repeatUntilAck).toBe(true);
+    expect(recurring.reminders[0].payload.buttons).toEqual([
+      "done_today",
+      "snooze",
+      "skip_today",
+      "stop_recurring",
+    ]);
+  });
+
+  it("keeps a night-on-Friday sports broadcast at 03:30 on Friday", () => {
+    const result = plan(
+      "Я комментирую матч Сан-Антонио — Оклахома, игра 6. Он начнётся в 3:30 по Москве в ночь на пятницу.",
+      "2026-06-01T10:00:00.000Z",
+    );
+
+    const [event] = result.actions;
+    expect(event.kind).toBe("event");
+    expect(event.title).toContain("Комментирование матча Сан-Антонио");
+    expect(event.startAtLocal).toBe("2026-06-05T03:30:00");
+    expect(event.startAtLocal).not.toContain("15:30");
+    expect(event.reminders.length).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps NBA night event at 03:30, never 15:30", () => {
@@ -92,5 +137,19 @@ describe("Smart planner V2 acceptance cases", () => {
     expect(recurring.recurrence?.frequency).toBe("daily");
     expect(recurring.recurrence?.repeatUntilAck).toBe(true);
     expect(recurring.reminders[0].repeatUntilAck).toBe(true);
+  });
+
+  it("stores correction rules as memory-only planner output", () => {
+    const result = plan(
+      "Запомни: если я говорю про NBA в 3:00 или 3:30 по Москве, почти всегда это ночной прямой эфир, а не дневное событие.",
+      "2026-05-27T13:00:00.000Z",
+    );
+
+    expect(result.intent).toBe("answer");
+    expect(result.actions).toHaveLength(0);
+    expect(result.memoryCandidates).toHaveLength(1);
+    expect(result.memoryCandidates[0].category).toBe("meeting_pattern");
+    expect(result.memoryCandidates[0].content).toContain("NBA");
+    expect(result.memoryCandidates[0].searchTags).toContain("03:30");
   });
 });

@@ -17,6 +17,7 @@ import {
 } from "@/services/actionPlanCommit";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 import { buildActiveContext } from "@/services/contextRetrieval";
+import { storePlanMemoryFacts } from "@/services/memory";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -88,6 +89,16 @@ async function processActionPlan(ctx: BotContext, text: string, timezone: string
     query: text,
   });
   const plan = await buildActionPlan({ text, timezone, activeContext });
+
+  if (plan.memoryCandidates.length && plan.actions.length === 0) {
+    await storePlanMemoryFacts({
+      userId: owner.id,
+      sourceMessageId: ctx.dbMessageId,
+      plan,
+    });
+    await replyAndRecord(ctx, plan.reply || "Запомнил. Буду учитывать это дальше.");
+    return;
+  }
 
   if (plan.intent === "answer" || plan.intent === "clarify") {
     await replyAndRecord(ctx, formatActionPlanCard(plan, timezone));

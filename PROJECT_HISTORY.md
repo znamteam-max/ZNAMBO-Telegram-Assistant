@@ -806,3 +806,65 @@ tennis-daily-results       -> */15 * * * *
 ```
 
 To finish automatic minute reminders, one existing Cloudflare cron trigger must be removed or the Cloudflare plan/limit must be increased. The new worker itself is ready and verified manually.
+
+### 13.17. cron-job.org production scheduler
+
+Cloudflare cron is no longer a production blocker.
+
+Current production scheduler:
+
+```text
+provider -> cron-job.org
+method -> POST
+url -> https://znambo-telegram-assistant.vercel.app/api/reminders/run
+test run -> 200 OK
+```
+
+Telegram delivery was confirmed through the real bot command:
+
+```text
+/remindertest 2 -> created a real reminder
+real Telegram reminder -> delivered after about 2 minutes
+```
+
+Conclusion:
+
+- automatic reminder delivery is confirmed in production;
+- `/api/reminders/run` delivers real Telegram reminders;
+- cron-job.org is the active production scheduler;
+- Cloudflare Worker remains configured as a backup option, but it no longer blocks production rollout.
+
+### 13.18. Smart planner production behavior fixes
+
+The V2 Telegram flow was reviewed against the required production behavior scenarios.
+
+Code fixes applied:
+
+```text
+history/retrieval -> memory retrieval now falls back to latest active facts when exact keyword search finds nothing
+memory learning -> memory-only messages such as "Запомни: ..." are stored as memory facts without creating pending actions
+action planner -> NBA/night sports rules can be saved as correction memory candidates
+action planner -> "ночь на пятницу" resolves to Friday 03:30 local time, not 15:30
+multi-action -> Zoom/preparation/tentative call/training scenario keeps separate actions instead of collapsing into one meeting
+recurring reminders -> repeat-until-ack reminders continue chaining until acknowledgement or local cutoff
+overview commands -> list queries now use typed Drizzle predicates for reliable date filtering
+reminder keyboard -> repeat-until-ack reminders expose completion, snooze, skip, and stop actions
+```
+
+Validation completed locally and rerun before production deploy:
+
+```text
+npm test -> passed, 21 tests
+npm run lint -> passed
+npm run build -> passed
+```
+
+New tests cover:
+
+```text
+multi-action extraction from one real message
+recurring reminder buttons and repeat-until-ack behavior
+night sports event at 03:30 Moscow in "ночь на пятницу"
+memory-only correction rule creation
+repeat-until-ack runner chaining
+```

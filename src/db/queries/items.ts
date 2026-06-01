@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, or, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { plannerItems, type PlannerItem } from "../schema";
@@ -15,11 +15,19 @@ export async function listItemsBetween(params: {
     .where(
       and(
         eq(plannerItems.userId, params.userId),
-        sql`${plannerItems.status} <> 'cancelled'`,
-        sql`(
-          (${plannerItems.startAt} is not null and ${plannerItems.startAt} >= ${params.from} and ${plannerItems.startAt} <= ${params.to})
-          or (${plannerItems.dueAt} is not null and ${plannerItems.dueAt} >= ${params.from} and ${plannerItems.dueAt} <= ${params.to})
-        )`,
+        ne(plannerItems.status, "cancelled"),
+        or(
+          and(
+            isNotNull(plannerItems.startAt),
+            gte(plannerItems.startAt, params.from),
+            lte(plannerItems.startAt, params.to),
+          ),
+          and(
+            isNotNull(plannerItems.dueAt),
+            gte(plannerItems.dueAt, params.from),
+            lte(plannerItems.dueAt, params.to),
+          ),
+        ),
       ),
     )
     .orderBy(
@@ -36,8 +44,8 @@ export async function listOpenTasks(userId: string, limit = 30): Promise<Planner
     .where(
       and(
         eq(plannerItems.userId, userId),
-        sql`${plannerItems.kind} in ('task', 'preparation_task', 'recurring_task')`,
-        sql`${plannerItems.status} = 'active'`,
+        inArray(plannerItems.kind, ["task", "preparation_task", "recurring_task"]),
+        eq(plannerItems.status, "active"),
       ),
     )
     .orderBy(sql`${plannerItems.dueAt} asc nulls last`, desc(plannerItems.createdAt))
