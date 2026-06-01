@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { recordTelegramUpdate } from "@/db/queries/messages";
+import { recordIncomingConversationMessage } from "@/services/conversation";
 import { recordUpdateOnce } from "@/bot/updateRecorder";
 import type { BotContext } from "@/bot/context";
 
 vi.mock("@/db/queries/messages", () => ({
   recordTelegramUpdate: vi.fn(),
+}));
+
+vi.mock("@/services/conversation", () => ({
+  recordIncomingConversationMessage: vi.fn(),
 }));
 
 describe("webhook update idempotency", () => {
@@ -39,5 +44,6 @@ describe("webhook update idempotency", () => {
 
     expect(next).toHaveBeenCalledOnce();
     expect(ctx.dbMessageId).toBe("message-1");
+    expect(recordIncomingConversationMessage).toHaveBeenCalledOnce();
   });
 });

@@ -1,7 +1,7 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, gte, lt, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
-import { reminders, type Reminder } from "../schema";
+import { reminderDeliveries, reminders, type Reminder } from "../schema";
 
 export type ClaimedReminder = Reminder;
 
@@ -38,6 +38,10 @@ export async function claimDueReminders(params: {
       r.telegram_message_id as "telegramMessageId",
       r.attempt_count as "attemptCount",
       r.last_error as "lastError",
+      r.repeat_until_ack as "repeatUntilAck",
+      r.acked_at as "ackedAt",
+      r.parent_reminder_id as "parentReminderId",
+      r.recurrence_key as "recurrenceKey",
       r.payload,
       r.created_at as "createdAt",
       r.updated_at as "updatedAt"
@@ -58,6 +62,24 @@ export async function markReminderSent(params: {
       updatedAt: new Date(),
     })
     .where(eq(reminders.id, params.reminderId));
+}
+
+export async function recordReminderDelivery(params: {
+  reminder: ClaimedReminder;
+  status: "sent" | "failed";
+  telegramMessageId?: number | bigint | null;
+  error?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  await getDb().insert(reminderDeliveries).values({
+    reminderId: params.reminder.id,
+    userId: params.reminder.userId,
+    status: params.status,
+    telegramMessageId: params.telegramMessageId ? BigInt(params.telegramMessageId) : null,
+    error: params.error,
+    deliveredAt: params.status === "sent" ? new Date() : null,
+    metadata: params.metadata ?? {},
+  });
 }
 
 export async function markReminderFailed(params: {
@@ -91,6 +113,9 @@ export async function createReminderIfMissing(params: {
   type: string;
   idempotencyKey: string;
   scheduledAt: Date;
+  repeatUntilAck?: boolean;
+  parentReminderId?: string | null;
+  recurrenceKey?: string | null;
   payload?: Record<string, unknown>;
 }) {
   const [row] = await getDb()
@@ -101,9 +126,74 @@ export async function createReminderIfMissing(params: {
       type: params.type,
       idempotencyKey: params.idempotencyKey,
       scheduledAt: params.scheduledAt,
+      repeatUntilAck: params.repeatUntilAck ?? false,
+      parentReminderId: params.parentReminderId,
+      recurrenceKey: params.recurrenceKey,
       payload: params.payload ?? {},
     })
     .onConflictDoNothing({ target: reminders.idempotencyKey })
     .returning();
   return row ?? null;
+}
+
+export async function ackReminderForToday(params: {
+  userId: string;
+  reminderId: string;
+  dayStart: Date;
+  dayEnd: Date;
+}) {
+  const now = new Date();
+  const [acked] = await getDb()
+    .update(reminders)
+    .set({ status: "acked", ackedAt: now, updatedAt: now })
+    .where(and(eq(reminders.id, params.reminderId), eq(reminders.userId, params.userId)))
+    .returning();
+
+  if (acked?.plannerItemId) {
+    await getDb()
+      .update(reminders)
+      .set({ status: "cancelled", updatedAt: now })
+      .where(
+        and(
+          eq(reminders.userId, params.userId),
+          eq(reminders.plannerItemId, acked.plannerItemId),
+          eq(reminders.status, "pending"),
+          gte(reminders.scheduledAt, params.dayStart),
+          lt(reminders.scheduledAt, params.dayEnd),
+        ),
+      );
+  }
+  return acked ?? null;
+}
+
+export async function snoozeReminder(params: {
+  userId: string;
+  reminderId: string;
+  minutes: number;
+}) {
+  const [source] = await getDb()
+    .select()
+    .from(reminders)
+    .where(and(eq(reminders.id, params.reminderId), eq(reminders.userId, params.userId)))
+    .limit(1);
+  if (!source) return null;
+
+  return createReminderIfMissing({
+    userId: params.userId,
+    plannerItemId: source.plannerItemId,
+    type: source.type,
+    idempotencyKey: `${source.id}:snooze:${params.minutes}:${Date.now()}`,
+    scheduledAt: new Date(Date.now() + params.minutes * 60 * 1000),
+    repeatUntilAck: source.repeatUntilAck,
+    parentReminderId: source.parentReminderId ?? source.id,
+    recurrenceKey: source.recurrenceKey,
+    payload: { ...source.payload, snoozedFrom: source.id },
+  });
+}
+
+export async function stopRecurringReminders(userId: string, plannerItemId: string) {
+  await getDb()
+    .update(reminders)
+    .set({ status: "cancelled", updatedAt: new Date() })
+    .where(and(eq(reminders.userId, userId), eq(reminders.plannerItemId, plannerItemId)));
 }

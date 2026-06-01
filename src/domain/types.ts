@@ -1,4 +1,12 @@
-export const itemKinds = ["event", "task", "training", "note", "preparation_task"] as const;
+export const itemKinds = [
+  "event",
+  "task",
+  "training",
+  "note",
+  "preparation_task",
+  "tentative_event",
+  "recurring_task",
+] as const;
 export type ItemKind = (typeof itemKinds)[number];
 
 export const reminderTypes = [
@@ -12,6 +20,15 @@ export const reminderTypes = [
   "morning_digest",
   "evening_checkin",
   "custom",
+  "15m",
+  "30m",
+  "event_before",
+  "event_start",
+  "preparation",
+  "after_event",
+  "recurring",
+  "until_ack",
+  "escalation",
 ] as const;
 export type ReminderType = (typeof reminderTypes)[number];
 
@@ -19,6 +36,8 @@ export type MaterializedReminder = {
   type: ReminderType;
   scheduledAt: Date;
   payload: Record<string, unknown>;
+  repeatUntilAck?: boolean;
+  recurrenceKey?: string | null;
 };
 
 export type MaterializedItem = {

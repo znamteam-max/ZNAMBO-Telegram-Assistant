@@ -7,6 +7,8 @@ const DEFAULT_PRESETS: Record<string, ReminderType[]> = {
   training: ["day_morning", "1h", "training_followup"],
   task: ["custom", "task_overdue"],
   preparation_task: ["custom", "task_overdue"],
+  tentative_event: ["15m", "followup"],
+  recurring_task: ["recurring"],
   note: [],
 };
 
@@ -46,6 +48,19 @@ function buildReminder(type: ReminderType, item: MaterializedItem): Materialized
     case "1h":
       scheduled = baseLocal?.minus({ hours: 1 }) ?? null;
       break;
+    case "30m":
+      scheduled = baseLocal?.minus({ minutes: 30 }) ?? null;
+      break;
+    case "15m":
+      scheduled = baseLocal?.minus({ minutes: 15 }) ?? null;
+      break;
+    case "event_before":
+      scheduled = baseLocal?.minus({ hours: 1 }) ?? null;
+      break;
+    case "event_start":
+    case "preparation":
+    case "recurring":
+    case "until_ack":
     case "custom":
       scheduled = baseLocal ?? null;
       break;
@@ -58,6 +73,7 @@ function buildReminder(type: ReminderType, item: MaterializedItem): Materialized
         : (baseLocal?.plus({ hours: 1, minutes: 30 }) ?? null);
       break;
     case "training_followup":
+    case "after_event":
       scheduled = item.endAt
         ? DateTime.fromJSDate(item.endAt, { zone: "utc" }).setZone(timezone).plus({ minutes: 15 })
         : (baseLocal?.plus({ hours: 2 }) ?? null);
@@ -75,6 +91,7 @@ function buildReminder(type: ReminderType, item: MaterializedItem): Materialized
   return {
     type,
     scheduledAt: scheduled.toUTC().toJSDate(),
+    repeatUntilAck: type === "recurring" || type === "until_ack",
     payload: { title: item.title, kind: item.kind },
   };
 }

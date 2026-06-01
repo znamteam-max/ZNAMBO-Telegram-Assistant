@@ -36,12 +36,39 @@ export async function listOpenTasks(userId: string, limit = 30): Promise<Planner
     .where(
       and(
         eq(plannerItems.userId, userId),
-        sql`${plannerItems.kind} in ('task', 'preparation_task')`,
+        sql`${plannerItems.kind} in ('task', 'preparation_task', 'recurring_task')`,
         sql`${plannerItems.status} = 'active'`,
       ),
     )
     .orderBy(sql`${plannerItems.dueAt} asc nulls last`, desc(plannerItems.createdAt))
     .limit(limit);
+}
+
+export async function createManualPlannerItem(params: {
+  userId: string;
+  kind: string;
+  title: string;
+  timezone: string;
+  startAt?: Date | null;
+  endAt?: Date | null;
+  dueAt?: Date | null;
+  metadata?: Record<string, unknown>;
+}) {
+  const [item] = await getDb()
+    .insert(plannerItems)
+    .values({
+      userId: params.userId,
+      kind: params.kind,
+      title: params.title,
+      timezone: params.timezone,
+      startAt: params.startAt,
+      endAt: params.endAt,
+      dueAt: params.dueAt,
+      metadata: params.metadata ?? {},
+    })
+    .returning();
+  if (!item) throw new Error("Manual planner item was not created");
+  return item;
 }
 
 export async function getPlannerItemById(

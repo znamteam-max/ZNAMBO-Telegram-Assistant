@@ -13,7 +13,16 @@ const envSchema = z.object({
   ALLOWED_TELEGRAM_USER_IDS: z.string().default(""),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_TEXT_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_PLANNER_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_MEMORY_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   OPENAI_TRANSCRIPTION_MODEL: z.string().default("gpt-4o-mini-transcribe"),
+  ENABLE_MEMORY_EMBEDDINGS: z.coerce.boolean().default(false),
+  ENABLE_AGENT_PLANNER_V2: z.coerce.boolean().default(true),
+  SMART_COMMIT_MODE: z
+    .enum(["confirm_all", "auto_low_risk", "auto_all_with_undo"])
+    .default("auto_low_risk"),
+  DEFAULT_MORNING_REMINDER_TIME: z.string().default("09:30"),
   CRON_SECRET: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),

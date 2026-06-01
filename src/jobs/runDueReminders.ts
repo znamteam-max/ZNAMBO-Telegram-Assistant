@@ -6,10 +6,12 @@ import {
   createReminderIfMissing,
   markReminderFailed,
   markReminderSent,
+  recordReminderDelivery,
   type ClaimedReminder,
 } from "@/db/queries/reminders";
 import { getUserById } from "@/db/queries/users";
 import { formatItemList, formatReminderMessage } from "@/bot/formatters";
+import { reminderActionKeyboard } from "@/bot/keyboards";
 import { logger } from "@/lib/logger";
 
 import { getBot } from "@/bot/createBot";
@@ -40,6 +42,13 @@ export async function runDueReminders(params?: {
         reminderId: reminder.id,
         telegramMessageId: sentMessage.message_id,
       });
+      await recordReminderDelivery({
+        reminder,
+        status: "sent",
+        telegramMessageId: sentMessage.message_id,
+      });
+      await scheduleRepeatUntilAck(reminder, now);
+      await scheduleNextRecurringOccurrence(reminder, now);
       results.sent += 1;
     } catch (error) {
       results.failed += 1;
@@ -49,6 +58,7 @@ export async function runDueReminders(params?: {
         error: message,
         retryAt: nextRetryAt(reminder, now),
       });
+      await recordReminderDelivery({ reminder, status: "failed", error: message });
       logger.warn("Reminder send failed", { reminderId: reminder.id, error: message });
     }
   }
@@ -81,13 +91,96 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
   }
 
   const item = reminder.plannerItemId ? await getPlannerItemByAnyId(reminder.plannerItemId) : null;
-  return sender.sendMessage(user.telegramUserId.toString(), formatReminderMessage(reminder, item));
+  return sender.sendMessage(user.telegramUserId.toString(), formatReminderMessage(reminder, item), {
+    reply_markup:
+      reminder.repeatUntilAck || item?.kind === "recurring_task"
+        ? reminderActionKeyboard(reminder.id, reminder.plannerItemId)
+        : undefined,
+  });
 }
 
 function nextRetryAt(reminder: ClaimedReminder, now: Date): Date | null {
   if (reminder.attemptCount >= 3) return null;
   const minutes = reminder.attemptCount === 1 ? 5 : reminder.attemptCount === 2 ? 15 : 30;
   return new Date(now.getTime() + minutes * 60 * 1000);
+}
+
+async function scheduleRepeatUntilAck(reminder: ClaimedReminder, now: Date) {
+  if (!reminder.repeatUntilAck || reminder.ackedAt) return;
+  const payload = (reminder.payload ?? {}) as Record<string, unknown>;
+  if (payload.untilAckRepeat === true) return;
+
+  const user = await getUserById(reminder.userId);
+  if (!user) return;
+  const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(user.timezone);
+  const repeatAtLocal = nowLocal.plus({ minutes: 75 });
+  const twoPm = nowLocal.startOf("day").plus({ hours: 14 });
+  const repeatAt = (repeatAtLocal < twoPm ? repeatAtLocal : twoPm).toUTC().toJSDate();
+  if (repeatAt.getTime() <= now.getTime()) return;
+
+  await createReminderIfMissing({
+    userId: reminder.userId,
+    plannerItemId: reminder.plannerItemId,
+    type: "until_ack",
+    idempotencyKey: `${reminder.id}:until_ack:${repeatAt.toISOString()}`,
+    scheduledAt: repeatAt,
+    repeatUntilAck: true,
+    parentReminderId: reminder.parentReminderId ?? reminder.id,
+    recurrenceKey: reminder.recurrenceKey,
+    payload: { ...payload, untilAckRepeat: true },
+  });
+}
+
+async function scheduleNextRecurringOccurrence(reminder: ClaimedReminder, now: Date) {
+  if (reminder.type !== "recurring") return;
+  const payload = (reminder.payload ?? {}) as {
+    recurrence?: { daysOfWeek?: string[]; timeLocal?: string; repeatUntilAck?: boolean };
+  };
+  const recurrence = payload.recurrence;
+  if (!recurrence?.daysOfWeek?.length || !recurrence.timeLocal) return;
+  const user = await getUserById(reminder.userId);
+  if (!user) return;
+
+  const next = findNextRecurringDate({
+    now,
+    timezone: user.timezone,
+    daysOfWeek: recurrence.daysOfWeek,
+    timeLocal: recurrence.timeLocal,
+  });
+  await createReminderIfMissing({
+    userId: reminder.userId,
+    plannerItemId: reminder.plannerItemId,
+    type: "recurring",
+    idempotencyKey: `${reminder.plannerItemId}:recurring:${next.toISOString()}`,
+    scheduledAt: next,
+    repeatUntilAck: recurrence.repeatUntilAck ?? reminder.repeatUntilAck,
+    recurrenceKey: reminder.recurrenceKey,
+    payload: reminder.payload,
+  });
+}
+
+function findNextRecurringDate(params: {
+  now: Date;
+  timezone: string;
+  daysOfWeek: string[];
+  timeLocal: string;
+}): Date {
+  const dayCodes = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+  const [hourRaw, minuteRaw] = params.timeLocal.split(":");
+  const hour = Number(hourRaw || 9);
+  const minute = Number(minuteRaw || 30);
+  const targetWeekdays = new Set(
+    params.daysOfWeek.map((day) => dayCodes.indexOf(day) + 1).filter((day) => day > 0),
+  );
+  const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
+  for (let offset = 1; offset <= 14; offset += 1) {
+    const candidate = nowLocal
+      .startOf("day")
+      .plus({ days: offset })
+      .set({ hour, minute, second: 0, millisecond: 0 });
+    if (targetWeekdays.has(candidate.weekday)) return candidate.toUTC().toJSDate();
+  }
+  return nowLocal.plus({ days: 1 }).toUTC().toJSDate();
 }
 
 async function scheduleTomorrowDigests(now: Date) {

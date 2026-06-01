@@ -22,6 +22,29 @@ export function itemActionKeyboard(itemId: string, kind: string) {
   return keyboard;
 }
 
+export function reminderActionKeyboard(reminderId: string, plannerItemId?: string | null) {
+  const keyboard = new InlineKeyboard()
+    .text("Готово на сегодня", `reminder:ack:${reminderId}`)
+    .row()
+    .text("Напомни через час", `reminder:snooze:${reminderId}:60`)
+    .text("Пропустить сегодня", `reminder:skip:${reminderId}`)
+    .row();
+
+  if (plannerItemId) {
+    keyboard.text("Больше не напоминать", `item:stop_recurring:${plannerItemId}`);
+  }
+
+  return keyboard;
+}
+
+export function actionPlanKeyboard(planId: string) {
+  return new InlineKeyboard()
+    .text("ОК", `plan:confirm:${planId}`)
+    .text("Изменить", `plan:edit:${planId}`)
+    .row()
+    .text("Отменить", `plan:cancel:${planId}`);
+}
+
 export function calendarConnectKeyboard(url: string) {
   return new InlineKeyboard().url("Подключить Google Calendar", url);
 }

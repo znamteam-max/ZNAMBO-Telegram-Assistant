@@ -1,6 +1,6 @@
 # Personal Telegram Daily Assistant
 
-Приватный Telegram-бот-ежедневник для одного владельца. Он принимает текст, голос, audio, video note и короткие video/mp4, извлекает из них встречи, задачи, тренировки, заметки и подготовку, показывает карточку подтверждения и только после кнопки сохраняет запись, напоминания и, если подключено, событие Google Calendar.
+Приватный Telegram-бот-ежедневник для одного владельца. V2 работает как smart AI planner: принимает текст, голос, audio, video note и короткие video/mp4, сохраняет историю и расшифровки, достает контекст из памяти, извлекает несколько действий из одного сообщения и создает встречи, задачи, подготовку, тренировки, tentative-события, recurring reminders и repeat-until-ack напоминания.
 
 ## Архитектура
 
@@ -9,10 +9,13 @@ Telegram
   -> /api/telegram/webhook
   -> grammY middleware: allowlist -> owner -> update idempotency
   -> message/callback handlers
+  -> conversation history + transcript storage
+  -> active context retrieval: memory facts + summaries + recent messages + tasks
   -> OpenAI Responses / transcription
-  -> pending_actions confirmation
-  -> planner_items + reminders + memories + audit_log
-  -> optional Google/Yandex Calendar sync
+  -> ActionPlan with multiple action_plan_items
+  -> smart commit or confirmation
+  -> planner_items + reminders + reminder_deliveries + memory_facts
+  -> best-effort Google/Yandex Calendar sync
 
 Cloudflare Cron Worker
   -> /api/reminders/run
@@ -23,19 +26,20 @@ Postgres
   -> Drizzle schema + migrations
 ```
 
-## Что уже входит в MVP
+## Что уже входит в V2
 
 - Next.js App Router API routes for Telegram, reminders, calendar integrations, health and export.
-- Drizzle/Postgres schema and migration for users, messages, attachments, pending actions, planner items, reminders, memories, Google Calendar connections, sync state and audit log.
-- grammY bot with `/start`, `/today`, `/tomorrow`, `/week`, `/tasks`, `/settings`, `/calendar`, `/export`, `/forget`.
-- Confirmation-before-write flow with inline buttons.
-- OpenAI Responses API tool call for structured planning proposals.
+- Drizzle/Postgres schema and migrations for users, messages, conversation history, action plans, action plan items, planner items, reminders, reminder deliveries, memory facts, summaries, Google Calendar connections, sync state and audit log.
+- grammY bot with `/start`, `/today`, `/tomorrow`, `/week`, `/tasks`, `/settings`, `/calendar`, `/remindertest`, `/export`, `/forget`.
+- Smart commit mode: `confirm_all`, `auto_low_risk`, `auto_all_with_undo`.
+- Multi-action `ActionPlan` instead of a single mechanical pending action.
+- OpenAI Responses API tool call for multi-action planning, with deterministic heuristic fallback for tests and obvious cases.
 - OpenAI audio transcription for voice/audio/video note/video, with 20 MB Telegram Bot API guard and 25 MB OpenAI guard.
-- Protected reminder dispatcher with atomic `FOR UPDATE SKIP LOCKED` claiming.
+- Protected reminder dispatcher with atomic `FOR UPDATE SKIP LOCKED` claiming, delivery records and repeat-until-ack scheduling.
 - Cloudflare Worker cron project.
 - Google Calendar OAuth, encrypted refresh token storage and event sync.
-- Yandex Calendar sync via CalDAV as an alternative calendar provider.
-- Vitest coverage for allowlist, idempotency middleware, date conversion, reminder policy, pending action double-click safety, oversized media, agenda ordering and calendar failure preservation.
+- Yandex Calendar sync via CalDAV as a best-effort calendar provider. Calendar failure does not block DB records or Telegram reminders.
+- Vitest coverage for allowlist, idempotency middleware, date conversion, reminder policy, pending action double-click safety, oversized media, agenda ordering, calendar failure preservation and V2 planner acceptance cases.
 
 ## Prerequisites
 
@@ -92,7 +96,14 @@ Models are configurable:
 
 ```env
 OPENAI_TEXT_MODEL=gpt-4o-mini
+OPENAI_PLANNER_MODEL=gpt-4o-mini
+OPENAI_MEMORY_MODEL=gpt-4o-mini
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
+ENABLE_AGENT_PLANNER_V2=true
+ENABLE_MEMORY_EMBEDDINGS=false
+SMART_COMMIT_MODE=auto_low_risk
+DEFAULT_MORNING_REMINDER_TIME=09:30
 ```
 
 ## Database
@@ -149,6 +160,8 @@ Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `APP_ENCR
 
 Then send `/calendar` in Telegram and open the generated authorization link. If Calendar sync fails later, the local item and reminders remain active and sync error is recorded.
 
+Use `/calendar status` for current status and `/calendar retry` for best-effort retry messaging.
+
 ## Yandex Calendar
 
 Set:
@@ -204,6 +217,14 @@ curl -X POST "https://<your-app>/api/reminders/run" \
   -H "Authorization: Bearer <CRON_SECRET>"
 ```
 
+Telegram smoke test:
+
+```text
+/remindertest 2
+```
+
+The bot creates a real reminder due in 2 minutes. It will arrive only if Cloudflare Worker or another cron calls `/api/reminders/run` every minute with the correct `CRON_SECRET`.
+
 ## Supported Media
 
 - Text messages.
@@ -245,19 +266,20 @@ npm run telegram:webhook
 
 ## Manual Acceptance
 
-1. Send `Запиши встречу в Winline в четверг в 12`, confirm, then check `/week`.
-2. Send a short Russian voice with the same intent, confirm, then check `/week`.
-3. Create a task with due time, run `/api/reminders/run`, verify Telegram reminder.
-4. Connect Google Calendar with `/calendar`, confirm an event, verify calendar event.
-5. Send `/today` and `/tasks`.
-6. Send a post-meeting voice summary; bot should transcribe and propose follow-up action.
-7. Try a message from an unauthorized account; it should not expose private data.
+1. Send `/start`, then `/remindertest 2`, and verify a Telegram reminder in 2 minutes.
+2. Send `Сегодня созвон в 17.00 по русскому баскетболу`, then check `/today`.
+3. Send the long Zoom + setup + tentative call + Z2 training message from the V2 task; the bot should produce one multi-action summary.
+4. Send `Напоминать о рилзах по F1 и MMA каждое утро в понедельник, вторник, среду и пятницу`; check `/tasks`.
+5. Send the San Antonio vs Oklahoma night-match message; it must schedule `03:30`, not `15:30`.
+6. Send `Каждое утро напоминай мне пить витамины, пока я не подтвержу`; check repeat-until-ack buttons.
+7. Send `/calendar status`; calendar errors must not block the saved plan.
 
-## Known MVP Limitations
+## Known Limitations
 
 - Natural language editing/deleting existing items is guarded but not fully implemented; ambiguous changes ask for clarification.
 - There is no web admin panel yet.
-- Semantic memory retrieval uses simple recent-memory context, not pgvector.
+- Semantic memory retrieval uses memory facts, summaries and recent messages. Embeddings are env-configured but pgvector storage is not required for this MVP.
+- Calendar retry queue schema exists, but fully automated retry processing is still intentionally best-effort.
 - Daily digest creation is handled by the reminder runner and idempotency keys, not a separate UI.
 - Large meeting videos require a future Local Bot API Server or external upload flow.
 

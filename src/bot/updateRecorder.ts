@@ -1,6 +1,7 @@
 import type { NextFunction } from "grammy";
 
 import { recordTelegramUpdate } from "@/db/queries/messages";
+import { recordIncomingConversationMessage } from "@/services/conversation";
 
 import type { BotContext } from "./context";
 
@@ -21,6 +22,13 @@ export async function recordUpdateOnce(ctx: BotContext, next: NextFunction) {
 
   if (!dbMessageId) return;
   ctx.dbMessageId = dbMessageId;
+  await recordIncomingConversationMessage({
+    userId: ctx.owner?.id,
+    telegramMessageId: dbMessageId,
+    messageType,
+    text,
+    metadata: { updateId: ctx.update.update_id },
+  });
   await next();
 }
 

@@ -3,12 +3,20 @@ import type { Bot } from "grammy";
 import { confirmPendingActionInDb, cancelPendingAction } from "@/db/queries/pendingActions";
 import { getPlannerItemById, markPlannerItemCompleted } from "@/db/queries/items";
 import { deleteMemoryForUser } from "@/db/queries/memories";
+import {
+  ackReminderForToday,
+  snoozeReminder,
+  stopRecurringReminders,
+} from "@/db/queries/reminders";
+import { endOfLocalDay, startOfLocalDay } from "@/domain/dateTime";
 import { syncPlannerItemToCalendar } from "@/integrations/calendar";
+import { cancelStoredActionPlan, commitStoredActionPlan } from "@/services/actionPlanCommit";
+import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
 import { afterEventKeyboard } from "./keyboards";
-import { formatCreatedItem } from "./formatters";
+import { formatCommittedPlanSummary, formatCreatedItem } from "./formatters";
 
 export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery("noop", async (ctx) => {
@@ -39,9 +47,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       const syncLine =
         sync.status === "synced"
           ? "\nКалендарь: синхронизировано."
-          : sync.status === "error"
-            ? "\nВ боте сохранил, но календарь не обновился. Можно повторить позже."
-            : "";
+          : "";
 
       await ctx.reply(`${formatCreatedItem(result.item, result.reminders.length)}${syncLine}`, {
         reply_markup: result.item.kind === "event" ? afterEventKeyboard(result.item.id) : undefined,
@@ -58,6 +64,44 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       return;
     }
     await ctx.reply("Предложение истекло или не найдено. Пришли формулировку заново.");
+  });
+
+  bot.callbackQuery(/^plan:confirm:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    await ctx.answerCallbackQuery("Сохраняю план");
+    const result = await commitStoredActionPlan({
+      actionPlanId: ctx.match[1],
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    if (result.status === "committed") {
+      await ctx.reply(
+        formatCommittedPlanSummary({
+          items: result.items,
+          reminderCount: result.reminders.length,
+          timezone: owner.timezone,
+        }),
+      );
+      await syncItemsToCalendarBestEffort(result.items);
+      return;
+    }
+    if (result.status === "already_committed") {
+      await ctx.reply("Этот план уже сохранён.");
+      return;
+    }
+    await ctx.reply("План уже неактуален или отменён. Пришли формулировку заново.");
+  });
+
+  bot.callbackQuery(/^plan:cancel:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    await ctx.answerCallbackQuery("Отменено");
+    await cancelStoredActionPlan({ actionPlanId: ctx.match[1], userId: owner.id });
+    await ctx.reply("Ок, этот план не сохраняю.");
+  });
+
+  bot.callbackQuery(/^plan:edit:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Пришли исправленную формулировку одним сообщением. Старый план не меняю автоматически.");
   });
 
   bot.callbackQuery(/^pa:no:(.+)$/, async (ctx) => {
@@ -79,6 +123,47 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await ctx.answerCallbackQuery("Отмечаю");
     const item = await markPlannerItemCompleted(owner.id, ctx.match[1]);
     await ctx.reply(item ? `Готово: ${item.title}` : "Не нашёл задачу.");
+  });
+
+  bot.callbackQuery(/^reminder:ack:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const now = new Date();
+    await ackReminderForToday({
+      userId: owner.id,
+      reminderId: ctx.match[1],
+      dayStart: startOfLocalDay(now, owner.timezone),
+      dayEnd: endOfLocalDay(now, owner.timezone),
+    });
+    await ctx.answerCallbackQuery("Готово");
+    await ctx.reply("Принял. На сегодня больше не дёргаю по этому напоминанию.");
+  });
+
+  bot.callbackQuery(/^reminder:snooze:([^:]+):(\d+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const minutes = Number(ctx.match[2]);
+    await snoozeReminder({ userId: owner.id, reminderId: ctx.match[1], minutes });
+    await ctx.answerCallbackQuery("Отложил");
+    await ctx.reply(`Ок, напомню через ${minutes} минут.`);
+  });
+
+  bot.callbackQuery(/^reminder:skip:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const now = new Date();
+    await ackReminderForToday({
+      userId: owner.id,
+      reminderId: ctx.match[1],
+      dayStart: startOfLocalDay(now, owner.timezone),
+      dayEnd: endOfLocalDay(now, owner.timezone),
+    });
+    await ctx.answerCallbackQuery("Пропущено");
+    await ctx.reply("Ок, сегодня пропускаем.");
+  });
+
+  bot.callbackQuery(/^item:stop_recurring:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    await stopRecurringReminders(owner.id, ctx.match[1]);
+    await ctx.answerCallbackQuery("Остановил");
+    await ctx.reply("Остановил будущие повторяющиеся напоминания по этой записи.");
   });
 
   bot.callbackQuery(/^prep:(.+)$/, async (ctx) => {

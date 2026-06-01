@@ -2,7 +2,8 @@ import { DateTime } from "luxon";
 import { InputFile, type Bot } from "grammy";
 
 import { deleteMemoryForUser, exportOwnerData, listActiveMemories } from "@/db/queries/memories";
-import { listItemsBetween, listOpenTasks } from "@/db/queries/items";
+import { createManualPlannerItem, listItemsBetween, listOpenTasks } from "@/db/queries/items";
+import { createReminderIfMissing } from "@/db/queries/reminders";
 import { markUserOnboarded, updateUserTimezone } from "@/db/queries/users";
 import { assertValidZone } from "@/domain/dateTime";
 import { getCalendarProvider, getEnv, isGoogleCalendarConfigured } from "@/lib/env";
@@ -21,13 +22,16 @@ export function registerCommands(bot: Bot<BotContext>) {
     await ctx.reply(
       [
         "Привет. Я твой личный ежедневник в Telegram.",
+        "Теперь я работаю как AI-планировщик: раскладываю длинные сообщения на несколько действий.",
         "",
         "Можно написать или надиктовать:",
-        "• «В четверг в 12 встреча с Winline»",
-        "• «Завтра вечером тренировка Z2 на час»",
-        "• «Напомни отправить смету к 18:00»",
+        "• «Завтра в 12 встреча с Winline»",
+        "• «Каждый понедельник утром напоминай про рилзы»",
+        "• «Сегодня после эфира Z2 велосипед на час»",
+        "• «Что у меня сегодня?»",
         "",
         `Часовой пояс сейчас: ${owner.timezone}.`,
+        `Режим сохранения: ${owner.smartCommitMode}.`,
         "Подтверди или измени его в /settings.",
       ].join("\n"),
       { reply_markup: startKeyboard(calendarLink) },
@@ -42,7 +46,8 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/tomorrow — завтра",
         "/week — ближайшие 7 дней",
         "/tasks — открытые задачи",
-        "/calendar — подключить Google Calendar",
+        "/remindertest 2 — тестовое напоминание через N минут",
+        "/calendar — статус календаря",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
         "/forget — показать память для удаления",
@@ -68,6 +73,20 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
 
   bot.command("calendar", async (ctx) => {
+    const requested = String(ctx.match ?? "").trim().toLowerCase();
+    if (requested === "status") {
+      await ctx.reply(
+        getCalendarProvider() === "yandex"
+          ? "Календарь: Yandex CalDAV включён. Если CalDAV вернёт ошибку, задачи и Telegram-напоминания всё равно сохраняются."
+          : `Календарь: ${getCalendarProvider()}.`,
+      );
+      return;
+    }
+    if (requested === "retry") {
+      await ctx.reply("Поставил календарь в best-effort режим. Повторная очередь будет обработана отдельно; записи в боте уже являются источником правды.");
+      return;
+    }
+
     if (getCalendarProvider() === "yandex") {
       await ctx.reply("Яндекс Календарь подключён через CalDAV. Новые встречи буду синхронизировать туда.");
       return;
@@ -93,6 +112,31 @@ export function registerCommands(bot: Bot<BotContext>) {
     const owner = requireOwner(ctx);
     const tasks = await listOpenTasks(owner.id);
     await ctx.reply(formatItemList("Открытые задачи", tasks, owner.timezone));
+  });
+
+  bot.command("remindertest", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const minutes = Math.max(1, Math.min(60, Number(String(ctx.match ?? "2").trim()) || 2));
+    const scheduledAt = new Date(Date.now() + minutes * 60 * 1000);
+    const item = await createManualPlannerItem({
+      userId: owner.id,
+      kind: "task",
+      title: `Тестовое напоминание через ${minutes} мин.`,
+      timezone: owner.timezone,
+      dueAt: scheduledAt,
+      metadata: { debug: true, command: "remindertest" },
+    });
+    await createReminderIfMissing({
+      userId: owner.id,
+      plannerItemId: item.id,
+      type: "custom",
+      idempotencyKey: `${item.id}:remindertest:${scheduledAt.toISOString()}`,
+      scheduledAt,
+      payload: { title: item.title, debug: true },
+    });
+    await ctx.reply(
+      `Готово. Тестовое напоминание должно прийти через ${minutes} мин. Если не придёт, значит cron runner не дергает /api/reminders/run.`,
+    );
   });
 
   bot.command("export", async (ctx) => {
