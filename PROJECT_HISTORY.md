@@ -762,3 +762,47 @@ failed -> 0
 ```
 
 This proves the reminder delivery path can send Telegram messages once the fixed code is deployed.
+
+### 13.16. Cloudflare worker created, cron limit blocker
+
+The fixed runner was pushed as commit:
+
+```text
+55b62f6 Fix reminder cron timestamp binding
+```
+
+Vercel production health confirmed:
+
+```text
+deploymentCommit -> 55b62f6ef85e9c85c054eca5c1a40de8c7f05eb4
+```
+
+Production runner check with the provided bearer secret:
+
+```text
+POST /api/reminders/run -> ok: true, claimed: 0, sent: 0, failed: 0
+```
+
+Cloudflare worker status:
+
+```text
+worker -> personal-assistant-reminder-worker
+url -> https://personal-assistant-reminder-worker.znamteam-903.workers.dev
+manual fetch -> ok: true, claimed: 0, sent: 0, failed: 0
+secrets -> APP_REMINDER_RUN_URL, CRON_SECRET
+schedules -> none
+```
+
+Cloudflare scheduled trigger could not be attached because the account already has the plan limit of 5 cron triggers.
+
+Existing Cloudflare cron triggers:
+
+```text
+anfisa-training-stats      -> */15 * * * *
+hoh-nhl-daily-results      -> */5 * * * *
+mlb-daily-results          -> * * * * *
+nba-players-proxy          -> */15 * * * *
+tennis-daily-results       -> */15 * * * *
+```
+
+To finish automatic minute reminders, one existing Cloudflare cron trigger must be removed or the Cloudflare plan/limit must be increased. The new worker itself is ready and verified manually.
