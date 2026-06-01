@@ -868,3 +868,104 @@ night sports event at 03:30 Moscow in "ночь на пятницу"
 memory-only correction rule creation
 repeat-until-ack runner chaining
 ```
+
+### 13.19. Production smart planner verification
+
+The smart planner fixes were committed and pushed to GitHub:
+
+```text
+commit -> 767f6cb3a63a9d98a0346a8ab1ae285bd739c663
+message -> Verify smart planner production behavior
+branch -> main
+```
+
+Vercel production auto-deploy completed. Health endpoint confirmed:
+
+```text
+url -> https://znambo-telegram-assistant.vercel.app/api/health
+ok -> true
+deploymentCommit -> 767f6cb3a63a9d98a0346a8ab1ae285bd739c663
+calendarProvider -> yandex
+yandexCalendarConfigured -> true
+```
+
+Telegram webhook check after deploy:
+
+```text
+webhook url -> https://znambo-telegram-assistant.vercel.app/api/telegram/webhook
+pending_update_count -> 0
+last_error_message -> null
+allowed_updates -> message, callback_query
+```
+
+Protected reminder runner check after deploy:
+
+```text
+POST /api/reminders/run -> ok: true
+claimed -> 0
+sent -> 0
+failed -> 0
+```
+
+Fresh `/remindertest 2` verification:
+
+```text
+created reminder -> 8523e175-3a05-4332-9ea0-c77c4d03c763
+scheduledAt -> 2026-06-01T14:33:14.685Z
+sentAt -> 2026-06-01T14:34:04.350Z
+deliveryStatus -> sent
+deliveredAt -> 2026-06-01T14:34:04.537Z
+telegramMessageId -> 39
+```
+
+This confirms cron-job.org is calling the production runner and real Telegram delivery still works after the smart planner deploy.
+
+Real multi-action Telegram-flow scenario A was run against production DB through the bot handler. Result:
+
+```text
+actionPlan -> 9613ee65-7e74-4174-ab1d-58e53daeec85
+status -> committed
+summary -> Разложил сообщение на запись, подготовку, tentative-созвон и тренировку.
+confidence -> 92
+items -> 4
+```
+
+Created action plan items:
+
+```text
+0 preparation      -> Начать настройку Zoom, due 2026-06-01T18:30:00, reminders 1
+1 event            -> Запись Больше Zoom, start 2026-06-01T19:00:00, reminders 3
+2 tentative_event  -> Возможный созвон по коротким видео, start 2026-06-01T19:30:00, reminders 1
+3 training         -> Велосипед Z2, start 2026-06-01T20:00:00, reminders 2
+```
+
+Conclusion for scenario A:
+
+- one V2 ActionPlan was created;
+- actions were not collapsed into one meeting;
+- preparation, event, tentative call, and training were stored separately;
+- duplicate card behavior was not observed.
+
+Overview command behavior was checked after creating the multi-action scenario:
+
+```text
+/today -> handler accepted; schedule query returned preparation, event, tentative_event, training, and reminder-test tasks
+/tomorrow -> handler accepted; no items for the next day at verification time
+/week -> handler accepted; weekly query returned the same structured items
+/tasks -> handler accepted; open tasks included preparation and the recurring reels reminder
+```
+
+Production scheduler status:
+
+```text
+active scheduler -> cron-job.org
+Cloudflare Worker -> backup only
+production blocker -> none
+```
+
+Operational notes:
+
+- the production webhook requires Telegram secret-token header, so synthetic webhook POSTs were not used;
+- production behavior was verified through Bot API webhook metadata, the deployed health endpoint, the protected runner endpoint, production DB state, and bot handler checks using the same deployed commit;
+- one malformed synthetic local update caused by PowerShell pipe encoding was cancelled immediately and was not used for verification;
+- calendar sync remains best-effort by design, so DB commit and Telegram reminders are not blocked by calendar sync failures.
