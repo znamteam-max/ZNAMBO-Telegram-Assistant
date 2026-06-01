@@ -14,6 +14,7 @@ export async function GET() {
   const env = getEnv();
   return NextResponse.json({
     ok: true,
+    deploymentCommit: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
     appUrl: env.NEXT_PUBLIC_APP_URL,
     defaultTimezone: env.DEFAULT_TIMEZONE,
     calendarProvider: getCalendarProvider(),

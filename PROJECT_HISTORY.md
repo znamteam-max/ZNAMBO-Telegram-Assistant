@@ -529,3 +529,141 @@ npm test      -> 10 files passed, 16 tests passed
 npm run lint  -> passed
 npm run build -> passed
 ```
+
+### 13.3. GitHub push and Vercel deploy blocker
+
+V2 rollout закоммичен и отправлен в GitHub:
+
+```text
+2ac48aa Roll out smart planner V2
+```
+
+`main` синхронизирован с `origin/main`.
+
+Блокер прямого Vercel deploy из CLI:
+
+- локальный `.vercel/project.json` указывает на production project `znambo-telegram-assistant`;
+- текущая авторизация Vercel CLI больше не видит прежний scope `znambos-projects`;
+- `npx vercel --prod --yes --scope znambos-projects` вернул ошибку `scope does not exist`;
+- `npx vercel whoami` вернул `Not authorized`;
+- `npx vercel teams ls` показал доступ только к `bolshes-projects`;
+- вызов deploy без scope не смог прочитать settings linked project.
+
+Health production URL при этом отвечает:
+
+```text
+https://znambo-telegram-assistant.vercel.app/api/health -> ok
+```
+
+Для завершения rollout нужен доступ Vercel CLI к team/project, где живет `znambo-telegram-assistant`, или подтверждение, что GitHub auto-deploy в этом проекте сработал после push `2ac48aa`.
+### 13.4. Vercel auth wait
+
+Rollout resumed from `PROJECT_HISTORY.md`. Production DB migration is already applied and V2 code is pushed to GitHub commit `2ac48aa`.
+
+Current blocker remains Vercel authorization: `vercel login` is still waiting for device-flow confirmation, so direct production deploy and deployment inspection cannot proceed yet. No secrets were written to this history file.
+
+### 13.5. Fresh Vercel auth request
+
+The stale Vercel login session was cancelled and a fresh `vercel login` device-flow session was started.
+
+Current auth URL:
+
+```text
+https://vercel.com/oauth/device?user_code=SPBW-ZXPB
+```
+
+Direct production deploy is paused until this device-flow authorization is approved for the Vercel account/team that owns `znambo-telegram-assistant`.
+
+### 13.6. Health and cron code inspection
+
+Production health endpoint currently responds successfully:
+
+```text
+GET https://znambo-telegram-assistant.vercel.app/api/health -> ok
+calendarProvider -> yandex
+yandexCalendarConfigured -> true
+```
+
+This proves the production URL is alive, but not yet that commit `2ac48aa` is the active deployment because the health payload does not expose a commit/version field.
+
+Reminder cron code is present in `cloudflare-reminder-worker`:
+
+- `wrangler.toml.example` contains `crons = ["* * * * *"]`;
+- worker calls `POST /api/reminders/run`;
+- worker authenticates with `Authorization: Bearer <CRON_SECRET>`.
+
+Real Cloudflare Worker deployment and real scheduled invocations are not yet confirmed.
+
+### 13.7. Telegram webhook check
+
+Telegram Bot API `getWebhookInfo` was checked against the configured bot.
+
+Safe result fields:
+
+```text
+url -> https://znambo-telegram-assistant.vercel.app/api/telegram/webhook
+pending_update_count -> 0
+last_error_message -> null
+allowed_updates -> message, callback_query
+```
+
+The webhook is pointed at the production Vercel endpoint and Telegram reports no current delivery error.
+
+This check should be repeated after the final confirmed Vercel production deployment.
+
+### 13.8. Cloudflare cron status
+
+Wrangler is authenticated locally for `znamteam@gmail.com`.
+
+Cloudflare API check for worker `personal-assistant-reminder-worker` returned:
+
+```text
+Worker does not exist on your account.
+```
+
+So the minute cron is not currently connected under the expected worker name. The repository contains a worker template, but no real `wrangler.toml` file yet.
+
+### 13.9. Cloudflare worker deploy config
+
+Added `cloudflare-reminder-worker/wrangler.toml` without secrets:
+
+```text
+name -> personal-assistant-reminder-worker
+main -> src/index.ts
+cron -> * * * * *
+```
+
+`npx wrangler deploy --dry-run` succeeds:
+
+```text
+Total Upload: 0.94 KiB / gzip: 0.51 KiB
+No bindings found.
+```
+
+The worker can now be deployed, but real cron delivery still requires setting `APP_REMINDER_RUN_URL` and `CRON_SECRET` and confirming that Vercel production uses the same `CRON_SECRET`.
+
+### 13.10. Reminder runner production SQL fix
+
+During rollout verification, the reminder runner path was inspected and a production bug was found:
+
+```text
+claimDueReminders used raw SQL table name `reminders`
+```
+
+Production tables are in schema `assistant`, so the raw SQL was fixed to use:
+
+```text
+"assistant"."reminders"
+```
+
+Verification after the fix:
+
+```text
+npm test -> 10 files passed, 16 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+### 13.11. Health deployment commit marker
+
+Direct Vercel CLI deploy remains blocked by the linked `.vercel` project belonging to an inaccessible Vercel scope. To make GitHub auto-deploy verifiable from the public production URL, `/api/health` now includes a safe `deploymentCommit` field from `VERCEL_GIT_COMMIT_SHA`.

@@ -12,14 +12,14 @@ export async function claimDueReminders(params: {
   const rows = await getDb().execute(sql`
     with due as (
       select id
-      from reminders
+      from "assistant"."reminders"
       where status = 'pending'
         and scheduled_at <= ${params.now}
       order by scheduled_at asc
       limit ${params.limit}
       for update skip locked
     )
-    update reminders as r
+    update "assistant"."reminders" as r
     set status = 'claimed',
         claimed_at = now(),
         attempt_count = r.attempt_count + 1,
