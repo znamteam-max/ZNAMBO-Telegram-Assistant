@@ -667,3 +667,43 @@ npm run build -> passed
 ### 13.11. Health deployment commit marker
 
 Direct Vercel CLI deploy remains blocked by the linked `.vercel` project belonging to an inaccessible Vercel scope. To make GitHub auto-deploy verifiable from the public production URL, `/api/health` now includes a safe `deploymentCommit` field from `VERCEL_GIT_COMMIT_SHA`.
+
+### 13.12. Production deployment confirmed
+
+Commit `5c776ae` was pushed to GitHub:
+
+```text
+5c776ae Finalize production rollout plumbing
+```
+
+Production Vercel auto-deploy completed successfully. Public health now returns:
+
+```text
+ok -> true
+deploymentCommit -> 5c776ae5801e2a7d7b51b0f4248c4c6c5b90bf9a
+appUrl -> https://znambo-telegram-assistant.vercel.app
+defaultTimezone -> Europe/Moscow
+calendarProvider -> yandex
+yandexCalendarConfigured -> true
+```
+
+Telegram webhook was checked again after deploy:
+
+```text
+url -> https://znambo-telegram-assistant.vercel.app/api/telegram/webhook
+pending_update_count -> 0
+last_error_message -> null
+allowed_updates -> message, callback_query
+```
+
+### 13.13. Reminder cron blocker
+
+Production `POST /api/reminders/run` returns `401 unauthorized` without a bearer token. This confirms that the endpoint is deployed and protected by `CRON_SECRET`.
+
+Cloudflare Worker is still not deployed:
+
+```text
+personal-assistant-reminder-worker -> does not exist on Cloudflare account
+```
+
+Current blocker: the existing Vercel production project is in an inaccessible Vercel scope, so the current `CRON_SECRET` value cannot be read or changed from CLI. To connect Cloudflare cron safely, Cloudflare must receive the exact same `CRON_SECRET` value as Vercel production, or Vercel access must be granted to the project scope so the secret can be rotated in both places.
