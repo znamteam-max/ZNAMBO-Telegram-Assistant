@@ -729,3 +729,36 @@ Telegram webhook after this deploy still reports:
 pending_update_count -> 0
 last_error_message -> null
 ```
+
+### 13.15. Cron secret and runner verification
+
+The provided `CRON_SECRET` was tested against production `POST /api/reminders/run`.
+
+Result:
+
+```text
+without bearer -> 401 unauthorized
+with provided bearer -> not 401, but runner returned 500
+```
+
+The `500` was reproduced locally against production DB. Root cause:
+
+```text
+postgres-js raw SQL parameter binding rejected Date objects in claimDueReminders
+```
+
+Fix applied:
+
+```text
+claimDueReminders now passes now.toISOString() and casts it as timestamptz
+```
+
+Local runner verification after the fix:
+
+```text
+claimed -> 2
+sent -> 2
+failed -> 0
+```
+
+This proves the reminder delivery path can send Telegram messages once the fixed code is deployed.

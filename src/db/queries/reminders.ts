@@ -9,12 +9,13 @@ export async function claimDueReminders(params: {
   now: Date;
   limit: number;
 }): Promise<ClaimedReminder[]> {
+  const nowIso = params.now.toISOString();
   const rows = await getDb().execute(sql`
     with due as (
       select id
       from "assistant"."reminders"
       where status = 'pending'
-        and scheduled_at <= ${params.now}
+        and scheduled_at <= ${nowIso}::timestamptz
       order by scheduled_at asc
       limit ${params.limit}
       for update skip locked
