@@ -707,3 +707,25 @@ personal-assistant-reminder-worker -> does not exist on Cloudflare account
 ```
 
 Current blocker: the existing Vercel production project is in an inaccessible Vercel scope, so the current `CRON_SECRET` value cannot be read or changed from CLI. To connect Cloudflare cron safely, Cloudflare must receive the exact same `CRON_SECRET` value as Vercel production, or Vercel access must be granted to the project scope so the secret can be rotated in both places.
+
+### 13.14. Latest production commit after history push
+
+The final history-only commit was pushed and Vercel auto-deployed it as well:
+
+```text
+56299a5 Record production deploy verification
+```
+
+Production health now returns:
+
+```text
+deploymentCommit -> 56299a57713c267afca706101a6aa2dd491f7611
+ok -> true
+```
+
+Telegram webhook after this deploy still reports:
+
+```text
+pending_update_count -> 0
+last_error_message -> null
+```
