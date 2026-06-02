@@ -11,7 +11,7 @@ import {
 } from "@/db/queries/reminders";
 import { getUserById } from "@/db/queries/users";
 import { formatItemList, formatReminderMessage } from "@/bot/formatters";
-import { reminderActionKeyboard } from "@/bot/keyboards";
+import { reminderActionKeyboard, tentativeEventFollowupKeyboard } from "@/bot/keyboards";
 import { logger } from "@/lib/logger";
 
 import { getBot } from "@/bot/createBot";
@@ -92,11 +92,18 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
 
   const item = reminder.plannerItemId ? await getPlannerItemByAnyId(reminder.plannerItemId) : null;
   return sender.sendMessage(user.telegramUserId.toString(), formatReminderMessage(reminder, item), {
-    reply_markup:
-      reminder.repeatUntilAck || item?.kind === "recurring_task"
-        ? reminderActionKeyboard(reminder.id, reminder.plannerItemId)
-        : undefined,
+    reply_markup: buildReminderKeyboard(reminder, item),
   });
+}
+
+function buildReminderKeyboard(reminder: ClaimedReminder, item: Awaited<ReturnType<typeof getPlannerItemByAnyId>>) {
+  if (reminder.repeatUntilAck || item?.kind === "recurring_task") {
+    return reminderActionKeyboard(reminder.id, reminder.plannerItemId);
+  }
+  if (reminder.type === "followup" && item?.kind === "tentative_event") {
+    return tentativeEventFollowupKeyboard(item.id);
+  }
+  return undefined;
 }
 
 function nextRetryAt(reminder: ClaimedReminder, now: Date): Date | null {

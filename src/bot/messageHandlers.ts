@@ -1,28 +1,17 @@
 import type { Bot } from "grammy";
 
-import { buildActionPlan } from "@/ai/planner";
 import { transcribeMedia } from "@/ai/transcription";
 import { recordMessageAttachment, markTelegramMessageProcessed } from "@/db/queries/messages";
 import { UserFacingError } from "@/lib/errors";
-import { createIdempotencyKey } from "@/lib/idempotency";
 import {
   downloadTelegramMedia,
   extractTelegramMedia,
   TELEGRAM_DOWNLOAD_LIMIT_BYTES,
 } from "@/integrations/telegramFiles";
-import {
-  commitStoredActionPlan,
-  createStoredActionPlan,
-  shouldAutoCommitPlan,
-} from "@/services/actionPlanCommit";
-import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
-import { buildActiveContext } from "@/services/contextRetrieval";
-import { storePlanMemoryFacts } from "@/services/memory";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
-import { formatActionPlanCard, formatCommittedPlanSummary } from "./formatters";
-import { actionPlanKeyboard } from "./keyboards";
+import { handleIncomingUserMessage } from "./messagePipeline";
 import { replyAndRecord } from "./reply";
 
 export function registerMessageHandlers(bot: Bot<BotContext>) {
@@ -64,7 +53,7 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
       }
 
       await replyAndRecord(ctx, `Расшифровка: ${transcript}`);
-      await processActionPlan(ctx, transcript, owner.timezone);
+      await handleIncomingUserMessage(ctx, transcript, owner.timezone);
     } catch (error) {
       await replyAndRecord(ctx, toUserMessage(error));
     }
@@ -74,72 +63,11 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
 async function handleNaturalText(ctx: BotContext, text: string) {
   const owner = requireOwner(ctx);
   try {
-    await processActionPlan(ctx, text, owner.timezone);
+    await handleIncomingUserMessage(ctx, text, owner.timezone);
     if (ctx.dbMessageId) await markTelegramMessageProcessed(ctx.dbMessageId);
   } catch (error) {
     await replyAndRecord(ctx, toUserMessage(error));
   }
-}
-
-async function processActionPlan(ctx: BotContext, text: string, timezone: string) {
-  const owner = requireOwner(ctx);
-  const activeContext = await buildActiveContext({
-    userId: owner.id,
-    timezone,
-    query: text,
-  });
-  const plan = await buildActionPlan({ text, timezone, activeContext });
-
-  if (plan.memoryCandidates.length && plan.actions.length === 0) {
-    await storePlanMemoryFacts({
-      userId: owner.id,
-      sourceMessageId: ctx.dbMessageId,
-      plan,
-    });
-    await replyAndRecord(ctx, plan.reply || "Запомнил. Буду учитывать это дальше.");
-    return;
-  }
-
-  if (plan.intent === "answer" || plan.intent === "clarify") {
-    await replyAndRecord(ctx, formatActionPlanCard(plan, timezone));
-    return;
-  }
-
-  const storedPlan = await createStoredActionPlan({
-    userId: owner.id,
-    sourceMessageId: ctx.dbMessageId,
-    plan,
-    idempotencyKey: createIdempotencyKey([owner.id, ctx.update.update_id, text, "v2"]),
-    commitMode: owner.smartCommitMode,
-  });
-
-  if (shouldAutoCommitPlan(plan, owner.smartCommitMode)) {
-    const result = await commitStoredActionPlan({
-      actionPlanId: storedPlan.id,
-      userId: owner.id,
-      timezone,
-    });
-    if (result.status === "committed") {
-      await replyAndRecord(
-        ctx,
-        formatCommittedPlanSummary({
-          items: result.items,
-          reminderCount: result.reminders.length,
-          timezone,
-        }),
-      );
-      await syncItemsToCalendarBestEffort(result.items);
-      return;
-    }
-    if (result.status === "already_committed") {
-      await replyAndRecord(ctx, "Этот план уже был сохранён.");
-      return;
-    }
-  }
-
-  await replyAndRecord(ctx, formatActionPlanCard(plan, timezone), {
-    reply_markup: actionPlanKeyboard(storedPlan.id),
-  });
 }
 
 function toUserMessage(error: unknown): string {

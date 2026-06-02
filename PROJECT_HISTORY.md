@@ -969,3 +969,108 @@ Operational notes:
 - production behavior was verified through Bot API webhook metadata, the deployed health endpoint, the protected runner endpoint, production DB state, and bot handler checks using the same deployed commit;
 - one malformed synthetic local update caused by PowerShell pipe encoding was cancelled immediately and was not used for verification;
 - calendar sync remains best-effort by design, so DB commit and Telegram reminders are not blocked by calendar sync failures.
+
+### 13.20. Intent-first assistant hardening started
+
+New production-hardening task accepted.
+
+Goal:
+
+```text
+make the bot behave as an adaptive daily assistant, not as a mechanical parser that creates items from every phrase
+```
+
+Scope for this pass:
+
+```text
+intent-first message pipeline
+anti-garbage validation before saving items
+task management view for edit/show task requests
+ordered list parsing into separate floating tasks/calls
+training report plus tentative training plan handling
+tentative follow-up wording and actions
+debug trace for the latest decision
+tests for the real failure cases
+```
+
+Existing production pieces must remain intact:
+
+```text
+Telegram webhook
+Postgres assistant schema
+OpenAI transcription
+reminders runner
+cron-job.org delivery
+/remindertest
+V2 tables
+Yandex calendar best-effort sync
+```
+
+### 13.21. Intent-first assistant implementation
+
+Implemented without a new database migration. Existing `assistant.audit_log` is used for decision traces, and existing `planner_items.metadata` is used for list order, floating items, tentative flags, and training state.
+
+Changed behavior:
+
+```text
+task-management phrases -> no new planner items; bot shows current tasks for editing
+status questions -> schedule/status response instead of task creation
+ordered bullet lists -> separate floating tasks/calls with preserved order
+training missed reports -> saved as note/training report, not task title
+tomorrow Holmy long ride -> tentative training plan with no arbitrary exact ride time
+memory/correction phrases -> memory update, no item creation
+AI planner fallback -> protected by anti-garbage validator before saving
+tentative event follow-up -> asks whether the event happened or was cancelled
+/tasks -> editable task-management view
+/debuglast -> shows latest decision trace without secrets
+```
+
+Files added:
+
+```text
+src/ai/schemas/assistantDecision.ts
+src/ai/assistantDecision.ts
+src/ai/antiGarbageValidator.ts
+src/services/assistantPlanBuilders.ts
+src/bot/messagePipeline.ts
+src/tests/assistantDecision.test.ts
+```
+
+Files updated:
+
+```text
+src/ai/schemas.ts
+src/ai/heuristicActionPlanner.ts
+src/ai/prompts/planner.system.ts
+src/bot/commands.ts
+src/bot/messageHandlers.ts
+src/bot/callbacks.ts
+src/bot/formatters.ts
+src/bot/keyboards.ts
+src/db/queries/audit.ts
+src/db/queries/items.ts
+src/jobs/runDueReminders.ts
+src/services/actionPlanCommit.ts
+src/services/contextRetrieval.ts
+```
+
+Validation completed locally:
+
+```text
+npm test -> passed, 32 tests
+npm run lint -> passed
+npm run build -> passed
+```
+
+New tests cover:
+
+```text
+edit task request creates zero new tasks
+ordered task list becomes six separate items
+training missed plus tentative Holmy ride does not become one task title
+anti-garbage validator blocks command text as item title
+tentative follow-up asks whether it happened or was cancelled
+tentative training plan appears in day views
+memory correction is classified as memory_update
+command-like texts do not create tasks
+```

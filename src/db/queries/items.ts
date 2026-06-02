@@ -52,6 +52,54 @@ export async function listOpenTasks(userId: string, limit = 30): Promise<Planner
     .limit(limit);
 }
 
+export async function listManageableItems(userId: string, limit = 40): Promise<PlannerItem[]> {
+  return getDb()
+    .select()
+    .from(plannerItems)
+    .where(
+      and(
+        eq(plannerItems.userId, userId),
+        inArray(plannerItems.kind, [
+          "task",
+          "preparation_task",
+          "recurring_task",
+          "training",
+          "tentative_event",
+        ]),
+        eq(plannerItems.status, "active"),
+      ),
+    )
+    .orderBy(
+      sql`${plannerItems.dueAt} asc nulls last`,
+      sql`${plannerItems.startAt} asc nulls last`,
+      sql`nullif(${plannerItems.metadata}->>'orderIndex', '')::int asc nulls last`,
+      desc(plannerItems.createdAt),
+    )
+    .limit(limit);
+}
+
+export async function listOverdueOpenItems(params: {
+  userId: string;
+  before: Date;
+  limit?: number;
+}): Promise<PlannerItem[]> {
+  return getDb()
+    .select()
+    .from(plannerItems)
+    .where(
+      and(
+        eq(plannerItems.userId, params.userId),
+        eq(plannerItems.status, "active"),
+        or(
+          and(isNotNull(plannerItems.dueAt), lte(plannerItems.dueAt, params.before)),
+          and(isNotNull(plannerItems.startAt), lte(plannerItems.startAt, params.before)),
+        ),
+      ),
+    )
+    .orderBy(sql`coalesce(${plannerItems.dueAt}, ${plannerItems.startAt}) asc`)
+    .limit(params.limit ?? 20);
+}
+
 export async function createManualPlannerItem(params: {
   userId: string;
   kind: string;
@@ -107,6 +155,15 @@ export async function markPlannerItemCompleted(
   const [item] = await getDb()
     .update(plannerItems)
     .set({ status: "completed", completedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(plannerItems.userId, userId), eq(plannerItems.id, itemId)))
+    .returning();
+  return item ?? null;
+}
+
+export async function cancelPlannerItem(userId: string, itemId: string): Promise<PlannerItem | null> {
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({ status: "cancelled", updatedAt: new Date() })
     .where(and(eq(plannerItems.userId, userId), eq(plannerItems.id, itemId)))
     .returning();
   return item ?? null;

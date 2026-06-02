@@ -1,5 +1,7 @@
 import { InlineKeyboard } from "grammy";
 
+import type { PlannerItem } from "@/db/schema";
+
 export function pendingActionKeyboard(pendingActionId: string) {
   return new InlineKeyboard()
     .text("Подтвердить", `pa:ok:${pendingActionId}`)
@@ -20,6 +22,33 @@ export function itemActionKeyboard(itemId: string, kind: string) {
   if (kind === "event") keyboard.text("Подготовка", `prep:${itemId}`);
   if (kind === "training") keyboard.text("План тренировки", `training:${itemId}`);
   return keyboard;
+}
+
+export function taskManagementKeyboard(items: PlannerItem[]) {
+  const keyboard = new InlineKeyboard();
+  for (const [index, item] of items.slice(0, 5).entries()) {
+    const label = String(index + 1);
+    keyboard
+      .text(`Готово ${label}`, `done:${item.id}`)
+      .text(`Перенести ${label}`, `manage:reschedule:${item.id}`)
+      .text(`Удалить ${label}`, `manage:delete:${item.id}`)
+      .row();
+  }
+  keyboard
+    .text("Изменить время", "manage:bulk_time")
+    .text("Добавить напоминание", "manage:bulk_reminder")
+    .row()
+    .text("Скрыть", "noop");
+  return keyboard;
+}
+
+export function tentativeEventFollowupKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("Был", `tentative:happened:${itemId}`)
+    .text("Не было", `tentative:skipped:${itemId}`)
+    .row()
+    .text("Перенести", `tentative:reschedule:${itemId}`)
+    .text("Записать итоги", `tentative:notes:${itemId}`);
 }
 
 export function reminderActionKeyboard(reminderId: string, plannerItemId?: string | null) {

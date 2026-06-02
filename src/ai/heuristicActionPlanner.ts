@@ -289,6 +289,7 @@ function action(overrides: Partial<ActionPlanItem> & Pick<ActionPlanItem, "title
     recurrence: null,
     reminders: [],
     memoryCandidates: [],
+    metadata: {},
     ...rest,
   };
 }

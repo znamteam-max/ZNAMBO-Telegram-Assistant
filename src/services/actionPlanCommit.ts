@@ -258,6 +258,7 @@ function materializeAction(params: {
       risk: params.action.risk,
       tentative: params.action.tentative,
       recurrence: params.action.recurrence,
+      ...params.action.metadata,
     },
   };
 

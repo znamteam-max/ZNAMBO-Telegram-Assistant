@@ -1,8 +1,14 @@
 import { DateTime } from "luxon";
 import { InputFile, type Bot } from "grammy";
 
+import { getLatestAuditByAction } from "@/db/queries/audit";
 import { deleteMemoryForUser, exportOwnerData, listActiveMemories } from "@/db/queries/memories";
-import { createManualPlannerItem, listItemsBetween, listOpenTasks } from "@/db/queries/items";
+import {
+  createManualPlannerItem,
+  listItemsBetween,
+  listManageableItems,
+  listOverdueOpenItems,
+} from "@/db/queries/items";
 import { createReminderIfMissing } from "@/db/queries/reminders";
 import { markUserOnboarded, updateUserTimezone } from "@/db/queries/users";
 import { assertValidZone } from "@/domain/dateTime";
@@ -11,8 +17,8 @@ import { createGoogleCalendarAuthUrl } from "@/integrations/googleCalendar";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
-import { calendarConnectKeyboard, memoryDeleteKeyboard, startKeyboard } from "./keyboards";
-import { formatItemList } from "./formatters";
+import { calendarConnectKeyboard, memoryDeleteKeyboard, startKeyboard, taskManagementKeyboard } from "./keyboards";
+import { formatItemList, formatTaskManagementView } from "./formatters";
 
 export function registerCommands(bot: Bot<BotContext>) {
   bot.command("start", async (ctx) => {
@@ -110,8 +116,10 @@ export function registerCommands(bot: Bot<BotContext>) {
 
   bot.command("tasks", async (ctx) => {
     const owner = requireOwner(ctx);
-    const tasks = await listOpenTasks(owner.id);
-    await ctx.reply(formatItemList("Открытые задачи", tasks, owner.timezone));
+    const tasks = await listManageableItems(owner.id);
+    await ctx.reply(formatTaskManagementView({ title: "Текущие задачи", items: tasks, timezone: owner.timezone }), {
+      reply_markup: tasks.length ? taskManagementKeyboard(tasks) : undefined,
+    });
   });
 
   bot.command("remindertest", async (ctx) => {
@@ -168,6 +176,26 @@ export function registerCommands(bot: Bot<BotContext>) {
       });
     }
   });
+
+  bot.command("debuglast", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const row = await getLatestAuditByAction({ userId: owner.id, action: "assistant.decision_trace" });
+    if (!row) {
+      await ctx.reply("Пока нет decision trace.");
+      return;
+    }
+    const details = row.details as Record<string, unknown>;
+    await ctx.reply(
+      [
+        "Последнее решение:",
+        `intent: ${String(details.intent ?? "unknown")}`,
+        `confidence: ${String(details.confidence ?? "unknown")}`,
+        `items: ${String(details.extractedItemCount ?? 0)}`,
+        `final: ${String(details.finalAction ?? "unknown")}`,
+        `warnings: ${Array.isArray(details.validatorWarnings) ? details.validatorWarnings.length : 0}`,
+      ].join("\n"),
+    );
+  });
 }
 
 async function replySchedule(ctx: BotContext, title: string, dayFrom: number, dayTo: number) {
@@ -180,8 +208,21 @@ async function replySchedule(ctx: BotContext, title: string, dayFrom: number, da
     .minus({ milliseconds: 1 })
     .toUTC()
     .toJSDate();
-  const items = await listItemsBetween({ userId: owner.id, from, to });
-  await ctx.reply(formatItemList(title, items, owner.timezone));
+  const [items, overdue] = await Promise.all([
+    listItemsBetween({ userId: owner.id, from, to }),
+    dayFrom === 0 ? listOverdueOpenItems({ userId: owner.id, before: from, limit: 20 }) : Promise.resolve([]),
+  ]);
+  const combined = dedupeItems([...overdue, ...items]);
+  await ctx.reply(formatItemList(title, combined, owner.timezone));
+}
+
+function dedupeItems<T extends { id: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
 }
 
 function buildCalendarStartUrl(telegramUserId?: number): string {

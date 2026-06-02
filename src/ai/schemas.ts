@@ -91,6 +91,7 @@ export const actionPlanItemSchema = z.object({
     .default(null),
   reminders: z.array(actionPlanReminderSchema).default([]),
   memoryCandidates: z.array(memoryCandidateSchema).default([]),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 });
 
 export const actionPlanSchema = z.object({
@@ -178,6 +179,7 @@ export const actionPlanJsonSchema = {
           "recurrence",
           "reminders",
           "memoryCandidates",
+          "metadata",
         ],
         properties: {
           actionType: {
@@ -229,6 +231,7 @@ export const actionPlanJsonSchema = {
           },
           reminders: { type: "array", items: reminderJsonSchema },
           memoryCandidates: { type: "array", items: memoryCandidateJsonSchema },
+          metadata: { type: "object", additionalProperties: true },
         },
       },
     },

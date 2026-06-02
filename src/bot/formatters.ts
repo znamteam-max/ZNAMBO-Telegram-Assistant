@@ -93,11 +93,12 @@ export function formatCommittedPlanSummary(params: {
   items: PlannerItem[];
   reminderCount: number;
   timezone: string;
+  intro?: string;
 }) {
-  const lines = ["✅ Записал:"];
+  const lines = [params.intro ?? "✅ Записал:"];
   for (const item of params.items) {
     const when = formatLocalDateRange(item.startAt, item.endAt ?? item.dueAt, item.timezone || params.timezone);
-    lines.push(`• ${kindLabels[item.kind] ?? item.kind}: ${item.title} — ${when}`);
+    lines.push(`• ${getItemLabel(item)}: ${item.title} — ${when}`);
   }
   lines.push(
     params.reminderCount
@@ -110,12 +111,59 @@ export function formatCommittedPlanSummary(params: {
 
 export function formatItemList(title: string, items: PlannerItem[], timezone: string): string {
   if (!items.length) return `${title}\n\nПусто.`;
-  const lines = items.map((item) => {
+  const lines = sortItemsForDisplay(items).map((item) => {
     const date = formatLocalDateTime(item.startAt ?? item.dueAt, item.timezone || timezone);
-    const icon = item.kind === "event" ? "•" : item.kind === "training" ? "•" : "•";
-    return `${icon} ${date} — ${kindLabels[item.kind] ?? item.kind}: ${item.title}`;
+    const order = getOrderIndex(item);
+    const orderPrefix = order ? `${order}. ` : "";
+    const floating = isFloating(item) ? " — без времени" : "";
+    const tentative = isTentative(item) ? " — предварительно" : "";
+    return `• ${orderPrefix}${date}${floating}${tentative} — ${getItemLabel(item)}: ${item.title}`;
   });
   return `${title}\n\n${lines.join("\n")}`;
+}
+
+export function formatTaskManagementView(params: {
+  title: string;
+  items: PlannerItem[];
+  timezone: string;
+}) {
+  if (!params.items.length) {
+    return `${params.title}\n\nСейчас открытых задач нет.`;
+  }
+
+  const today: string[] = [];
+  const training: string[] = [];
+  const overdue: string[] = [];
+  const floating: string[] = [];
+  const now = Date.now();
+
+  for (const [index, item] of sortItemsForDisplay(params.items).entries()) {
+    const line = `${index + 1}. [ ] ${item.title}${isFloating(item) ? " — без времени" : ""}`;
+    if ((item.dueAt ?? item.startAt)?.getTime() && (item.dueAt ?? item.startAt)!.getTime() < now) {
+      overdue.push(line);
+    } else if (item.kind === "training") {
+      training.push(`${line}${isTentative(item) ? " — предварительно" : ""}`);
+    } else if (isFloating(item)) {
+      floating.push(line);
+    } else {
+      today.push(line);
+    }
+  }
+
+  const sections = [
+    ["Сегодня", today],
+    ["Без времени", floating],
+    ["Тренировки", training],
+    ["Просроченное", overdue],
+  ] as const;
+
+  const lines = [params.title, "", "Ок, ничего нового не создаю. Показываю текущие дела для редактирования."];
+  for (const [sectionTitle, sectionItems] of sections) {
+    if (!sectionItems.length) continue;
+    lines.push("", `${sectionTitle}:`, ...sectionItems);
+  }
+  lines.push("", "Доступно: отметить выполненным, перенести, удалить, изменить время или добавить напоминание.");
+  return lines.join("\n");
 }
 
 export function formatReminderMessage(reminder: Reminder, item?: PlannerItem | null): string {
@@ -125,6 +173,9 @@ export function formatReminderMessage(reminder: Reminder, item?: PlannerItem | n
     return `Повторяющееся напоминание: ${item.title}\n${when}\n\nНажми кнопку, чтобы я понял, что делать дальше.`;
   }
   if (reminder.type === "followup") {
+    if (item.kind === "tentative_event" || isTentative(item)) {
+      return `${item.title} был или отменился?\n\nМожно отметить, что был, что не было, перенести или записать итоги.`;
+    }
     return `Как прошла встреча: ${item.title}?\n\nМожешь голосом надиктовать итоги, а я выделю новые задачи.`;
   }
   if (reminder.type === "training_followup") {
@@ -134,6 +185,44 @@ export function formatReminderMessage(reminder: Reminder, item?: PlannerItem | n
     return `Проверка задачи: ${item.title}\nСрок был: ${when}`;
   }
   return `Напоминание: ${item.title}\n${when}`;
+}
+
+function getItemLabel(item: PlannerItem): string {
+  const metadata = item.metadata ?? {};
+  if (metadata.itemType === "call") return "Созвон";
+  if (metadata.trainingReport === true) return "Отчёт";
+  return kindLabels[item.kind] ?? item.kind;
+}
+
+function getOrderIndex(item: PlannerItem): number | null {
+  const value = item.metadata?.orderIndex;
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function isFloating(item: PlannerItem): boolean {
+  return item.metadata?.isFloating === true || item.metadata?.timeUnspecified === true;
+}
+
+function isTentative(item: PlannerItem): boolean {
+  return item.kind === "tentative_event" || item.metadata?.tentative === true || item.metadata?.tentativeTrainingPlan === true;
+}
+
+function sortItemsForDisplay(items: PlannerItem[]) {
+  return [...items].sort((a, b) => {
+    const aOrder = getOrderIndex(a);
+    const bOrder = getOrderIndex(b);
+    if (aOrder && bOrder) return aOrder - bOrder;
+    if (aOrder) return -1;
+    if (bOrder) return 1;
+    const aTime = (a.startAt ?? a.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    const bTime = (b.startAt ?? b.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    return aTime - bTime;
+  });
 }
 
 function groupActions(actions: ActionPlanItem[]) {

@@ -1,7 +1,7 @@
 import type { Bot } from "grammy";
 
 import { confirmPendingActionInDb, cancelPendingAction } from "@/db/queries/pendingActions";
-import { getPlannerItemById, markPlannerItemCompleted } from "@/db/queries/items";
+import { cancelPlannerItem, getPlannerItemById, markPlannerItemCompleted } from "@/db/queries/items";
 import { deleteMemoryForUser } from "@/db/queries/memories";
 import {
   ackReminderForToday,
@@ -125,6 +125,28 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await ctx.reply(item ? `Готово: ${item.title}` : "Не нашёл задачу.");
   });
 
+  bot.callbackQuery(/^manage:reschedule:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Напиши новое время для этой задачи одним сообщением. Например: перенеси на завтра 11:30.");
+  });
+
+  bot.callbackQuery(/^manage:delete:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const item = await cancelPlannerItem(owner.id, ctx.match[1]);
+    await ctx.answerCallbackQuery(item ? "Удалено" : "Не найдено");
+    await ctx.reply(item ? `Удалил: ${item.title}` : "Не нашёл эту запись.");
+  });
+
+  bot.callbackQuery("manage:bulk_time", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Напиши, каким задачам поставить время. Например: Зумы РГ в 12:00, созвон НХЛ в 16:30.");
+  });
+
+  bot.callbackQuery("manage:bulk_reminder", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Напиши, по каким задачам и когда напомнить. Например: напомни про рилзы ЧМ через 2 часа.");
+  });
+
   bot.callbackQuery(/^reminder:ack:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const now = new Date();
@@ -164,6 +186,34 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await stopRecurringReminders(owner.id, ctx.match[1]);
     await ctx.answerCallbackQuery("Остановил");
     await ctx.reply("Остановил будущие повторяющиеся напоминания по этой записи.");
+  });
+
+  bot.callbackQuery(/^tentative:happened:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const item = await markPlannerItemCompleted(owner.id, ctx.match[1]);
+    await ctx.answerCallbackQuery(item ? "Отметил" : "Не найдено");
+    await ctx.reply(
+      item
+        ? `Понял, событие было: ${item.title}. Можешь надиктовать итоги, я выделю задачи.`
+        : "Не нашёл это tentative-событие.",
+    );
+  });
+
+  bot.callbackQuery(/^tentative:skipped:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const item = await cancelPlannerItem(owner.id, ctx.match[1]);
+    await ctx.answerCallbackQuery(item ? "Отмечено" : "Не найдено");
+    await ctx.reply(item ? `Ок, отмечаю как не состоялось: ${item.title}` : "Не нашёл это tentative-событие.");
+  });
+
+  bot.callbackQuery(/^tentative:reschedule:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("На когда перенести? Напиши новой фразой, например: перенеси этот созвон на завтра 12:30.");
+  });
+
+  bot.callbackQuery(/^tentative:notes:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Надиктуй или напиши итоги созвона, я разложу их на задачи и заметки.");
   });
 
   bot.callbackQuery(/^prep:(.+)$/, async (ctx) => {
