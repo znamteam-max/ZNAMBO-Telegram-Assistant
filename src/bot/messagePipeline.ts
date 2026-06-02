@@ -17,6 +17,7 @@ import { buildActionPlanFromDecision } from "@/services/assistantPlanBuilders";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 import { buildActiveContext } from "@/services/contextRetrieval";
 import { storePlanMemoryFacts } from "@/services/memory";
+import { logger } from "@/lib/logger";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -32,7 +33,7 @@ import { replyAndRecord } from "./reply";
 export async function handleIncomingUserMessage(ctx: BotContext, text: string, timezone: string) {
   const owner = requireOwner(ctx);
   const now = new Date();
-  const activeContext = await buildActiveContext({
+  const { activeContext, contextError } = await buildActiveContextBestEffort({
     userId: owner.id,
     timezone,
     query: text,
@@ -46,6 +47,7 @@ export async function handleIncomingUserMessage(ctx: BotContext, text: string, t
     shouldCreateItems: decision.shouldCreateItems,
     extractedItemCount: decision.extractedItems.length,
     activeContextPreview: activeContext.slice(0, 1600),
+    contextError,
     validatorWarnings: [],
     finalAction: "started",
     savedItemIds: [],
@@ -114,6 +116,27 @@ export async function handleIncomingUserMessage(ctx: BotContext, text: string, t
     trace.savedItemIds = result.savedItemIds;
   } finally {
     await saveAssistantDecisionTrace(ctx, trace);
+  }
+}
+
+async function buildActiveContextBestEffort(params: {
+  userId: string;
+  timezone: string;
+  query: string;
+  now: Date;
+}) {
+  try {
+    return {
+      activeContext: await buildActiveContext(params),
+      contextError: null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("Active context retrieval failed", { error: message });
+    return {
+      activeContext: `Context retrieval failed; continue without blocking. Error: ${message}`,
+      contextError: message,
+    };
   }
 }
 
@@ -304,6 +327,7 @@ type DecisionTraceDraft = {
   shouldCreateItems: boolean;
   extractedItemCount: number;
   activeContextPreview: string;
+  contextError: string | null;
   validatorWarnings: string[];
   finalAction: string;
   savedItemIds: string[];

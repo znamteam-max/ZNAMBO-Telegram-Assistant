@@ -1020,6 +1020,7 @@ training missed reports -> saved as note/training report, not task title
 tomorrow Holmy long ride -> tentative training plan with no arbitrary exact ride time
 memory/correction phrases -> memory update, no item creation
 AI planner fallback -> protected by anti-garbage validator before saving
+active context retrieval -> best-effort; transient DB errors do not block message handling
 tentative event follow-up -> asks whether the event happened or was cancelled
 /tasks -> editable task-management view
 /debuglast -> shows latest decision trace without secrets
@@ -1044,6 +1045,7 @@ src/ai/heuristicActionPlanner.ts
 src/ai/prompts/planner.system.ts
 src/bot/commands.ts
 src/bot/messageHandlers.ts
+src/bot/messagePipeline.ts
 src/bot/callbacks.ts
 src/bot/formatters.ts
 src/bot/keyboards.ts
@@ -1060,6 +1062,13 @@ Validation completed locally:
 npm test -> passed, 32 tests
 npm run lint -> passed
 npm run build -> passed
+```
+
+Additional production-hardening fix:
+
+```text
+active context retrieval can hit transient Neon connection errors
+message pipeline now logs the context error, stores it in decision trace, and continues without blocking the user's request
 ```
 
 New tests cover:
