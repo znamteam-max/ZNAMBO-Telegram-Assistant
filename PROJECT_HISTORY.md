@@ -1083,3 +1083,62 @@ tentative training plan appears in day views
 memory correction is classified as memory_update
 command-like texts do not create tasks
 ```
+
+### 13.22. Production deploy for intent-first assistant
+
+Code was pushed to GitHub:
+
+```text
+commit -> 48f934e76d5e53e93637d8cd5cb1ef36ad3f1760
+message -> Add intent-first assistant pipeline
+```
+
+Additional resilience fix was pushed:
+
+```text
+commit -> 4e027c4648678a4e6999bc0b566f66ace066d85c
+message -> Make context retrieval best effort
+```
+
+Vercel production health confirmed:
+
+```text
+url -> https://znambo-telegram-assistant.vercel.app/api/health
+ok -> true
+deploymentCommit -> 4e027c4648678a4e6999bc0b566f66ace066d85c
+calendarProvider -> yandex
+yandexCalendarConfigured -> true
+```
+
+Telegram webhook check:
+
+```text
+webhook url -> https://znambo-telegram-assistant.vercel.app/api/telegram/webhook
+pending_update_count -> 0
+last_error_message -> null
+```
+
+Reminder runner check:
+
+```text
+POST /api/reminders/run -> ok: true
+claimed -> 0
+sent -> 0
+failed -> 0
+```
+
+Local production DB synthetic verification status:
+
+```text
+direct local TCP queries to Neon intermittently returned read ECONNRESET
+active context retrieval was made best-effort so this kind of transient context failure does not block message handling
+fresh reminder creation from local scripts was not completed because inserts also hit ECONNRESET
+```
+
+Pending final manual verification:
+
+```text
+send /remindertest 2 in Telegram after this deploy
+confirm the Telegram reminder arrives
+record the result in PROJECT_HISTORY.md
+```
