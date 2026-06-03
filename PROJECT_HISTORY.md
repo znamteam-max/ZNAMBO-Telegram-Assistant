@@ -1232,7 +1232,18 @@ checks were rerun after rollout-safety changes
 Production status:
 
 ```text
-not deployed yet in this section
-0002_jarvis_mode migration still needs to be applied to production Neon before Jarvis Mode can be fully verified in production
-no production reminder delivery test was run for this Jarvis Mode commit yet
+deployed to Vercel production via GitHub auto-deploy
+production commit -> beba0341a2800b00a4ea0f7096ed800f8f4ee4f2
+0002_jarvis_mode migration applied to production Neon
+assistant.task_view_states and assistant.agent_actions verified in schema assistant
+health endpoint ok -> true
+calendar provider -> yandex
+Telegram webhook url -> https://znambo-telegram-assistant.vercel.app/api/telegram/webhook
+Telegram webhook pending_update_count -> 0
+Telegram webhook last_error_message -> null
+POST /api/reminders/run after deploy -> ok true, claimed 0, sent 0, failed 0
+direct production reminder smoke test -> claimed 1, sent 1, failed 0
+reminder_deliveries row confirmed -> status sent with Telegram message id
+temporary smoke-test planner item was cancelled after delivery so it does not remain in active tasks
+manual /remindertest 2 from the user's Telegram client was not run by Codex because Bot API cannot send an inbound user command
 ```

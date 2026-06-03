@@ -99,3 +99,33 @@ Next step:
 ```text
 Review diff, commit, push to GitHub, apply migration 0002 to production Neon, then verify Vercel deploy and Telegram behavior.
 ```
+
+### Turn: Jarvis Mode production rollout
+
+What happened:
+
+```text
+Committed and pushed Jarvis Mode MVP to main.
+Production Vercel health reported deployment commit beba0341a2800b00a4ea0f7096ed800f8f4ee4f2.
+Applied drizzle/0002_jarvis_mode.sql to production Neon.
+Verified assistant.task_view_states and assistant.agent_actions columns in schema assistant.
+Telegram webhook returned the production webhook URL, pending_update_count 0, and no last error.
+POST /api/reminders/run returned ok true.
+Created a short direct production reminder smoke test because Codex cannot send /remindertest as the user through Bot API.
+Runner claimed and sent 1 reminder with 0 failures; reminder_deliveries confirmed sent status with Telegram message id.
+Cancelled the temporary smoke-test planner item after delivery.
+```
+
+Checks:
+
+```text
+npm test passed: 39 tests
+npm run lint passed
+npm run build passed
+```
+
+Next step:
+
+```text
+User can send /remindertest 2 manually for a command-level smoke test; code-level and runner-level production rollout checks are complete.
+```
