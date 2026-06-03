@@ -168,3 +168,21 @@ export async function cancelPlannerItem(userId: string, itemId: string): Promise
     .returning();
   return item ?? null;
 }
+
+export async function restorePlannerItemStatus(params: {
+  userId: string;
+  itemId: string;
+  status: string;
+  completedAt?: Date | null;
+}): Promise<PlannerItem | null> {
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({
+      status: params.status,
+      completedAt: params.completedAt ?? null,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.id, params.itemId)))
+    .returning();
+  return item ?? null;
+}

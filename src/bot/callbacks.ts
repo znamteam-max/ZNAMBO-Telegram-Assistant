@@ -5,6 +5,7 @@ import { cancelPlannerItem, getPlannerItemById, markPlannerItemCompleted } from 
 import { deleteMemoryForUser } from "@/db/queries/memories";
 import {
   ackReminderForToday,
+  cancelItemReminders,
   snoozeReminder,
   stopRecurringReminders,
 } from "@/db/queries/reminders";
@@ -122,6 +123,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     const owner = requireOwner(ctx);
     await ctx.answerCallbackQuery("Отмечаю");
     const item = await markPlannerItemCompleted(owner.id, ctx.match[1]);
+    if (item) await cancelItemReminders(owner.id, item.id);
     await ctx.reply(item ? `Готово: ${item.title}` : "Не нашёл задачу.");
   });
 
@@ -133,6 +135,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery(/^manage:delete:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const item = await cancelPlannerItem(owner.id, ctx.match[1]);
+    if (item) await cancelItemReminders(owner.id, item.id);
     await ctx.answerCallbackQuery(item ? "Удалено" : "Не найдено");
     await ctx.reply(item ? `Удалил: ${item.title}` : "Не нашёл эту запись.");
   });
@@ -191,6 +194,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery(/^tentative:happened:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const item = await markPlannerItemCompleted(owner.id, ctx.match[1]);
+    if (item) await cancelItemReminders(owner.id, item.id);
     await ctx.answerCallbackQuery(item ? "Отметил" : "Не найдено");
     await ctx.reply(
       item
@@ -202,6 +206,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery(/^tentative:skipped:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const item = await cancelPlannerItem(owner.id, ctx.match[1]);
+    if (item) await cancelItemReminders(owner.id, item.id);
     await ctx.answerCallbackQuery(item ? "Отмечено" : "Не найдено");
     await ctx.reply(item ? `Ок, отмечаю как не состоялось: ${item.title}` : "Не нашёл это tentative-событие.");
   });

@@ -1142,3 +1142,97 @@ send /remindertest 2 in Telegram after this deploy
 confirm the Telegram reminder arrives
 record the result in PROJECT_HISTORY.md
 ```
+
+### 13.23. Chat/version history file requirement
+
+New operating rule from the user:
+
+```text
+after each message, maintain a file with chat history and version updates
+```
+
+Implementation:
+
+```text
+CHAT_HISTORY.md created at the project root
+PROJECT_HISTORY.md remains the production rollout/history file
+CHAT_HISTORY.md is now the turn-by-turn continuity log
+```
+
+Safety:
+
+```text
+do not write secrets, tokens, passwords, API keys, bearer tokens, database URLs, or private credentials into either history file
+```
+
+Attached context received in the same turn:
+
+```text
+a large Jarvis Mode specification for the next architecture step was attached
+implementation of that specification has not started in this turn
+```
+
+### 13.24. Jarvis Mode MVP implementation
+
+User request:
+
+```text
+implement the attached Jarvis Mode / agentic assistant specification without rewriting V2 from scratch
+```
+
+Implemented locally:
+
+```text
+added Jarvis Mode feature flag JARVIS_MODE_ENABLED, default true
+added central src/agent/jarvisPipeline.ts
+added deterministic Jarvis decision layer for plan views, task views, yesterday review, evening review, delete-by-index, done-by-index, cleanup, and undo
+delegates real task/event/training/multi-action creation to the existing V2 smart planner
+added rich context builder that includes active retrieval and latest task view state
+added task view state storage so numbered lists can be managed later by messages like "delete 7-12 and 14"
+added agent action history for debug/undo
+added cleanup validator for debug/test/command-like garbage items
+updated Telegram natural text and voice transcript flow to enter Jarvis Mode before V2 fallback
+updated /today, /tomorrow, /week, /tasks to render through Jarvis tools and save task view state
+added /review_yesterday, /cleanup_garbage, and /undo commands
+updated inline done/delete/tentative callbacks to cancel future reminders for affected items
+updated morning digest to include overdue open items so it does not look empty when yesterday has unfinished work
+made Jarvis task-view retrieval, task-view save, and agent-action save best-effort so rollout does not break Telegram flow if migration 0002 is applied slightly later
+```
+
+Database changes:
+
+```text
+new migration drizzle/0002_jarvis_mode.sql
+new assistant.task_view_states table
+new assistant.agent_actions table
+drizzle journal updated with 0002_jarvis_mode
+```
+
+New tests:
+
+```text
+Jarvis full-plan requests create zero tasks
+delete ranges like 7-12 and 14 route to task-view tools
+yesterday review creates zero tasks
+real multi-action capture still delegates to V2 planner
+task view state resolves display numbers to item ids
+cleanup detects debug and command-like garbage
+morning digest includes overdue open items
+```
+
+Validation completed locally:
+
+```text
+npm test -> passed, 39 tests
+npm run lint -> passed
+npm run build -> passed
+checks were rerun after rollout-safety changes
+```
+
+Production status:
+
+```text
+not deployed yet in this section
+0002_jarvis_mode migration still needs to be applied to production Neon before Jarvis Mode can be fully verified in production
+no production reminder delivery test was run for this Jarvis Mode commit yet
+```

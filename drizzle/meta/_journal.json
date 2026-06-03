@@ -15,6 +15,13 @@
       "when": 1780315200000,
       "tag": "0001_smart_planner_v2",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780479600000,
+      "tag": "0002_jarvis_mode",
+      "breakpoints": true
     }
   ]
 }

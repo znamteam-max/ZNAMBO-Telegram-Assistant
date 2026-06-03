@@ -1,14 +1,15 @@
-import { DateTime } from "luxon";
 import { InputFile, type Bot } from "grammy";
 
+import {
+  cleanupGarbageTool,
+  renderScheduleViewTool,
+  renderTaskViewTool,
+  renderYesterdayReviewTool,
+  undoLastActionTool,
+} from "@/agent/jarvisTools";
 import { getLatestAuditByAction } from "@/db/queries/audit";
 import { deleteMemoryForUser, exportOwnerData, listActiveMemories } from "@/db/queries/memories";
-import {
-  createManualPlannerItem,
-  listItemsBetween,
-  listManageableItems,
-  listOverdueOpenItems,
-} from "@/db/queries/items";
+import { createManualPlannerItem } from "@/db/queries/items";
 import { createReminderIfMissing } from "@/db/queries/reminders";
 import { markUserOnboarded, updateUserTimezone } from "@/db/queries/users";
 import { assertValidZone } from "@/domain/dateTime";
@@ -17,8 +18,8 @@ import { createGoogleCalendarAuthUrl } from "@/integrations/googleCalendar";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
-import { calendarConnectKeyboard, memoryDeleteKeyboard, startKeyboard, taskManagementKeyboard } from "./keyboards";
-import { formatItemList, formatTaskManagementView } from "./formatters";
+import { calendarConnectKeyboard, memoryDeleteKeyboard, startKeyboard } from "./keyboards";
+import { replyAndRecord } from "./reply";
 
 export function registerCommands(bot: Bot<BotContext>) {
   bot.command("start", async (ctx) => {
@@ -52,6 +53,9 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/tomorrow — завтра",
         "/week — ближайшие 7 дней",
         "/tasks — открытые задачи",
+        "/review_yesterday — разбор вчера",
+        "/cleanup_garbage — убрать тестовый или случайный мусор",
+        "/undo — откатить последнее удаление или cleanup",
         "/remindertest 2 — тестовое напоминание через N минут",
         "/calendar — статус календаря",
         "/settings Europe/Moscow — сменить часовой пояс",
@@ -110,17 +114,13 @@ export function registerCommands(bot: Bot<BotContext>) {
     });
   });
 
-  bot.command("today", async (ctx) => replySchedule(ctx, "Сегодня", 0, 1));
-  bot.command("tomorrow", async (ctx) => replySchedule(ctx, "Завтра", 1, 2));
-  bot.command("week", async (ctx) => replySchedule(ctx, "Ближайшие 7 дней", 0, 7));
-
-  bot.command("tasks", async (ctx) => {
-    const owner = requireOwner(ctx);
-    const tasks = await listManageableItems(owner.id);
-    await ctx.reply(formatTaskManagementView({ title: "Текущие задачи", items: tasks, timezone: owner.timezone }), {
-      reply_markup: tasks.length ? taskManagementKeyboard(tasks) : undefined,
-    });
-  });
+  bot.command("today", async (ctx) => replyJarvisTool(ctx, await renderCommandSchedule(ctx, "today")));
+  bot.command("tomorrow", async (ctx) => replyJarvisTool(ctx, await renderCommandSchedule(ctx, "tomorrow")));
+  bot.command("week", async (ctx) => replyJarvisTool(ctx, await renderCommandSchedule(ctx, "week")));
+  bot.command("tasks", async (ctx) => replyJarvisTool(ctx, await renderCommandTasks(ctx)));
+  bot.command("review_yesterday", async (ctx) => replyJarvisTool(ctx, await renderCommandYesterday(ctx)));
+  bot.command("cleanup_garbage", async (ctx) => replyJarvisTool(ctx, await runCommandCleanup(ctx)));
+  bot.command("undo", async (ctx) => replyJarvisTool(ctx, await runCommandUndo(ctx)));
 
   bot.command("remindertest", async (ctx) => {
     const owner = requireOwner(ctx);
@@ -198,31 +198,57 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
 }
 
-async function replySchedule(ctx: BotContext, title: string, dayFrom: number, dayTo: number) {
+async function renderCommandSchedule(
+  ctx: BotContext,
+  scope: "today" | "tomorrow" | "week",
+) {
   const owner = requireOwner(ctx);
-  const nowLocal = DateTime.utc().setZone(owner.timezone);
-  const from = nowLocal.startOf("day").plus({ days: dayFrom }).toUTC().toJSDate();
-  const to = nowLocal
-    .startOf("day")
-    .plus({ days: dayTo })
-    .minus({ milliseconds: 1 })
-    .toUTC()
-    .toJSDate();
-  const [items, overdue] = await Promise.all([
-    listItemsBetween({ userId: owner.id, from, to }),
-    dayFrom === 0 ? listOverdueOpenItems({ userId: owner.id, before: from, limit: 20 }) : Promise.resolve([]),
-  ]);
-  const combined = dedupeItems([...overdue, ...items]);
-  await ctx.reply(formatItemList(title, combined, owner.timezone));
+  return renderScheduleViewTool({
+    userId: owner.id,
+    timezone: owner.timezone,
+    sourceMessageId: ctx.dbMessageId,
+    scope,
+  });
 }
 
-function dedupeItems<T extends { id: string }>(items: T[]): T[] {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
+async function renderCommandTasks(ctx: BotContext) {
+  const owner = requireOwner(ctx);
+  return renderTaskViewTool({
+    userId: owner.id,
+    timezone: owner.timezone,
+    sourceMessageId: ctx.dbMessageId,
   });
+}
+
+async function renderCommandYesterday(ctx: BotContext) {
+  const owner = requireOwner(ctx);
+  return renderYesterdayReviewTool({
+    userId: owner.id,
+    timezone: owner.timezone,
+    sourceMessageId: ctx.dbMessageId,
+  });
+}
+
+async function runCommandCleanup(ctx: BotContext) {
+  const owner = requireOwner(ctx);
+  return cleanupGarbageTool({
+    userId: owner.id,
+    timezone: owner.timezone,
+    sourceMessageId: ctx.dbMessageId,
+  });
+}
+
+async function runCommandUndo(ctx: BotContext) {
+  const owner = requireOwner(ctx);
+  return undoLastActionTool({
+    userId: owner.id,
+    timezone: owner.timezone,
+    sourceMessageId: ctx.dbMessageId,
+  });
+}
+
+async function replyJarvisTool(ctx: BotContext, result: { reply: string }) {
+  await replyAndRecord(ctx, result.reply);
 }
 
 function buildCalendarStartUrl(telegramUserId?: number): string {

@@ -1,6 +1,11 @@
 import { DateTime } from "luxon";
 
-import { getPlannerItemByAnyId, listItemsBetween, listOpenTasks } from "@/db/queries/items";
+import {
+  getPlannerItemByAnyId,
+  listItemsBetween,
+  listOpenTasks,
+  listOverdueOpenItems,
+} from "@/db/queries/items";
 import {
   claimDueReminders,
   createReminderIfMissing,
@@ -75,10 +80,13 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
     const nowLocal = DateTime.utc().setZone(user.timezone);
     const from = nowLocal.startOf("day").toUTC().toJSDate();
     const to = nowLocal.endOf("day").toUTC().toJSDate();
-    const items = await listItemsBetween({ userId: user.id, from, to });
+    const [items, overdue] = await Promise.all([
+      listItemsBetween({ userId: user.id, from, to }),
+      listOverdueOpenItems({ userId: user.id, before: from, limit: 20 }),
+    ]);
     return sender.sendMessage(
       user.telegramUserId.toString(),
-      formatItemList("Сегодня", items, user.timezone),
+      formatItemList("Сегодня", dedupeItems([...overdue, ...items]), user.timezone),
     );
   }
 
@@ -214,4 +222,13 @@ async function scheduleTomorrowDigests(now: Date) {
       payload: { date: dateKey },
     });
   }
+}
+
+function dedupeItems<T extends { id: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
 }

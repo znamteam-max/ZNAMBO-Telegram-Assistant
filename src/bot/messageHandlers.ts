@@ -11,6 +11,8 @@ import {
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
+import { handleJarvisTurn } from "@/agent/jarvisPipeline";
+import { getEnv } from "@/lib/env";
 import { handleIncomingUserMessage } from "./messagePipeline";
 import { replyAndRecord } from "./reply";
 
@@ -53,7 +55,7 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
       }
 
       await replyAndRecord(ctx, `Расшифровка: ${transcript}`);
-      await handleIncomingUserMessage(ctx, transcript, owner.timezone);
+      await handleNaturalLanguageTurn(ctx, transcript, owner.timezone);
     } catch (error) {
       await replyAndRecord(ctx, toUserMessage(error));
     }
@@ -63,11 +65,19 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
 async function handleNaturalText(ctx: BotContext, text: string) {
   const owner = requireOwner(ctx);
   try {
-    await handleIncomingUserMessage(ctx, text, owner.timezone);
+    await handleNaturalLanguageTurn(ctx, text, owner.timezone);
     if (ctx.dbMessageId) await markTelegramMessageProcessed(ctx.dbMessageId);
   } catch (error) {
     await replyAndRecord(ctx, toUserMessage(error));
   }
+}
+
+async function handleNaturalLanguageTurn(ctx: BotContext, text: string, timezone: string) {
+  if (getEnv().JARVIS_MODE_ENABLED) {
+    await handleJarvisTurn(ctx, text, timezone);
+    return;
+  }
+  await handleIncomingUserMessage(ctx, text, timezone);
 }
 
 function toUserMessage(error: unknown): string {

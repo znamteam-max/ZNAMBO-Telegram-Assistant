@@ -207,6 +207,27 @@ export const plannerItems = assistantTable(
   ],
 );
 
+export const taskViewStates = assistantTable(
+  "task_view_states",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull().default("current"),
+    title: text("title").notNull(),
+    itemIds: jsonb("item_ids").$type<string[]>().notNull().default(emptyArrayJson),
+    itemsSnapshot: jsonb("items_snapshot").$type<Record<string, unknown>[]>().notNull().default(emptyArrayJson),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index("task_view_states_user_created_idx").on(table.userId, table.createdAt),
+    index("task_view_states_user_scope_idx").on(table.userId, table.scope),
+  ],
+);
+
 export const itemSyncState = assistantTable(
   "item_sync_state",
   {
@@ -398,6 +419,27 @@ export const auditLog = assistantTable(
   (table) => [index("audit_log_user_created_idx").on(table.userId, table.createdAt)],
 );
 
+export const agentActions = assistantTable(
+  "agent_actions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    sourceMessageId: uuid("source_message_id").references(() => telegramMessages.id, {
+      onDelete: "set null",
+    }),
+    actionType: text("action_type").notNull(),
+    status: text("status").notNull().default("completed"),
+    input: jsonb("input").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    output: jsonb("output").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    undoPayload: jsonb("undo_payload").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("agent_actions_user_created_idx").on(table.userId, table.createdAt),
+    index("agent_actions_source_message_idx").on(table.sourceMessageId),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type PlannerItem = typeof plannerItems.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
@@ -409,3 +451,5 @@ export type ActionPlanItemRecord = typeof actionPlanItems.$inferSelect;
 export type ConversationMessage = typeof conversationMessages.$inferSelect;
 export type ReminderDelivery = typeof reminderDeliveries.$inferSelect;
 export type GoogleCalendarConnection = typeof googleCalendarConnections.$inferSelect;
+export type TaskViewState = typeof taskViewStates.$inferSelect;
+export type AgentAction = typeof agentActions.$inferSelect;

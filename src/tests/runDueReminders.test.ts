@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   getPlannerItemByAnyId: vi.fn(),
   listItemsBetween: vi.fn(),
   listOpenTasks: vi.fn(),
+  listOverdueOpenItems: vi.fn(),
 }));
 
 vi.mock("@/db/queries/reminders", () => ({
@@ -30,6 +31,7 @@ vi.mock("@/db/queries/items", () => ({
   getPlannerItemByAnyId: mocks.getPlannerItemByAnyId,
   listItemsBetween: mocks.listItemsBetween,
   listOpenTasks: mocks.listOpenTasks,
+  listOverdueOpenItems: mocks.listOverdueOpenItems,
 }));
 
 vi.mock("@/bot/createBot", () => ({
@@ -44,6 +46,7 @@ describe("runDueReminders", () => {
     mocks.listUsers.mockResolvedValue([]);
     mocks.listItemsBetween.mockResolvedValue([]);
     mocks.listOpenTasks.mockResolvedValue([]);
+    mocks.listOverdueOpenItems.mockResolvedValue([]);
     mocks.getUserById.mockResolvedValue({
       id: "user-id",
       telegramUserId: 52203584n,
@@ -101,6 +104,52 @@ describe("runDueReminders", () => {
         recurrenceKey: "weekly:MO,TU,WE,FR:09:30",
         scheduledAt: new Date("2026-06-01T10:00:00.000Z"),
       }),
+    );
+  });
+
+  it("includes overdue open items in morning digest", async () => {
+    const now = new Date("2026-06-01T05:00:00.000Z");
+    const reminder = {
+      id: "morning-digest-id",
+      userId: "user-id",
+      plannerItemId: null,
+      type: "morning_digest",
+      scheduledAt: now,
+      status: "claimed",
+      claimedAt: now,
+      sentAt: null,
+      telegramMessageId: null,
+      attemptCount: 1,
+      lastError: null,
+      repeatUntilAck: false,
+      ackedAt: null,
+      parentReminderId: null,
+      recurrenceKey: null,
+      payload: {},
+      createdAt: now,
+      updatedAt: now,
+    };
+    mocks.claimDueReminders.mockResolvedValue([reminder]);
+    mocks.listItemsBetween.mockResolvedValue([]);
+    mocks.listOverdueOpenItems.mockResolvedValue([
+      {
+        id: "overdue-id",
+        kind: "task",
+        title: "old open task",
+        timezone: "Europe/Moscow",
+        startAt: null,
+        endAt: null,
+        dueAt: new Date("2026-05-31T18:00:00.000Z"),
+        metadata: {},
+      },
+    ]);
+    const sender = { sendMessage: vi.fn().mockResolvedValue({ message_id: 1002 }) };
+
+    await runDueReminders({ now, sender });
+
+    expect(sender.sendMessage).toHaveBeenCalledWith(
+      "52203584",
+      expect.stringContaining("old open task"),
     );
   });
 });

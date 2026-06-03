@@ -17,7 +17,7 @@ Telegram
   -> planner_items + reminders + reminder_deliveries + memory_facts
   -> best-effort Google/Yandex Calendar sync
 
-Cloudflare Cron Worker
+External minute scheduler: cron-job.org or Cloudflare Worker
   -> /api/reminders/run
   -> atomic reminder claim
   -> Telegram notification
@@ -31,12 +31,13 @@ Postgres
 - Next.js App Router API routes for Telegram, reminders, calendar integrations, health and export.
 - Drizzle/Postgres schema and migrations for users, messages, conversation history, action plans, action plan items, planner items, reminders, reminder deliveries, memory facts, summaries, Google Calendar connections, sync state and audit log.
 - grammY bot with `/start`, `/today`, `/tomorrow`, `/week`, `/tasks`, `/settings`, `/calendar`, `/remindertest`, `/export`, `/forget`.
+- Jarvis Mode agent loop before planner capture: plan views, numbered task view state, delete/done by displayed indices, yesterday review, cleanup and undo.
 - Smart commit mode: `confirm_all`, `auto_low_risk`, `auto_all_with_undo`.
 - Multi-action `ActionPlan` instead of a single mechanical pending action.
 - OpenAI Responses API tool call for multi-action planning, with deterministic heuristic fallback for tests and obvious cases.
 - OpenAI audio transcription for voice/audio/video note/video, with 20 MB Telegram Bot API guard and 25 MB OpenAI guard.
 - Protected reminder dispatcher with atomic `FOR UPDATE SKIP LOCKED` claiming, delivery records and repeat-until-ack scheduling.
-- Cloudflare Worker cron project.
+- External minute scheduler support through cron-job.org or the optional Cloudflare Worker project.
 - Google Calendar OAuth, encrypted refresh token storage and event sync.
 - Yandex Calendar sync via CalDAV as a best-effort calendar provider. Calendar failure does not block DB records or Telegram reminders.
 - Vitest coverage for allowlist, idempotency middleware, date conversion, reminder policy, pending action double-click safety, oversized media, agenda ordering, calendar failure preservation and V2 planner acceptance cases.
@@ -48,7 +49,7 @@ Postgres
 - Telegram bot token from BotFather.
 - OpenAI API key.
 - Vercel project for the Next.js app.
-- Cloudflare account for the minute cron Worker.
+- External scheduler for the minute reminder runner. Production currently uses cron-job.org; Cloudflare Worker is optional.
 - Google OAuth credentials are optional unless `CALENDAR_PROVIDER=google` is used.
 
 ## Local Setup
@@ -101,6 +102,7 @@ OPENAI_MEMORY_MODEL=gpt-4o-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
 ENABLE_AGENT_PLANNER_V2=true
+JARVIS_MODE_ENABLED=true
 ENABLE_MEMORY_EMBEDDINGS=false
 SMART_COMMIT_MODE=auto_low_risk
 DEFAULT_MORNING_REMINDER_TIME=09:30
@@ -116,6 +118,15 @@ npm run db:migrate
 ```
 
 All business timestamps are stored as UTC `timestamptz`; user-facing interpretation uses the owner's IANA timezone.
+
+Jarvis Mode adds:
+
+```text
+assistant.task_view_states
+assistant.agent_actions
+```
+
+Apply `drizzle/0002_jarvis_mode.sql` before enabling production verification for numbered list management.
 
 ## Owner Telegram ID
 
@@ -185,9 +196,20 @@ YANDEX_CALDAV_APP_PASSWORD=<app-password>
 4. Deploy.
 5. Run `npm run telegram:webhook` locally with production env values or call Telegram `setWebhook` manually.
 
-Vercel Hobby cron is not suitable for minute-accurate reminders. Vercel Pro can replace the Cloudflare Worker with a per-minute cron calling `/api/reminders/run`.
+Vercel Hobby cron is not suitable for minute-accurate reminders. Production can use cron-job.org, Cloudflare Worker, or Vercel Pro cron to call `/api/reminders/run` once per minute.
 
-## Cloudflare Cron Worker
+## cron-job.org Scheduler
+
+Production currently uses cron-job.org as the minute scheduler:
+
+```text
+POST https://<your-app>/api/reminders/run
+Authorization: Bearer <CRON_SECRET>
+```
+
+The cron-job.org run should return `200 OK` with a JSON result containing `ok`, `claimed`, `sent`, and `failed`.
+
+## Cloudflare Cron Worker Optional Fallback
 
 ```bash
 cd cloudflare-reminder-worker
@@ -223,7 +245,7 @@ Telegram smoke test:
 /remindertest 2
 ```
 
-The bot creates a real reminder due in 2 minutes. It will arrive only if Cloudflare Worker or another cron calls `/api/reminders/run` every minute with the correct `CRON_SECRET`.
+The bot creates a real reminder due in 2 minutes. It will arrive only if cron-job.org, Cloudflare Worker, or another scheduler calls `/api/reminders/run` every minute with the correct `CRON_SECRET`.
 
 ## Supported Media
 
@@ -273,6 +295,9 @@ npm run telegram:webhook
 5. Send the San Antonio vs Oklahoma night-match message; it must schedule `03:30`, not `15:30`.
 6. Send `Каждое утро напоминай мне пить витамины, пока я не подтвержу`; check repeat-until-ack buttons.
 7. Send `/calendar status`; calendar errors must not block the saved plan.
+8. Send `Дай план целиком`, then `удалить 7-12 и 14`; the bot must use the last numbered list instead of creating a new task.
+9. Send `Хочу отметить что выполнено вчера`; the bot must open yesterday review without creating a task.
+10. Use `/cleanup_garbage` and `/undo` for cleanup smoke testing.
 
 ## Known Limitations
 
