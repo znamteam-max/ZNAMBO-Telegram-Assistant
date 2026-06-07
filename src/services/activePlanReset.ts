@@ -45,6 +45,22 @@ export async function prepareActivePlanReset(params: {
   return { action, preview, selectedItems };
 }
 
+export async function previewActivePlanReset(params: {
+  userId: string;
+  mode: ActivePlanResetMode;
+}) {
+  const { selectedItems, preview } = await buildResetSelection(params.userId, params.mode);
+  return {
+    preview,
+    selectedItems: selectedItems.map((item) => ({
+      id: item.id,
+      title: item.title,
+      kind: item.kind,
+      metadata: item.metadata,
+    })),
+  };
+}
+
 export async function executeActivePlanReset(params: {
   userId: string;
   actionId?: string | null;
