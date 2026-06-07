@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { decideJarvisTurn } from "@/agent/jarvisDecision";
+import { detectHardManagementIntent } from "@/agent/hardManagementIntent";
 import { parseDisplayIndexSelection } from "@/agent/jarvisTools";
 import { itemIdsForDisplayIndices } from "@/agent/state/taskViewState";
 import { isLikelyGarbagePlannerItem } from "@/agent/validation/antiGarbageValidator";
 import type { PlannerItem, TaskViewState } from "@/db/schema";
+import { isGarbageOrTestItem, isLegacyMultilineGarbageText } from "@/domain/itemVisibility";
 
 describe("Jarvis Mode decision and view-state safety", () => {
   it("does not create a task for full-plan requests", () => {
@@ -56,6 +58,30 @@ describe("Jarvis Mode decision and view-state safety", () => {
     expect(isLikelyGarbagePlannerItem(makeItem("Тестовое напоминание через 2 мин.", { debug: true }))).toBe(true);
     expect(isLikelyGarbagePlannerItem(makeItem("Дай план целиком"))).toBe(true);
     expect(isLikelyGarbagePlannerItem(makeItem("Запись Больше Zoom"))).toBe(false);
+  });
+
+  it.each([
+    ["Дай план целиком", "render_full_plan"],
+    ["Хочу отметить что выполнено вчера", "render_yesterday_review"],
+    ["Дай план за последние 2 дня", "render_recent_range"],
+    ["Удали 7 и 9", "delete_by_indices"],
+    ["Очисти активный план", "reset_active_plan"],
+  ])("hard-routes management text before any planner path: %s", (text, intent) => {
+    expect(detectHardManagementIntent(text)?.intent).toBe(intent);
+    expect(decideJarvisTurn(text).shouldCreateItems).toBe(false);
+  });
+
+  it("detects the known giant multiline legacy event as garbage", () => {
+    const text = [
+      "Созвон НХЛ 12:00",
+      "Созвон ВМ 13:00",
+      "Созвон ВС 14:00",
+      "Созвон по баскету 15:00",
+      "Уведомления каждый час",
+    ].join("\n");
+
+    expect(isLegacyMultilineGarbageText(text)).toBe(true);
+    expect(isGarbageOrTestItem(makeItem(text))).toBe(true);
   });
 });
 

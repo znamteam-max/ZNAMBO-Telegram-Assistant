@@ -5,12 +5,14 @@ const noCreateIntents = new Set<JarvisDecision["intent"]>([
   "render_today",
   "render_tomorrow",
   "render_week",
+  "render_recent_range",
   "render_tasks",
   "render_yesterday_review",
   "render_evening_review",
   "delete_by_indices",
   "mark_done_by_indices",
   "cleanup_garbage",
+  "reset_active_plan",
   "undo_last_action",
 ]);
 

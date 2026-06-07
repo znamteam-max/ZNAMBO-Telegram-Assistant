@@ -1247,3 +1247,53 @@ reminder_deliveries row confirmed -> status sent with Telegram message id
 temporary smoke-test planner item was cancelled after delivery so it does not remain in active tasks
 manual /remindertest 2 from the user's Telegram client was not run by Codex because Bot API cannot send an inbound user command
 ```
+
+### 13.25. Full production repair implementation
+
+Root causes confirmed:
+
+```text
+Jarvis management handlers could still fall through to legacy V2 after a handler error
+the old pending_action confirmation path could create a management phrase
+daily digests used unbounded historical open-item queries
+numbered renderers and task_view_state mapping were not one atomic operation
+test reminders remained active after successful delivery
+```
+
+Implemented:
+
+```text
+central hard-management detector and deterministic router
+hard guard before Jarvis AI, legacy V2, pending_action writes, and ActionPlan writes
+safe no-create response when a management handler fails
+reset_active_plan confirmation flow with all/garbage-only/show/cancel buttons
+owner-only /admin_reset_active_plan command
+soft archive, reminder-chain cancellation, calendar-sync-job cancellation, agent action snapshot, and undo
+strict daily/evening/yesterday-carry/recent-range/full-plan queries
+single renderAndSaveTaskView helper with exact sequential 1..N mapping
+task_view_state persistence for morning and evening scheduled reviews
+native recent-range rendering
+known production pollution and giant multiline garbage detection
+/remindertest metadata plus automatic archive after delivery
+/debuglast pipeline markers
+/api/health Jarvis mode marker
+edited-message routing through the same guarded pipeline
+```
+
+Local validation:
+
+```text
+npm test -> 18 files passed, 56 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+```
+
+One-time production cleanup status:
+
+```text
+direct local production Neon preview was attempted
+Neon pooler and direct endpoint repeatedly returned ECONNRESET
+no production cleanup mutation was applied without a reliable preview
+the confirmed owner-only cleanup flow is ready for deployment
+```

@@ -7,7 +7,7 @@ export async function recordAgentAction(params: {
   userId?: string | null;
   sourceMessageId?: string | null;
   actionType: string;
-  status?: "completed" | "failed" | "noop";
+  status?: "pending" | "completed" | "cancelled" | "failed" | "noop" | "undone";
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   undoPayload?: Record<string, unknown>;
@@ -25,6 +25,37 @@ export async function recordAgentAction(params: {
     })
     .returning();
 
+  return row ?? null;
+}
+
+export async function getAgentActionById(params: {
+  userId: string;
+  actionId: string;
+}): Promise<AgentAction | null> {
+  const [row] = await getDb()
+    .select()
+    .from(agentActions)
+    .where(and(eq(agentActions.userId, params.userId), eq(agentActions.id, params.actionId)))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function updateAgentAction(params: {
+  userId: string;
+  actionId: string;
+  status: string;
+  output?: Record<string, unknown>;
+  undoPayload?: Record<string, unknown>;
+}) {
+  const [row] = await getDb()
+    .update(agentActions)
+    .set({
+      status: params.status,
+      output: params.output ?? {},
+      undoPayload: params.undoPayload ?? {},
+    })
+    .where(and(eq(agentActions.userId, params.userId), eq(agentActions.id, params.actionId)))
+    .returning();
   return row ?? null;
 }
 

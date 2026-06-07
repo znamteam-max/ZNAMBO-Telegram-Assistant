@@ -6,12 +6,13 @@ const mocks = vi.hoisted(() => ({
   markReminderFailed: vi.fn(),
   markReminderSent: vi.fn(),
   recordReminderDelivery: vi.fn(),
+  archiveDeliveredTestItem: vi.fn(),
   getUserById: vi.fn(),
   listUsers: vi.fn(),
   getPlannerItemByAnyId: vi.fn(),
-  listItemsBetween: vi.fn(),
-  listOpenTasks: vi.fn(),
-  listOverdueOpenItems: vi.fn(),
+  listDailyDigestItems: vi.fn(),
+  listEveningReviewItems: vi.fn(),
+  listYesterdayCarryCandidates: vi.fn(),
 }));
 
 vi.mock("@/db/queries/reminders", () => ({
@@ -20,6 +21,7 @@ vi.mock("@/db/queries/reminders", () => ({
   markReminderFailed: mocks.markReminderFailed,
   markReminderSent: mocks.markReminderSent,
   recordReminderDelivery: mocks.recordReminderDelivery,
+  archiveDeliveredTestItem: mocks.archiveDeliveredTestItem,
 }));
 
 vi.mock("@/db/queries/users", () => ({
@@ -29,13 +31,17 @@ vi.mock("@/db/queries/users", () => ({
 
 vi.mock("@/db/queries/items", () => ({
   getPlannerItemByAnyId: mocks.getPlannerItemByAnyId,
-  listItemsBetween: mocks.listItemsBetween,
-  listOpenTasks: mocks.listOpenTasks,
-  listOverdueOpenItems: mocks.listOverdueOpenItems,
+  listDailyDigestItems: mocks.listDailyDigestItems,
+  listEveningReviewItems: mocks.listEveningReviewItems,
+  listYesterdayCarryCandidates: mocks.listYesterdayCarryCandidates,
 }));
 
 vi.mock("@/bot/createBot", () => ({
   getBot: () => ({ api: { sendMessage: vi.fn() } }),
+}));
+
+vi.mock("@/agent/state/taskViewState", () => ({
+  rememberTaskView: vi.fn().mockResolvedValue({ id: "digest-view-id" }),
 }));
 
 import { runDueReminders } from "@/jobs/runDueReminders";
@@ -44,9 +50,9 @@ describe("runDueReminders", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listUsers.mockResolvedValue([]);
-    mocks.listItemsBetween.mockResolvedValue([]);
-    mocks.listOpenTasks.mockResolvedValue([]);
-    mocks.listOverdueOpenItems.mockResolvedValue([]);
+    mocks.listDailyDigestItems.mockResolvedValue([]);
+    mocks.listEveningReviewItems.mockResolvedValue([]);
+    mocks.listYesterdayCarryCandidates.mockResolvedValue([]);
     mocks.getUserById.mockResolvedValue({
       id: "user-id",
       telegramUserId: 52203584n,
@@ -107,7 +113,7 @@ describe("runDueReminders", () => {
     );
   });
 
-  it("includes overdue open items in morning digest", async () => {
+  it("includes only the bounded previous-day carry block in morning digest", async () => {
     const now = new Date("2026-06-01T05:00:00.000Z");
     const reminder = {
       id: "morning-digest-id",
@@ -130,8 +136,8 @@ describe("runDueReminders", () => {
       updatedAt: now,
     };
     mocks.claimDueReminders.mockResolvedValue([reminder]);
-    mocks.listItemsBetween.mockResolvedValue([]);
-    mocks.listOverdueOpenItems.mockResolvedValue([
+    mocks.listDailyDigestItems.mockResolvedValue([]);
+    mocks.listYesterdayCarryCandidates.mockResolvedValue([
       {
         id: "overdue-id",
         kind: "task",
@@ -151,5 +157,46 @@ describe("runDueReminders", () => {
       "52203584",
       expect.stringContaining("old open task"),
     );
+  });
+
+  it("auto-archives a delivered remindertest item without scheduling repeats", async () => {
+    const now = new Date("2026-06-01T08:45:00.000Z");
+    const reminder = {
+      id: "remindertest-id",
+      userId: "user-id",
+      plannerItemId: "test-item-id",
+      type: "custom",
+      scheduledAt: now,
+      status: "claimed",
+      claimedAt: now,
+      sentAt: null,
+      telegramMessageId: null,
+      attemptCount: 1,
+      lastError: null,
+      repeatUntilAck: false,
+      ackedAt: null,
+      parentReminderId: null,
+      recurrenceKey: null,
+      payload: { isTest: true, source: "remindertest" },
+      createdAt: now,
+      updatedAt: now,
+    };
+    mocks.claimDueReminders.mockResolvedValue([reminder]);
+    mocks.getPlannerItemByAnyId.mockResolvedValue({
+      id: "test-item-id",
+      kind: "task",
+      title: "Test reminder",
+      timezone: "Europe/Moscow",
+      startAt: null,
+      endAt: null,
+      dueAt: now,
+      metadata: { isTest: true, source: "remindertest" },
+    });
+    const sender = { sendMessage: vi.fn().mockResolvedValue({ message_id: 1003 }) };
+
+    await runDueReminders({ now, sender });
+
+    expect(mocks.archiveDeliveredTestItem).toHaveBeenCalledWith("user-id", "test-item-id");
+    expect(mocks.createReminderIfMissing).not.toHaveBeenCalled();
   });
 });

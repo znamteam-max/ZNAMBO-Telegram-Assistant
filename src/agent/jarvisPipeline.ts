@@ -7,12 +7,15 @@ import { handleIncomingUserMessage } from "@/bot/messagePipeline";
 import { replyAndRecord } from "@/bot/reply";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
+import { detectHardManagementIntent, SAFE_MANAGEMENT_FALLBACK_REPLY } from "./hardManagementIntent";
+import { handleHardManagementIntent } from "./hardManagementRouter";
 import { decideJarvisTurn } from "./jarvisDecision";
 import {
   cleanupGarbageTool,
   deleteItemsByIndicesTool,
   markDoneByIndicesTool,
   renderEveningReviewTool,
+  renderRecentRangeTool,
   renderScheduleViewTool,
   renderTaskViewTool,
   renderYesterdayReviewTool,
@@ -24,6 +27,49 @@ import type { JarvisToolResult } from "./types";
 export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: string) {
   const owner = requireOwner(ctx);
   const now = new Date();
+  const preRouterIntent = detectHardManagementIntent(text);
+  const hardTrace: Record<string, unknown> = {
+    rawText: text.slice(0, 1200),
+    pipelineUsed: "jarvis",
+    preRouterIntent: preRouterIntent?.intent ?? null,
+    finalIntent: null,
+    fallbackUsed: false,
+    createItemAttempted: false,
+    createItemBlockedByValidator: false,
+    finalAction: "hard_router_started",
+  };
+  if (preRouterIntent) {
+    try {
+      const handled = await handleHardManagementIntent({ ctx, text, timezone, now });
+      hardTrace.finalIntent = handled?.intent ?? preRouterIntent.intent;
+      hardTrace.finalAction = `hard_management_${handled?.intent ?? preRouterIntent.intent}`;
+      if (handled) {
+        hardTrace.affectedItemIds = handled.result.affectedItemIds;
+        await replyToolResult(ctx, handled.result);
+      } else {
+        await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
+      }
+    } catch (error) {
+      hardTrace.finalIntent = preRouterIntent.intent;
+      hardTrace.finalAction = "hard_management_safe_failure";
+      hardTrace.error = error instanceof Error ? error.message : String(error);
+      logger.warn("Hard management handler failed without legacy fallback", {
+        intent: preRouterIntent.intent,
+        error: hardTrace.error,
+      });
+      await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
+    } finally {
+      await writeAudit({
+        userId: owner.id,
+        action: "assistant.jarvis_trace",
+        entityType: "telegram_message",
+        entityId: ctx.dbMessageId,
+        details: hardTrace,
+      });
+    }
+    return;
+  }
+
   const jarvisContext = await buildJarvisContext({
     userId: owner.id,
     timezone,
@@ -35,6 +81,12 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
 
   const trace: Record<string, unknown> = {
     rawText: text.slice(0, 1200),
+    pipelineUsed: "jarvis",
+    preRouterIntent: null,
+    finalIntent: decision.intent,
+    fallbackUsed: false,
+    createItemAttempted: decision.shouldCreateItems,
+    createItemBlockedByValidator: false,
     intent: decision.intent,
     mode: decision.mode,
     confidence: decision.confidence,
@@ -66,20 +118,26 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       trace.finalAction = `jarvis_tool_${decision.intent}`;
       trace.affectedItemIds = result.affectedItemIds;
       trace.viewStateId = result.viewStateId ?? null;
-      await replyAndRecord(ctx, result.reply);
+      await replyToolResult(ctx, result);
       return;
     }
 
     trace.finalAction = "delegated_to_v2_planner";
+    trace.fallbackUsed = true;
     await handleIncomingUserMessage(ctx, text, timezone);
   } catch (error) {
     trace.finalAction = "jarvis_error";
     trace.error = error instanceof Error ? error.message : String(error);
-    logger.warn("Jarvis pipeline failed; falling back to V2 planner", {
+    logger.warn("Jarvis pipeline failed", {
       error: trace.error,
       intent: decision.intent,
     });
-    await handleIncomingUserMessage(ctx, text, timezone);
+    if (decision.intent === "delegate_to_planner") {
+      trace.fallbackUsed = true;
+      await handleIncomingUserMessage(ctx, text, timezone);
+    } else {
+      await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
+    }
   } finally {
     await writeAudit({
       userId: owner.id,
@@ -115,6 +173,8 @@ async function executeJarvisTool(params: {
       return renderScheduleViewTool({ ...base, scope: "tomorrow" });
     case "render_week":
       return renderScheduleViewTool({ ...base, scope: "week" });
+    case "render_recent_range":
+      return renderRecentRangeTool({ ...base, days: 2 });
     case "render_tasks":
       return renderTaskViewTool(base);
     case "render_yesterday_review":
@@ -127,9 +187,19 @@ async function executeJarvisTool(params: {
       return markDoneByIndicesTool({ ...base, text: params.text });
     case "cleanup_garbage":
       return cleanupGarbageTool(base);
+    case "reset_active_plan":
+      return null;
     case "undo_last_action":
       return undoLastActionTool(base);
     case "delegate_to_planner":
       return null;
   }
+}
+
+async function replyToolResult(ctx: BotContext, result: JarvisToolResult) {
+  await replyAndRecord(
+    ctx,
+    result.reply,
+    result.replyMarkup ? { reply_markup: result.replyMarkup } : undefined,
+  );
 }

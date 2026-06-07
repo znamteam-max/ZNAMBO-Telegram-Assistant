@@ -14,11 +14,6 @@ const kindLabels: Record<string, string> = {
 
 export function sortJarvisItemsForDisplay(items: PlannerItem[]): PlannerItem[] {
   return [...items].sort((a, b) => {
-    const aOrder = orderIndex(a);
-    const bOrder = orderIndex(b);
-    if (aOrder !== null && bOrder !== null) return aOrder - bOrder;
-    if (aOrder !== null) return -1;
-    if (bOrder !== null) return 1;
     const aTime = (a.startAt ?? a.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
     const bTime = (b.startAt ?? b.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
     if (aTime !== bTime) return aTime - bTime;
@@ -109,16 +104,6 @@ function formatWhen(item: PlannerItem, timezone: string): string {
     : null;
   const base = start.toFormat("dd.LL HH:mm");
   return end?.isValid ? `${base}-${end.toFormat("HH:mm")}` : base;
-}
-
-function orderIndex(item: PlannerItem): number | null {
-  const value = item.metadata?.orderIndex;
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 }
 
 function isTentative(item: PlannerItem) {

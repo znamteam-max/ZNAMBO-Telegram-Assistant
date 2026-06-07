@@ -1,5 +1,6 @@
 import type { ActionPlan } from "./schemas";
 import type { AssistantDecision } from "./schemas/assistantDecision";
+import { isHardManagementText } from "@/agent/hardManagementIntent";
 
 export type PlannerValidationResult = {
   ok: boolean;
@@ -27,6 +28,10 @@ export function validatePlannerItemsBeforeSave(params: {
   const originalLower = original.toLowerCase();
   const originalHasBullets = hasMultipleBulletMarkers(original);
 
+  if (isHardManagementText(original)) {
+    warnings.push("hard management command reached planner save validator");
+  }
+
   for (const action of params.plan.actions) {
     const title = action.title.trim();
     const normalizedTitle = normalize(title);
@@ -42,6 +47,9 @@ export function validatePlannerItemsBeforeSave(params: {
 
     if (commandTitlePattern.test(title)) {
       warnings.push("management command was converted into an item title");
+    }
+    if (isHardManagementText(title)) {
+      warnings.push("hard management command was converted into an item title");
     }
 
     if (hasMultipleBulletMarkers(title)) {

@@ -94,3 +94,17 @@ export function startKeyboard(calendarLink?: { label: string; url: string }) {
 export function memoryDeleteKeyboard(memoryId: string) {
   return new InlineKeyboard().text("Удалить из памяти", `forget:${memoryId}`);
 }
+
+export function resetActivePlanKeyboard(actionId: string) {
+  return new InlineKeyboard()
+    .text("Да, очистить", `reset:confirm:${actionId}`)
+    .row()
+    .text("Только мусор и тестовые", `reset:garbage:${actionId}`)
+    .row()
+    .text("Показать список", "reset:show")
+    .text("Отмена", `reset:cancel:${actionId}`);
+}
+
+export function undoActionKeyboard() {
+  return new InlineKeyboard().text("Отменить последнее действие", "agent:undo");
+}

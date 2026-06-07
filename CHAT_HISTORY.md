@@ -129,3 +129,64 @@ Next step:
 ```text
 User can send /remindertest 2 manually for a command-level smoke test; code-level and runner-level production rollout checks are complete.
 ```
+
+### Turn: production repair started
+
+User request:
+
+```text
+Production logs show management fallback leakage, polluted active state, daily digest filtering bugs, broken task-view mapping, inconsistent numbering, and legacy multiline garbage. Perform a full production repair and one-time cleanup.
+```
+
+Status:
+
+```text
+Production repair started from a clean main branch.
+The repair will add a central hard-management guard before every planner fallback/save path, a confirmed reset-active-plan flow, strict daily/review visibility queries, unified sequential task-view rendering, recent-range support, test-item auto-archive, admin cleanup, debug pipeline markers, and production verification.
+```
+
+Next step:
+
+```text
+Verify the active production commit and routing paths, then implement the central guard before touching cleanup or digest behavior.
+```
+
+### Turn: production repair implementation completed locally
+
+What changed:
+
+```text
+Added one central hard-management detector/router before Jarvis AI, before legacy V2, and before both pending-action and ActionPlan database writes.
+Management-handler failures now return a safe response and never call the legacy planner.
+Added reset_active_plan preview and confirmation buttons, owner-only /admin_reset_active_plan, garbage-only cleanup, reminder-chain cancellation, calendar job cancellation, agent-action snapshots, and undo.
+Added strict daily, evening, yesterday-carry, full-plan, and recent-range queries.
+Added one renderAndSaveTaskView helper with fresh sequential 1..N numbering and exact saved mapping.
+Morning and evening scheduled messages now use the same numbered renderer and save task_view_state.
+Added /remindertest metadata and automatic test-item archive after successful delivery.
+Added safe pipeline markers to /debuglast and /api/health Jarvis mode marker.
+Added edited-message routing through the same natural-language guard.
+Added known production-pollution and legacy giant-multiline detection.
+```
+
+Validation:
+
+```text
+npm test -> 18 files passed, 56 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+```
+
+Production cleanup status:
+
+```text
+Direct local preview queries to production Neon repeatedly failed with ECONNRESET.
+No cleanup mutation was applied without a reliable preview.
+The confirmed owner-only cleanup flow is ready for production deployment.
+```
+
+Next step:
+
+```text
+Commit and push the repair, wait for Vercel auto-deploy, verify health/webhook/runner, then apply the confirmed garbage cleanup and record the result.
+```

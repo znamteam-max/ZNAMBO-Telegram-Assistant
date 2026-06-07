@@ -1,12 +1,15 @@
-import { DateTime } from "luxon";
-
+import {
+  detectHardManagementIntent,
+  SAFE_MANAGEMENT_FALLBACK_REPLY,
+} from "@/agent/hardManagementIntent";
+import { handleHardManagementIntent } from "@/agent/hardManagementRouter";
+import { renderScheduleViewTool, renderTaskViewTool } from "@/agent/jarvisTools";
 import { buildActionPlan } from "@/ai/planner";
 import { buildValidationFailureReply, validatePlannerItemsBeforeSave } from "@/ai/antiGarbageValidator";
 import { decideUserIntentWithAI } from "@/ai/assistantDecision";
 import type { ActionPlan } from "@/ai/schemas";
 import type { AssistantDecision } from "@/ai/schemas/assistantDecision";
 import { writeAudit } from "@/db/queries/audit";
-import { listItemsBetween, listManageableItems, listOverdueOpenItems } from "@/db/queries/items";
 import { createIdempotencyKey } from "@/lib/idempotency";
 import {
   commitStoredActionPlan,
@@ -24,15 +27,50 @@ import { requireOwner } from "./context";
 import {
   formatActionPlanCard,
   formatCommittedPlanSummary,
-  formatItemList,
-  formatTaskManagementView,
 } from "./formatters";
-import { actionPlanKeyboard, taskManagementKeyboard } from "./keyboards";
+import { actionPlanKeyboard } from "./keyboards";
 import { replyAndRecord } from "./reply";
 
 export async function handleIncomingUserMessage(ctx: BotContext, text: string, timezone: string) {
   const owner = requireOwner(ctx);
   const now = new Date();
+  const hardIntent = detectHardManagementIntent(text);
+  if (hardIntent) {
+    try {
+      const handled = await handleHardManagementIntent({ ctx, text, timezone, now });
+      if (handled) {
+        await replyAndRecord(
+          ctx,
+          handled.result.reply,
+          handled.result.replyMarkup ? { reply_markup: handled.result.replyMarkup } : undefined,
+        );
+      } else {
+        await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
+      }
+    } catch (error) {
+      logger.warn("Legacy V2 hard management guard blocked fallback", {
+        intent: hardIntent.intent,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
+    }
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.decision_trace",
+      entityType: "telegram_message",
+      entityId: ctx.dbMessageId,
+      details: {
+        pipelineUsed: "legacy_v2",
+        preRouterIntent: hardIntent.intent,
+        finalIntent: hardIntent.intent,
+        fallbackUsed: false,
+        createItemAttempted: false,
+        createItemBlockedByValidator: true,
+        finalAction: "hard_management_guard",
+      },
+    });
+    return;
+  }
   const { activeContext, contextError } = await buildActiveContextBestEffort({
     userId: owner.id,
     timezone,
@@ -51,11 +89,17 @@ export async function handleIncomingUserMessage(ctx: BotContext, text: string, t
     validatorWarnings: [],
     finalAction: "started",
     savedItemIds: [],
+    pipelineUsed: "legacy_v2",
+    preRouterIntent: null,
+    finalIntent: decision.intent,
+    fallbackUsed: false,
+    createItemAttempted: decision.shouldCreateItems,
+    createItemBlockedByValidator: false,
   };
 
   try {
     if (decision.intent === "manage_existing_items") {
-      await renderTaskManagementView(ctx, "Текущие задачи");
+      await renderTaskManagementView(ctx);
       trace.finalAction = "rendered_task_management";
       return;
     }
@@ -87,6 +131,7 @@ export async function handleIncomingUserMessage(ctx: BotContext, text: string, t
       trace.validatorWarnings = result.validatorWarnings;
       trace.finalAction = result.finalAction;
       trace.savedItemIds = result.savedItemIds;
+      trace.createItemBlockedByValidator = result.finalAction.includes("blocked");
       return;
     }
 
@@ -114,6 +159,7 @@ export async function handleIncomingUserMessage(ctx: BotContext, text: string, t
     trace.validatorWarnings = result.validatorWarnings;
     trace.finalAction = result.finalAction;
     trace.savedItemIds = result.savedItemIds;
+    trace.createItemBlockedByValidator = result.finalAction.includes("blocked");
   } finally {
     await saveAssistantDecisionTrace(ctx, trace);
   }
@@ -154,6 +200,15 @@ async function handleActionPlan(
   },
 ): Promise<{ finalAction: string; validatorWarnings: string[]; savedItemIds: string[] }> {
   const owner = requireOwner(ctx);
+  const hardIntent = detectHardManagementIntent(params.text);
+  if (hardIntent) {
+    await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
+    return {
+      finalAction: "blocked_hard_management_before_plan_save",
+      validatorWarnings: ["hard management command blocked before planner save"],
+      savedItemIds: [],
+    };
+  }
 
   if (params.plan.intent === "answer" || params.plan.intent === "clarify") {
     await replyAndRecord(ctx, formatActionPlanCard(params.plan, params.timezone));
@@ -167,7 +222,7 @@ async function handleActionPlan(
   });
   if (!validation.ok) {
     if (validation.warnings.some((warning) => warning.includes("management command"))) {
-      await renderTaskManagementView(ctx, "Текущие задачи");
+      await renderTaskManagementView(ctx);
       return {
         finalAction: "blocked_garbage_and_rendered_management",
         validatorWarnings: validation.warnings,
@@ -235,34 +290,31 @@ async function handleActionPlan(
   };
 }
 
-async function renderTaskManagementView(ctx: BotContext, title: string) {
+async function renderTaskManagementView(ctx: BotContext) {
   const owner = requireOwner(ctx);
-  const items = await listManageableItems(owner.id, 30);
-  await replyAndRecord(ctx, formatTaskManagementView({ title, items, timezone: owner.timezone }), {
-    reply_markup: items.length ? taskManagementKeyboard(items) : undefined,
+  const result = await renderTaskViewTool({
+    userId: owner.id,
+    timezone: owner.timezone,
+    sourceMessageId: ctx.dbMessageId,
   });
+  await replyAndRecord(ctx, result.reply);
 }
 
 async function answerStatusQuery(ctx: BotContext, decision: AssistantDecision) {
   const owner = requireOwner(ctx);
   const target = decision.managementRequest?.target ?? "today";
   if (target === "tasks" || target === "current") {
-    await renderTaskManagementView(ctx, "Текущие задачи");
+    await renderTaskManagementView(ctx);
     return;
   }
-
-  const nowLocal = DateTime.utc().setZone(owner.timezone);
-  const dayFrom = target === "tomorrow" ? 1 : 0;
-  const dayTo = target === "week" ? 7 : dayFrom + 1;
-  const from = nowLocal.startOf("day").plus({ days: dayFrom }).toUTC().toJSDate();
-  const to = nowLocal.startOf("day").plus({ days: dayTo }).minus({ milliseconds: 1 }).toUTC().toJSDate();
-  const [items, overdue] = await Promise.all([
-    listItemsBetween({ userId: owner.id, from, to }),
-    target === "today" ? listOverdueOpenItems({ userId: owner.id, before: from, limit: 20 }) : Promise.resolve([]),
-  ]);
-  const combined = dedupeItems([...overdue, ...items]);
-  const title = target === "tomorrow" ? "Завтра" : target === "week" ? "Ближайшие 7 дней" : "Сегодня";
-  await replyAndRecord(ctx, formatItemList(title, combined, owner.timezone));
+  const scope = target === "tomorrow" ? "tomorrow" : target === "week" ? "week" : "today";
+  const result = await renderScheduleViewTool({
+    userId: owner.id,
+    timezone: owner.timezone,
+    sourceMessageId: ctx.dbMessageId,
+    scope,
+  });
+  await replyAndRecord(ctx, result.reply);
 }
 
 async function saveMemoryAndConfirm(ctx: BotContext, decision: AssistantDecision) {
@@ -311,15 +363,6 @@ async function saveAssistantDecisionTrace(ctx: BotContext, trace: DecisionTraceD
   });
 }
 
-function dedupeItems<T extends { id: string }>(items: T[]): T[] {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
-}
-
 type DecisionTraceDraft = {
   rawText: string;
   intent: AssistantDecision["intent"];
@@ -331,4 +374,10 @@ type DecisionTraceDraft = {
   validatorWarnings: string[];
   finalAction: string;
   savedItemIds: string[];
+  pipelineUsed: "legacy_v2";
+  preRouterIntent: string | null;
+  finalIntent: string;
+  fallbackUsed: boolean;
+  createItemAttempted: boolean;
+  createItemBlockedByValidator: boolean;
 };

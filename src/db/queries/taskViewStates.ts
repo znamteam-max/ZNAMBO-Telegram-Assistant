@@ -8,8 +8,10 @@ export type TaskViewScope =
   | "today"
   | "tomorrow"
   | "week"
+  | "recent_range"
   | "yesterday_review"
   | "evening_review"
+  | "reset_preview"
   | "cleanup";
 
 export type TaskViewItemSnapshot = {

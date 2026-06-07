@@ -1,6 +1,7 @@
 import { and, eq, gt } from "drizzle-orm";
 
 import { plannerActionProposalSchema, type PlannerActionProposal } from "@/ai/schemas";
+import { isHardManagementText, SAFE_MANAGEMENT_FALLBACK_REPLY } from "@/agent/hardManagementIntent";
 import { materializeProposal } from "@/domain/itemService";
 import type { MaterializedReminder } from "@/domain/types";
 import { UserFacingError } from "@/lib/errors";
@@ -35,6 +36,7 @@ export async function createPendingAction(params: {
   idempotencyKey: string;
   ttlMinutes?: number;
 }) {
+  assertProposalIsNotManagementCommand(params.payload);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + (params.ttlMinutes ?? 60) * 60 * 1000);
   const [inserted] = await getDb()
@@ -126,6 +128,7 @@ export async function confirmPendingActionInDb(params: {
     }
 
     const proposal = plannerActionProposalSchema.parse(action.payload);
+    assertProposalIsNotManagementCommand(proposal);
     const materialized = materializeProposal({
       proposal,
       userTimezone: user.timezone,
@@ -199,4 +202,14 @@ export async function confirmPendingActionInDb(params: {
       proposal,
     };
   });
+}
+
+function assertProposalIsNotManagementCommand(proposal: PlannerActionProposal) {
+  const candidates = [
+    proposal.title ?? "",
+    proposal.description ?? "",
+  ];
+  if (candidates.some((value) => isHardManagementText(value))) {
+    throw new UserFacingError(SAFE_MANAGEMENT_FALLBACK_REPLY);
+  }
 }

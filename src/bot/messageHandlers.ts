@@ -22,6 +22,11 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
     await handleNaturalText(ctx, ctx.message.text);
   });
 
+  bot.on("edited_message:text", async (ctx) => {
+    if (ctx.editedMessage.text.startsWith("/")) return;
+    await handleNaturalText(ctx, ctx.editedMessage.text);
+  });
+
   bot.on(["message:voice", "message:audio", "message:video_note", "message:video"], async (ctx) => {
     const media = extractTelegramMedia(ctx);
     if (!media) return;

@@ -6,8 +6,8 @@ import { recordIncomingConversationMessage } from "@/services/conversation";
 import type { BotContext } from "./context";
 
 export async function recordUpdateOnce(ctx: BotContext, next: NextFunction) {
-  const message = ctx.message ?? ctx.callbackQuery?.message;
-  const text = ctx.message?.text ?? ctx.callbackQuery?.data ?? null;
+  const message = ctx.message ?? ctx.editedMessage ?? ctx.callbackQuery?.message;
+  const text = ctx.message?.text ?? ctx.editedMessage?.text ?? ctx.callbackQuery?.data ?? null;
   const messageType = detectMessageType(ctx);
   const dbMessageId = await recordTelegramUpdate({
     updateId: ctx.update.update_id,
@@ -27,13 +27,13 @@ export async function recordUpdateOnce(ctx: BotContext, next: NextFunction) {
     telegramMessageId: dbMessageId,
     messageType,
     text,
-    metadata: { updateId: ctx.update.update_id },
+    metadata: { updateId: ctx.update.update_id, edited: Boolean(ctx.editedMessage) },
   });
   await next();
 }
 
 function detectMessageType(ctx: BotContext): string {
-  const message = ctx.message;
+  const message = ctx.message ?? ctx.editedMessage;
   if (!message) return ctx.callbackQuery ? "callback" : "unknown";
   if ("text" in message) return "text";
   if ("voice" in message) return "voice";

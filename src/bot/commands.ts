@@ -2,12 +2,14 @@ import { InputFile, type Bot } from "grammy";
 
 import {
   cleanupGarbageTool,
+  prepareResetActivePlanTool,
   renderScheduleViewTool,
   renderTaskViewTool,
   renderYesterdayReviewTool,
   undoLastActionTool,
 } from "@/agent/jarvisTools";
-import { getLatestAuditByAction } from "@/db/queries/audit";
+import type { JarvisToolResult } from "@/agent/types";
+import { getLatestAuditByActions } from "@/db/queries/audit";
 import { deleteMemoryForUser, exportOwnerData, listActiveMemories } from "@/db/queries/memories";
 import { createManualPlannerItem } from "@/db/queries/items";
 import { createReminderIfMissing } from "@/db/queries/reminders";
@@ -120,6 +122,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   bot.command("tasks", async (ctx) => replyJarvisTool(ctx, await renderCommandTasks(ctx)));
   bot.command("review_yesterday", async (ctx) => replyJarvisTool(ctx, await renderCommandYesterday(ctx)));
   bot.command("cleanup_garbage", async (ctx) => replyJarvisTool(ctx, await runCommandCleanup(ctx)));
+  bot.command("admin_reset_active_plan", async (ctx) =>
+    replyJarvisTool(ctx, await runCommandResetActivePlan(ctx)),
+  );
   bot.command("undo", async (ctx) => replyJarvisTool(ctx, await runCommandUndo(ctx)));
 
   bot.command("remindertest", async (ctx) => {
@@ -132,7 +137,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       title: `Тестовое напоминание через ${minutes} мин.`,
       timezone: owner.timezone,
       dueAt: scheduledAt,
-      metadata: { debug: true, command: "remindertest" },
+      metadata: { isTest: true, source: "remindertest", debug: true, command: "remindertest" },
     });
     await createReminderIfMissing({
       userId: owner.id,
@@ -140,7 +145,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       type: "custom",
       idempotencyKey: `${item.id}:remindertest:${scheduledAt.toISOString()}`,
       scheduledAt,
-      payload: { title: item.title, debug: true },
+      payload: { title: item.title, isTest: true, source: "remindertest", debug: true },
     });
     await ctx.reply(
       `Готово. Тестовое напоминание должно прийти через ${minutes} мин. Если не придёт, значит cron runner не дергает /api/reminders/run.`,
@@ -179,7 +184,10 @@ export function registerCommands(bot: Bot<BotContext>) {
 
   bot.command("debuglast", async (ctx) => {
     const owner = requireOwner(ctx);
-    const row = await getLatestAuditByAction({ userId: owner.id, action: "assistant.decision_trace" });
+    const row = await getLatestAuditByActions({
+      userId: owner.id,
+      actions: ["assistant.jarvis_trace", "assistant.decision_trace"],
+    });
     if (!row) {
       await ctx.reply("Пока нет decision trace.");
       return;
@@ -188,10 +196,16 @@ export function registerCommands(bot: Bot<BotContext>) {
     await ctx.reply(
       [
         "Последнее решение:",
+        `pipeline: ${String(details.pipelineUsed ?? "unknown")}`,
+        `pre-router: ${String(details.preRouterIntent ?? "none")}`,
         `intent: ${String(details.intent ?? "unknown")}`,
+        `final-intent: ${String(details.finalIntent ?? details.intent ?? "unknown")}`,
         `confidence: ${String(details.confidence ?? "unknown")}`,
         `items: ${String(details.extractedItemCount ?? 0)}`,
         `final: ${String(details.finalAction ?? "unknown")}`,
+        `fallback: ${String(details.fallbackUsed ?? false)}`,
+        `create-attempted: ${String(details.createItemAttempted ?? false)}`,
+        `create-blocked: ${String(details.createItemBlockedByValidator ?? false)}`,
         `warnings: ${Array.isArray(details.validatorWarnings) ? details.validatorWarnings.length : 0}`,
       ].join("\n"),
     );
@@ -238,6 +252,15 @@ async function runCommandCleanup(ctx: BotContext) {
   });
 }
 
+async function runCommandResetActivePlan(ctx: BotContext) {
+  const owner = requireOwner(ctx);
+  return prepareResetActivePlanTool({
+    userId: owner.id,
+    timezone: owner.timezone,
+    sourceMessageId: ctx.dbMessageId,
+  });
+}
+
 async function runCommandUndo(ctx: BotContext) {
   const owner = requireOwner(ctx);
   return undoLastActionTool({
@@ -247,8 +270,12 @@ async function runCommandUndo(ctx: BotContext) {
   });
 }
 
-async function replyJarvisTool(ctx: BotContext, result: { reply: string }) {
-  await replyAndRecord(ctx, result.reply);
+async function replyJarvisTool(ctx: BotContext, result: JarvisToolResult) {
+  await replyAndRecord(
+    ctx,
+    result.reply,
+    result.replyMarkup ? { reply_markup: result.replyMarkup } : undefined,
+  );
 }
 
 function buildCalendarStartUrl(telegramUserId?: number): string {

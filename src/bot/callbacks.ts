@@ -1,5 +1,6 @@
 import type { Bot } from "grammy";
 
+import { renderScheduleViewTool, undoLastActionTool } from "@/agent/jarvisTools";
 import { confirmPendingActionInDb, cancelPendingAction } from "@/db/queries/pendingActions";
 import { cancelPlannerItem, getPlannerItemById, markPlannerItemCompleted } from "@/db/queries/items";
 import { deleteMemoryForUser } from "@/db/queries/memories";
@@ -13,10 +14,15 @@ import { endOfLocalDay, startOfLocalDay } from "@/domain/dateTime";
 import { syncPlannerItemToCalendar } from "@/integrations/calendar";
 import { cancelStoredActionPlan, commitStoredActionPlan } from "@/services/actionPlanCommit";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
+import {
+  cancelActivePlanReset,
+  executeActivePlanReset,
+} from "@/services/activePlanReset";
+import { UserFacingError } from "@/lib/errors";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
-import { afterEventKeyboard } from "./keyboards";
+import { afterEventKeyboard, undoActionKeyboard } from "./keyboards";
 import { formatCommittedPlanSummary, formatCreatedItem } from "./formatters";
 
 export function registerCallbacks(bot: Bot<BotContext>) {
@@ -38,10 +44,19 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery(/^pa:ok:(.+)$/, async (ctx) => {
     const pendingActionId = ctx.match[1];
     await ctx.answerCallbackQuery("Сохраняю");
-    const result = await confirmPendingActionInDb({
-      pendingActionId,
-      telegramUserId: String(ctx.from.id),
-    });
+    let result;
+    try {
+      result = await confirmPendingActionInDb({
+        pendingActionId,
+        telegramUserId: String(ctx.from.id),
+      });
+    } catch (error) {
+      if (error instanceof UserFacingError) {
+        await ctx.reply(error.message);
+        return;
+      }
+      throw error;
+    }
 
     if (result.status === "created") {
       const sync = await syncPlannerItemToCalendar(result.item);
@@ -70,11 +85,20 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery(/^plan:confirm:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     await ctx.answerCallbackQuery("Сохраняю план");
-    const result = await commitStoredActionPlan({
-      actionPlanId: ctx.match[1],
-      userId: owner.id,
-      timezone: owner.timezone,
-    });
+    let result;
+    try {
+      result = await commitStoredActionPlan({
+        actionPlanId: ctx.match[1],
+        userId: owner.id,
+        timezone: owner.timezone,
+      });
+    } catch (error) {
+      if (error instanceof UserFacingError) {
+        await ctx.reply(error.message);
+        return;
+      }
+      throw error;
+    }
     if (result.status === "committed") {
       await ctx.reply(
         formatCommittedPlanSummary({
@@ -103,6 +127,68 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery(/^plan:edit:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.reply("Пришли исправленную формулировку одним сообщением. Старый план не меняю автоматически.");
+  });
+
+  bot.callbackQuery(/^reset:confirm:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    await ctx.answerCallbackQuery("Очищаю активный план");
+    const result = await executeActivePlanReset({
+      userId: owner.id,
+      actionId: ctx.match[1],
+      mode: "all",
+    });
+    await ctx.reply(
+      result.status === "completed"
+        ? `Готово. Архивировал активных записей: ${result.items.length}. История, память и recurring-настройки сохранены.`
+        : "Этот запрос на очистку уже обработан.",
+      result.status === "completed" ? { reply_markup: undoActionKeyboard() } : undefined,
+    );
+  });
+
+  bot.callbackQuery(/^reset:garbage:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    await ctx.answerCallbackQuery("Убираю мусор и тесты");
+    const result = await executeActivePlanReset({
+      userId: owner.id,
+      actionId: ctx.match[1],
+      mode: "garbage",
+    });
+    await ctx.reply(
+      result.status === "completed"
+        ? `Готово. Архивировал тестовых и ошибочных записей: ${result.items.length}.`
+        : "Этот запрос на очистку уже обработан.",
+      result.status === "completed" ? { reply_markup: undoActionKeyboard() } : undefined,
+    );
+  });
+
+  bot.callbackQuery(/^reset:cancel:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    await cancelActivePlanReset({ userId: owner.id, actionId: ctx.match[1] });
+    await ctx.answerCallbackQuery("Отменено");
+    await ctx.reply("Очистку отменил. Ничего не изменено.");
+  });
+
+  bot.callbackQuery("reset:show", async (ctx) => {
+    const owner = requireOwner(ctx);
+    await ctx.answerCallbackQuery();
+    const result = await renderScheduleViewTool({
+      userId: owner.id,
+      timezone: owner.timezone,
+      sourceMessageId: ctx.dbMessageId,
+      scope: "full",
+    });
+    await ctx.reply(result.reply);
+  });
+
+  bot.callbackQuery("agent:undo", async (ctx) => {
+    const owner = requireOwner(ctx);
+    await ctx.answerCallbackQuery("Откатываю");
+    const result = await undoLastActionTool({
+      userId: owner.id,
+      timezone: owner.timezone,
+      sourceMessageId: ctx.dbMessageId,
+    });
+    await ctx.reply(result.reply);
   });
 
   bot.callbackQuery(/^pa:no:(.+)$/, async (ctx) => {

@@ -2,25 +2,31 @@ import { DateTime } from "luxon";
 
 import {
   cancelPlannerItem,
-  listItemsBetween,
+  cancelCalendarSyncJobsForItem,
+  cancelPlannerItemWithMetadata,
+  listAllActiveItems,
+  listDailyDigestItems,
+  listEveningReviewItems,
   listManageableItems,
-  listOverdueOpenItems,
+  listRecentRangeItems,
+  listVisibleActivePlanItems,
+  listYesterdayCarryCandidates,
   markPlannerItemCompleted,
   restorePlannerItemStatus,
 } from "@/db/queries/items";
-import { cancelItemReminders } from "@/db/queries/reminders";
+import { cancelItemReminders, restoreReminderState } from "@/db/queries/reminders";
 import { listItemsByIds, type TaskViewScope } from "@/db/queries/taskViewStates";
+import { updateAgentAction } from "@/db/queries/agentActions";
 import type { PlannerItem } from "@/db/schema";
 
 import { loadLatestUndoableAgentAction, rememberAgentAction } from "./state/actionHistory";
-import { itemIdsForDisplayIndices, loadLatestTaskView, rememberTaskView } from "./state/taskViewState";
-import { isLikelyGarbagePlannerItem, explainGarbageItem } from "./validation/antiGarbageValidator";
-import { renderEveningReview } from "./views/renderEveningReview";
-import { renderFullPlan } from "./views/renderFullPlan";
+import { itemIdsForDisplayIndices, loadLatestTaskView } from "./state/taskViewState";
 import { sortJarvisItemsForDisplay } from "./views/renderShared";
-import { renderToday } from "./views/renderToday";
-import { renderYesterdayReview } from "./views/renderYesterdayReview";
 import type { JarvisToolResult } from "./types";
+import { renderAndSaveTaskView, type TaskViewSection } from "./views/renderAndSaveTaskView";
+import { prepareActivePlanReset } from "@/services/activePlanReset";
+import { resetActivePlanKeyboard } from "@/bot/keyboards";
+import { isGarbageOrTestItem } from "@/domain/itemVisibility";
 
 type ToolParams = {
   userId: string;
@@ -33,63 +39,71 @@ export async function renderScheduleViewTool(params: ToolParams & {
   scope: "full" | "today" | "tomorrow" | "week";
 }): Promise<JarvisToolResult> {
   const now = params.now ?? new Date();
-  const { items, title, viewScope } = await loadScheduleItems({
+  const { sections, title, viewScope } = await loadScheduleItems({
     userId: params.userId,
     timezone: params.timezone,
     now,
     scope: params.scope,
   });
-  const displayItems = withDisplayIndices(items);
-  const viewState = await rememberTaskView({
+  const rendered = await renderAndSaveTaskView({
     userId: params.userId,
-    scope: viewScope,
+    timezone: params.timezone,
+    viewType: viewScope,
     title,
-    items: displayItems,
+    sections,
+    intro:
+      params.scope === "full"
+        ? "Ничего нового не создаю. Показываю текущий активный план."
+        : undefined,
+    emptyText:
+      params.scope === "today"
+        ? "Сегодня пока пусто. Можешь надиктовать дела, а я соберу план."
+        : "Пока пусто.",
+    footer: "Номера в списке можно использовать в следующих сообщениях.",
     metadata: { jarvisTool: "render_schedule_view", scheduleScope: params.scope },
   });
-
-  const reply =
-    params.scope === "full"
-      ? renderFullPlan({ items: displayItems, timezone: params.timezone })
-      : renderToday({ title, items: displayItems, timezone: params.timezone });
 
   await rememberAgentAction({
     userId: params.userId,
     sourceMessageId: params.sourceMessageId,
     actionType: "render_schedule_view",
     input: { scope: params.scope },
-    output: { itemCount: displayItems.length, viewStateId: viewState?.id ?? null },
+    output: { itemCount: rendered.items.length, viewStateId: rendered.viewState?.id ?? null },
   });
 
   return {
     handled: true,
-    reply,
-    affectedItemIds: displayItems.map((item) => item.id),
-    viewStateId: viewState?.id ?? null,
+    reply: rendered.reply,
+    affectedItemIds: rendered.items.map((item) => item.id),
+    viewStateId: rendered.viewState?.id ?? null,
   };
 }
 
 export async function renderTaskViewTool(params: ToolParams): Promise<JarvisToolResult> {
-  const items = withDisplayIndices(await listManageableItems(params.userId, 80));
-  const viewState = await rememberTaskView({
+  const items = await listManageableItems(params.userId, 80);
+  const rendered = await renderAndSaveTaskView({
     userId: params.userId,
-    scope: "current",
-    title: "Текущие задачи",
-    items,
-    metadata: { jarvisTool: "render_task_view" },
-  });
-  const reply = renderToday({
-    title: "Текущие задачи",
-    items,
     timezone: params.timezone,
+    viewType: "current",
+    title: "Текущие задачи",
+    sections: buildDisplaySections(items, params.now ?? new Date()),
+    intro: "Ничего нового не создаю. Показываю задачи для управления.",
+    emptyText: "Сейчас открытых задач нет.",
+    footer: "Можно написать: удалить 1 и 3, отметить 2 выполненным.",
+    metadata: { jarvisTool: "render_task_view" },
   });
   await rememberAgentAction({
     userId: params.userId,
     sourceMessageId: params.sourceMessageId,
     actionType: "render_task_view",
-    output: { itemCount: items.length, viewStateId: viewState?.id ?? null },
+    output: { itemCount: rendered.items.length, viewStateId: rendered.viewState?.id ?? null },
   });
-  return { handled: true, reply, affectedItemIds: items.map((item) => item.id), viewStateId: viewState?.id ?? null };
+  return {
+    handled: true,
+    reply: rendered.reply,
+    affectedItemIds: rendered.items.map((item) => item.id),
+    viewStateId: rendered.viewState?.id ?? null,
+  };
 }
 
 export async function renderYesterdayReviewTool(params: ToolParams): Promise<JarvisToolResult> {
@@ -97,22 +111,30 @@ export async function renderYesterdayReviewTool(params: ToolParams): Promise<Jar
   const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(params.timezone);
   const from = nowLocal.minus({ days: 1 }).startOf("day").toUTC().toJSDate();
   const to = nowLocal.minus({ days: 1 }).endOf("day").toUTC().toJSDate();
-  const items = withDisplayIndices(await listItemsBetween({ userId: params.userId, from, to, limit: 80 }));
-  const viewState = await rememberTaskView({
+  const items = await listRecentRangeItems({ userId: params.userId, from, to, limit: 80 });
+  const rendered = await renderAndSaveTaskView({
     userId: params.userId,
-    scope: "yesterday_review",
+    timezone: params.timezone,
+    viewType: "yesterday_review",
     title: "Разбор вчера",
-    items,
+    sections: buildStatusSections(items),
+    intro: "Ничего нового не создаю. Можно ответить номерами, что выполнено или что удалить.",
+    emptyText: "За вчера нет записей для разбора.",
+    footer: "Например: выполнено 1 и 3. Или: удалить 2.",
     metadata: { jarvisTool: "render_yesterday_review" },
   });
-  const reply = renderYesterdayReview({ items, timezone: params.timezone });
   await rememberAgentAction({
     userId: params.userId,
     sourceMessageId: params.sourceMessageId,
     actionType: "render_yesterday_review",
-    output: { itemCount: items.length, viewStateId: viewState?.id ?? null },
+    output: { itemCount: rendered.items.length, viewStateId: rendered.viewState?.id ?? null },
   });
-  return { handled: true, reply, affectedItemIds: items.map((item) => item.id), viewStateId: viewState?.id ?? null };
+  return {
+    handled: true,
+    reply: rendered.reply,
+    affectedItemIds: rendered.items.map((item) => item.id),
+    viewStateId: rendered.viewState?.id ?? null,
+  };
 }
 
 export async function renderEveningReviewTool(params: ToolParams): Promise<JarvisToolResult> {
@@ -120,26 +142,118 @@ export async function renderEveningReviewTool(params: ToolParams): Promise<Jarvi
   const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(params.timezone);
   const from = nowLocal.startOf("day").toUTC().toJSDate();
   const to = nowLocal.endOf("day").toUTC().toJSDate();
-  const [todayItems, openItems] = await Promise.all([
-    listItemsBetween({ userId: params.userId, from, to, limit: 80 }),
-    listManageableItems(params.userId, 80),
-  ]);
-  const items = withDisplayIndices(dedupeItems([...todayItems, ...openItems]));
-  const viewState = await rememberTaskView({
+  const items = await listEveningReviewItems({ userId: params.userId, from, to, limit: 80 });
+  const rendered = await renderAndSaveTaskView({
     userId: params.userId,
-    scope: "evening_review",
+    timezone: params.timezone,
+    viewType: "evening_review",
     title: "Вечерняя проверка",
-    items,
+    sections: [{ title: "Сегодня", items: sortJarvisItemsForDisplay(items) }],
+    intro: "Показываю только незакрытые записи текущего дня.",
+    emptyText: "На сегодня незакрытых задач нет.",
+    footer: "Можно написать: 1 выполнено, 2 на завтра, всё закрыть.",
     metadata: { jarvisTool: "render_evening_review" },
   });
-  const reply = renderEveningReview({ items, timezone: params.timezone });
   await rememberAgentAction({
     userId: params.userId,
     sourceMessageId: params.sourceMessageId,
     actionType: "render_evening_review",
-    output: { itemCount: items.length, viewStateId: viewState?.id ?? null },
+    output: { itemCount: rendered.items.length, viewStateId: rendered.viewState?.id ?? null },
   });
-  return { handled: true, reply, affectedItemIds: items.map((item) => item.id), viewStateId: viewState?.id ?? null };
+  return {
+    handled: true,
+    reply: rendered.reply,
+    affectedItemIds: rendered.items.map((item) => item.id),
+    viewStateId: rendered.viewState?.id ?? null,
+  };
+}
+
+export async function renderRecentRangeTool(params: ToolParams & {
+  days: number;
+}): Promise<JarvisToolResult> {
+  const now = params.now ?? new Date();
+  const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(params.timezone);
+  const days = Math.max(1, Math.min(14, params.days));
+  const from = nowLocal.minus({ days: days - 1 }).startOf("day").toUTC().toJSDate();
+  const to = nowLocal.endOf("day").toUTC().toJSDate();
+  const items = await listRecentRangeItems({ userId: params.userId, from, to, limit: 160 });
+  const sections: TaskViewSection[] = [];
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const day = nowLocal.minus({ days: offset });
+    const dayFrom = day.startOf("day").toUTC().toJSDate();
+    const dayTo = day.endOf("day").toUTC().toJSDate();
+    const dayItems = items.filter((item) => {
+      const when = item.startAt ?? item.dueAt;
+      return Boolean(when && when >= dayFrom && when <= dayTo);
+    });
+    sections.push({
+      title: offset === 0 ? "Сегодня" : offset === 1 ? "Вчера" : day.toFormat("dd.LL"),
+      items: sortJarvisItemsForDisplay(dayItems),
+    });
+  }
+
+  const rendered = await renderAndSaveTaskView({
+    userId: params.userId,
+    timezone: params.timezone,
+    viewType: "recent_range",
+    title: `План за последние ${days} дня`,
+    sections,
+    intro: "Показываю записи по датам. Ничего нового не создаю.",
+    emptyText: "За этот период записей нет.",
+    footer: "Номера можно использовать для удаления или отметки выполнения.",
+    metadata: { jarvisTool: "render_recent_range", days },
+  });
+  await rememberAgentAction({
+    userId: params.userId,
+    sourceMessageId: params.sourceMessageId,
+    actionType: "render_recent_range",
+    input: { days },
+    output: { itemCount: rendered.items.length, viewStateId: rendered.viewState?.id ?? null },
+  });
+  return {
+    handled: true,
+    reply: rendered.reply,
+    affectedItemIds: rendered.items.map((item) => item.id),
+    viewStateId: rendered.viewState?.id ?? null,
+  };
+}
+
+export async function prepareResetActivePlanTool(params: ToolParams): Promise<JarvisToolResult> {
+  const { action, preview } = await prepareActivePlanReset({
+    userId: params.userId,
+    sourceMessageId: params.sourceMessageId,
+    mode: "all",
+  });
+  return {
+    handled: true,
+    reply: [
+      "Понял. Ничего нового не создаю.",
+      "",
+      "Могу очистить активный план:",
+      "• все незавершённые задачи;",
+      "• просроченные пункты;",
+      "• предварительные события;",
+      "• тестовые и ошибочные записи;",
+      "• будущие напоминания, привязанные к ним.",
+      "",
+      "Сохранятся:",
+      "• история переписки;",
+      "• завершённые дела;",
+      "• память и пользовательские правила;",
+      "• recurring-настройки.",
+      "",
+      `Открытых задач: ${preview.openItemCount}`,
+      `Будет очищено: ${preview.resettableItemCount}`,
+      `Ошибочных записей: ${preview.garbageItemCount}`,
+      `Тестовых записей: ${preview.testItemCount}`,
+      `Активных напоминаний: ${preview.activeReminderCount}`,
+      "",
+      "Очистить активный план?",
+    ].join("\n"),
+    affectedItemIds: [],
+    metadata: { actionId: action.id, preview },
+    replyMarkup: resetActivePlanKeyboard(action.id),
+  };
 }
 
 export async function deleteItemsByIndicesTool(params: ToolParams & {
@@ -168,6 +282,7 @@ export async function deleteItemsByIndicesTool(params: ToolParams & {
   for (const item of items) {
     const updated = await cancelPlannerItem(params.userId, item.id);
     await cancelItemReminders(params.userId, item.id);
+    await cancelCalendarSyncJobsForItem(item.id);
     if (updated) cancelled.push(updated);
   }
 
@@ -257,8 +372,8 @@ export async function markDoneByIndicesTool(params: ToolParams & {
 }
 
 export async function cleanupGarbageTool(params: ToolParams): Promise<JarvisToolResult> {
-  const items = await listManageableItems(params.userId, 200);
-  const garbage = items.filter(isLikelyGarbagePlannerItem);
+  const items = await listAllActiveItems(params.userId, 500);
+  const garbage = items.filter(isGarbageOrTestItem);
   if (!garbage.length) {
     await rememberAgentAction({
       userId: params.userId,
@@ -277,8 +392,18 @@ export async function cleanupGarbageTool(params: ToolParams): Promise<JarvisTool
 
   const cancelled: PlannerItem[] = [];
   for (const item of garbage) {
-    const updated = await cancelPlannerItem(params.userId, item.id);
+    const updated = await cancelPlannerItemWithMetadata({
+      userId: params.userId,
+      itemId: item.id,
+      metadata: {
+        garbage: true,
+        garbageReason:
+          item.metadata?.garbageReason ?? "production_garbage_cleanup",
+        archivedAt: new Date().toISOString(),
+      },
+    });
     await cancelItemReminders(params.userId, item.id);
+    await cancelCalendarSyncJobsForItem(item.id);
     if (updated) cancelled.push(updated);
   }
 
@@ -288,7 +413,10 @@ export async function cleanupGarbageTool(params: ToolParams): Promise<JarvisTool
     actionType: "cleanup_garbage",
     output: {
       cancelledItemIds: cancelled.map((item) => item.id),
-      reasons: garbage.map((item) => ({ id: item.id, reason: explainGarbageItem(item) })),
+      reasons: garbage.map((item) => ({
+        id: item.id,
+        reason: String(item.metadata?.garbageReason ?? "production_garbage_cleanup"),
+      })),
     },
     undoPayload: {
       items: garbage.map((item) => ({
@@ -313,6 +441,11 @@ export async function undoLastActionTool(params: ToolParams): Promise<JarvisTool
     status?: string;
     completedAt?: string | null;
   }>;
+  const undoReminders = (action?.undoPayload?.reminders ?? []) as Array<{
+    id?: string;
+    status?: string;
+    scheduledAt?: string;
+  }>;
 
   if (!action || !undoItems.length) {
     return {
@@ -334,6 +467,26 @@ export async function undoLastActionTool(params: ToolParams): Promise<JarvisTool
     });
     if (restoredItem) restored.push(restoredItem);
   }
+  for (const reminder of undoReminders) {
+    if (!reminder.id || !reminder.status || !reminder.scheduledAt) continue;
+    const scheduledAt = new Date(reminder.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) continue;
+    await restoreReminderState({
+      userId: params.userId,
+      reminderId: reminder.id,
+      status: reminder.status,
+      scheduledAt,
+    });
+  }
+  await updateAgentAction({
+    userId: params.userId,
+    actionId: action.id,
+    status: "undone",
+    output: {
+      restoredItemIds: restored.map((item) => item.id),
+      restoredFutureReminderCount: undoReminders.length,
+    },
+  });
 
   await rememberAgentAction({
     userId: params.userId,
@@ -390,22 +543,6 @@ async function loadScheduleItems(params: {
 }) {
   const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
   const todayStart = nowLocal.startOf("day");
-  const dayOffset = params.scope === "tomorrow" ? 1 : 0;
-  const from = todayStart.plus({ days: dayOffset }).toUTC().toJSDate();
-  const to = todayStart
-    .plus({ days: params.scope === "week" || params.scope === "full" ? 7 : dayOffset + 1 })
-    .minus({ milliseconds: 1 })
-    .toUTC()
-    .toJSDate();
-
-  const [scheduledItems, overdueItems, manageableItems] = await Promise.all([
-    listItemsBetween({ userId: params.userId, from, to, limit: 120 }),
-    params.scope === "today" || params.scope === "full" || params.scope === "week"
-      ? listOverdueOpenItems({ userId: params.userId, before: from, limit: 50 })
-      : Promise.resolve([]),
-    params.scope === "tomorrow" ? Promise.resolve([]) : listManageableItems(params.userId, 120),
-  ]);
-
   const title =
     params.scope === "full"
       ? "План целиком"
@@ -417,28 +554,64 @@ async function loadScheduleItems(params: {
   const viewScope: TaskViewScope =
     params.scope === "full" ? "current" : params.scope === "week" ? "week" : params.scope;
 
-  return {
-    title,
-    viewScope,
-    items: dedupeItems([...overdueItems, ...scheduledItems, ...manageableItems]),
-  };
+  if (params.scope === "full") {
+    const items = await listVisibleActivePlanItems(params.userId, 200);
+    return { title, viewScope, sections: buildDisplaySections(items, params.now) };
+  }
+
+  const dayOffset = params.scope === "tomorrow" ? 1 : 0;
+  const from = todayStart.plus({ days: dayOffset }).toUTC().toJSDate();
+  const to = todayStart
+    .plus({ days: params.scope === "week" ? 7 : dayOffset + 1 })
+    .minus({ milliseconds: 1 })
+    .toUTC()
+    .toJSDate();
+  const items = await listDailyDigestItems({ userId: params.userId, from, to, limit: 120 });
+  const sections: TaskViewSection[] = [{ title: title, items: sortJarvisItemsForDisplay(items) }];
+  if (params.scope === "today") {
+    const yesterdayFrom = todayStart.minus({ days: 1 }).toUTC().toJSDate();
+    const yesterdayTo = todayStart.minus({ milliseconds: 1 }).toUTC().toJSDate();
+    const carry = await listYesterdayCarryCandidates({
+      userId: params.userId,
+      from: yesterdayFrom,
+      to: yesterdayTo,
+      limit: 10,
+    });
+    if (carry.length) sections.push({ title: "Со вчера осталось", items: sortJarvisItemsForDisplay(carry) });
+  }
+  return { title, viewScope, sections };
 }
 
-function withDisplayIndices(items: PlannerItem[]): PlannerItem[] {
-  return sortJarvisItemsForDisplay(items).map((item, index) => ({
-    ...item,
-    metadata: {
-      ...(item.metadata ?? {}),
-      displayIndex: index + 1,
-    },
-  }));
+function buildDisplaySections(items: PlannerItem[], now: Date): TaskViewSection[] {
+  const overdue: PlannerItem[] = [];
+  const scheduled: PlannerItem[] = [];
+  const training: PlannerItem[] = [];
+  const recurring: PlannerItem[] = [];
+  const floating: PlannerItem[] = [];
+  const notes: PlannerItem[] = [];
+  for (const item of sortJarvisItemsForDisplay(items)) {
+    const when = item.startAt ?? item.dueAt;
+    if (item.kind === "recurring_task") recurring.push(item);
+    else if (item.kind === "training") training.push(item);
+    else if (item.kind === "note") notes.push(item);
+    else if (when && when < now) overdue.push(item);
+    else if (!when || item.metadata?.isFloating === true || item.metadata?.timeUnspecified === true) floating.push(item);
+    else scheduled.push(item);
+  }
+  return [
+    { title: "Просрочено", items: overdue },
+    { title: "Расписание", items: scheduled },
+    { title: "Тренировки", items: training },
+    { title: "Повторяющиеся", items: recurring },
+    { title: "Без времени", items: floating },
+    { title: "Заметки", items: notes },
+  ];
 }
 
-function dedupeItems(items: PlannerItem[]): PlannerItem[] {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
+function buildStatusSections(items: PlannerItem[]): TaskViewSection[] {
+  return [
+    { title: "Открыто", items: sortJarvisItemsForDisplay(items.filter((item) => item.status === "active")) },
+    { title: "Выполнено", items: sortJarvisItemsForDisplay(items.filter((item) => item.status === "completed")) },
+    { title: "Отменено", items: sortJarvisItemsForDisplay(items.filter((item) => item.status === "cancelled")) },
+  ];
 }

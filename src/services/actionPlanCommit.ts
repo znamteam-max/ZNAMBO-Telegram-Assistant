@@ -7,6 +7,7 @@ import { actionPlanItems, actionPlans, auditLog, plannerItems, reminders } from 
 import { localIsoToUtcDate } from "@/domain/dateTime";
 import type { MaterializedItem, MaterializedReminder } from "@/domain/types";
 import { UserFacingError } from "@/lib/errors";
+import { isHardManagementText } from "@/agent/hardManagementIntent";
 
 import { storePlanMemoryFacts } from "./memory";
 
@@ -36,6 +37,7 @@ export async function createStoredActionPlan(params: {
   commitMode: string;
   ttlMinutes?: number;
 }) {
+  assertPlanDoesNotContainManagementCommands(params.plan);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + (params.ttlMinutes ?? 60) * 60 * 1000);
   const [inserted] = await getDb()
@@ -114,6 +116,7 @@ export async function commitStoredActionPlan(params: {
     }
 
     const plan = actionPlanSchema.parse(planRecord.payload);
+    assertPlanDoesNotContainManagementCommands(plan);
     const createdItems = [];
     const createdReminders: MaterializedReminder[] = [];
 
@@ -198,6 +201,17 @@ export async function commitStoredActionPlan(params: {
     }
     return result;
   });
+}
+
+function assertPlanDoesNotContainManagementCommands(plan: ActionPlan) {
+  const blocked = plan.actions.find(
+    (action) =>
+      isHardManagementText(action.title) ||
+      (action.description ? isHardManagementText(action.description) : false),
+  );
+  if (blocked) {
+    throw new UserFacingError("Понял, это команда управления, а не новая задача. Ничего не создаю.");
+  }
 }
 
 export async function cancelStoredActionPlan(params: {

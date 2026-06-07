@@ -1,7 +1,7 @@
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
-import { reminderDeliveries, reminders, type Reminder } from "../schema";
+import { plannerItems, reminderDeliveries, reminders, type Reminder } from "../schema";
 
 export type ClaimedReminder = Reminder;
 
@@ -106,6 +106,64 @@ export async function cancelItemReminders(userId: string, plannerItemId: string)
     .update(reminders)
     .set({ status: "cancelled", updatedAt: new Date() })
     .where(and(eq(reminders.userId, userId), eq(reminders.plannerItemId, plannerItemId)));
+}
+
+export async function listActiveRemindersForItems(userId: string, plannerItemIds: string[]) {
+  if (!plannerItemIds.length) return [];
+  return getDb()
+    .select()
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.userId, userId),
+        inArray(reminders.plannerItemId, plannerItemIds),
+        inArray(reminders.status, ["pending", "claimed"]),
+      ),
+    );
+}
+
+export async function cancelItemReminderChains(userId: string, plannerItemIds: string[]) {
+  if (!plannerItemIds.length) return;
+  await getDb()
+    .update(reminders)
+    .set({ status: "cancelled", updatedAt: new Date() })
+    .where(
+      and(
+        eq(reminders.userId, userId),
+        inArray(reminders.plannerItemId, plannerItemIds),
+        inArray(reminders.status, ["pending", "claimed"]),
+      ),
+    );
+}
+
+export async function archiveDeliveredTestItem(userId: string, plannerItemId: string) {
+  await getDb()
+    .update(plannerItems)
+    .set({
+      status: "cancelled",
+      metadata: sql`${plannerItems.metadata} || '{"autoArchivedAfterDelivery":true,"isTest":true}'::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(plannerItems.userId, userId), eq(plannerItems.id, plannerItemId)));
+  await cancelItemReminderChains(userId, [plannerItemId]);
+}
+
+export async function restoreReminderState(params: {
+  userId: string;
+  reminderId: string;
+  status: string;
+  scheduledAt: Date;
+}) {
+  const [row] = await getDb()
+    .update(reminders)
+    .set({
+      status: params.status,
+      scheduledAt: params.scheduledAt,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(reminders.userId, params.userId), eq(reminders.id, params.reminderId)))
+    .returning();
+  return row ?? null;
 }
 
 export async function createReminderIfMissing(params: {

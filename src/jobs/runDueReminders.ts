@@ -2,11 +2,12 @@ import { DateTime } from "luxon";
 
 import {
   getPlannerItemByAnyId,
-  listItemsBetween,
-  listOpenTasks,
-  listOverdueOpenItems,
+  listDailyDigestItems,
+  listEveningReviewItems,
+  listYesterdayCarryCandidates,
 } from "@/db/queries/items";
 import {
+  archiveDeliveredTestItem,
   claimDueReminders,
   createReminderIfMissing,
   markReminderFailed,
@@ -15,9 +16,11 @@ import {
   type ClaimedReminder,
 } from "@/db/queries/reminders";
 import { getUserById } from "@/db/queries/users";
-import { formatItemList, formatReminderMessage } from "@/bot/formatters";
+import { formatReminderMessage } from "@/bot/formatters";
 import { reminderActionKeyboard, tentativeEventFollowupKeyboard } from "@/bot/keyboards";
 import { logger } from "@/lib/logger";
+import { renderAndSaveTaskView } from "@/agent/views/renderAndSaveTaskView";
+import { sortJarvisItemsForDisplay } from "@/agent/views/renderShared";
 
 import { getBot } from "@/bot/createBot";
 
@@ -52,8 +55,11 @@ export async function runDueReminders(params?: {
         status: "sent",
         telegramMessageId: sentMessage.message_id,
       });
-      await scheduleRepeatUntilAck(reminder, now);
-      await scheduleNextRecurringOccurrence(reminder, now);
+      const autoArchivedTest = await archiveTestReminderIfNeeded(reminder);
+      if (!autoArchivedTest) {
+        await scheduleRepeatUntilAck(reminder, now);
+        await scheduleNextRecurringOccurrence(reminder, now);
+      }
       results.sent += 1;
     } catch (error) {
       results.failed += 1;
@@ -77,25 +83,51 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
   if (!user) throw new Error("Reminder user not found");
 
   if (reminder.type === "morning_digest") {
-    const nowLocal = DateTime.utc().setZone(user.timezone);
+    const nowLocal = DateTime.fromJSDate(reminder.scheduledAt, { zone: "utc" }).setZone(user.timezone);
     const from = nowLocal.startOf("day").toUTC().toJSDate();
     const to = nowLocal.endOf("day").toUTC().toJSDate();
-    const [items, overdue] = await Promise.all([
-      listItemsBetween({ userId: user.id, from, to }),
-      listOverdueOpenItems({ userId: user.id, before: from, limit: 20 }),
+    const yesterdayFrom = nowLocal.minus({ days: 1 }).startOf("day").toUTC().toJSDate();
+    const yesterdayTo = nowLocal.minus({ days: 1 }).endOf("day").toUTC().toJSDate();
+    const [items, carry] = await Promise.all([
+      listDailyDigestItems({ userId: user.id, from, to, limit: 80 }),
+      listYesterdayCarryCandidates({
+        userId: user.id,
+        from: yesterdayFrom,
+        to: yesterdayTo,
+        limit: 10,
+      }),
     ]);
-    return sender.sendMessage(
-      user.telegramUserId.toString(),
-      formatItemList("Сегодня", dedupeItems([...overdue, ...items]), user.timezone),
-    );
+    const rendered = await renderAndSaveTaskView({
+      userId: user.id,
+      timezone: user.timezone,
+      viewType: "today",
+      title: `Сегодня, ${nowLocal.setLocale("ru").toFormat("d LLLL")}`,
+      sections: [
+        { title: "На сегодня", items: sortJarvisItemsForDisplay(items) },
+        { title: "Со вчера осталось", items: sortJarvisItemsForDisplay(carry) },
+      ],
+      emptyText: "Сегодня пока пусто. Можешь надиктовать дела, а я соберу план.",
+      metadata: { source: "morning_digest" },
+    });
+    return sender.sendMessage(user.telegramUserId.toString(), rendered.reply);
   }
 
   if (reminder.type === "evening_checkin") {
-    const tasks = await listOpenTasks(user.id, 20);
-    return sender.sendMessage(
-      user.telegramUserId.toString(),
-      formatItemList("Вечерняя проверка: невыполненное", tasks, user.timezone),
-    );
+    const nowLocal = DateTime.fromJSDate(reminder.scheduledAt, { zone: "utc" }).setZone(user.timezone);
+    const from = nowLocal.startOf("day").toUTC().toJSDate();
+    const to = nowLocal.endOf("day").toUTC().toJSDate();
+    const tasks = await listEveningReviewItems({ userId: user.id, from, to, limit: 80 });
+    const rendered = await renderAndSaveTaskView({
+      userId: user.id,
+      timezone: user.timezone,
+      viewType: "evening_review",
+      title: "Вечерняя проверка",
+      sections: [{ title: "Сегодня", items: sortJarvisItemsForDisplay(tasks) }],
+      emptyText: "На сегодня незакрытых задач нет.",
+      footer: "Что делаем? Можно написать: 1 выполнено, 2 на завтра, всё закрыть.",
+      metadata: { source: "evening_checkin" },
+    });
+    return sender.sendMessage(user.telegramUserId.toString(), rendered.reply);
   }
 
   const item = reminder.plannerItemId ? await getPlannerItemByAnyId(reminder.plannerItemId) : null;
@@ -112,6 +144,22 @@ function buildReminderKeyboard(reminder: ClaimedReminder, item: Awaited<ReturnTy
     return tentativeEventFollowupKeyboard(item.id);
   }
   return undefined;
+}
+
+async function archiveTestReminderIfNeeded(reminder: ClaimedReminder) {
+  if (!reminder.plannerItemId) return false;
+  const item = await getPlannerItemByAnyId(reminder.plannerItemId);
+  const payload = (reminder.payload ?? {}) as Record<string, unknown>;
+  const isTest =
+    item?.metadata?.isTest === true ||
+    item?.metadata?.debug === true ||
+    item?.metadata?.source === "remindertest" ||
+    payload.isTest === true ||
+    payload.debug === true ||
+    payload.source === "remindertest";
+  if (!isTest) return false;
+  await archiveDeliveredTestItem(reminder.userId, reminder.plannerItemId);
+  return true;
 }
 
 function nextRetryAt(reminder: ClaimedReminder, now: Date): Date | null {
@@ -222,13 +270,4 @@ async function scheduleTomorrowDigests(now: Date) {
       payload: { date: dateKey },
     });
   }
-}
-
-function dedupeItems<T extends { id: string }>(items: T[]): T[] {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
 }

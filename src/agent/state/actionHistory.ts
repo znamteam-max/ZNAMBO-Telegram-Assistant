@@ -5,7 +5,7 @@ export async function rememberAgentAction(params: {
   userId?: string | null;
   sourceMessageId?: string | null;
   actionType: string;
-  status?: "completed" | "failed" | "noop";
+  status?: "pending" | "completed" | "cancelled" | "failed" | "noop" | "undone";
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   undoPayload?: Record<string, unknown>;
@@ -24,16 +24,18 @@ export async function rememberAgentAction(params: {
 export async function loadLatestUndoableAgentAction(userId: string) {
   let latestDelete = null;
   let latestCleanup = null;
+  let latestReset = null;
   try {
     latestDelete = await getLatestAgentAction({ userId, actionType: "delete_by_indices" });
     latestCleanup = await getLatestAgentAction({ userId, actionType: "cleanup_garbage" });
+    latestReset = await getLatestAgentAction({ userId, actionType: "reset_active_plan" });
   } catch (error) {
     logger.warn("Agent action load failed", {
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
-  if (!latestDelete) return latestCleanup;
-  if (!latestCleanup) return latestDelete;
-  return latestDelete.createdAt > latestCleanup.createdAt ? latestDelete : latestCleanup;
+  return [latestDelete, latestCleanup, latestReset]
+    .filter((action) => action?.status === "completed")
+    .sort((left, right) => right!.createdAt.getTime() - left!.createdAt.getTime())[0] ?? null;
 }
