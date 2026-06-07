@@ -1597,3 +1597,41 @@ Remaining limitations:
 the contextual follow-up anchor expires after 45 minutes
 calendar synchronization remains best-effort
 ```
+
+### 13.29. V2.4.0 Live Plan Dashboard and Reminder Policy Engine
+
+Implemented:
+
+```text
+new migration drizzle/0003_live_dashboard_reminder_policies.sql
+live dashboard table and service with one active dashboard per chat
+Telegram message registry with safe delete and keyboard-disable fallback
+reminder policy and policy occurrence tables
+policy-backed ActionPlan reminders
+typed OpenAI reminderPolicies execution schema
+interval-window policies that create only the next occurrence
+weekly, biweekly, nag-until-ack and long-term policy support
+neutral post-event reaction menus
+dashboard refresh after planner mutations, callbacks and reminder delivery
+/dashboard, /reminders, /longterm and /cleanup_chat
+```
+
+Regression coverage:
+
+```text
+old dashboard is retired before a new dashboard is registered
+event due delivery exposes reaction actions instead of a single question
+interval window creates one policy and one next reminder
+interval policy advances one occurrence at a time
+weekly mirror and biweekly ЖКХ rules remain long-term policies
+failed Telegram deletion disables the stale card
+all V2.3 regressions remain green
+```
+
+Pre-production validation:
+
+```text
+npm test -> 26 files passed, 83 tests passed
+npm run lint -> passed
+npm run build -> passed
+```

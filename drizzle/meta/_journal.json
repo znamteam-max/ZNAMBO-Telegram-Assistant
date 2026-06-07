@@ -22,6 +22,13 @@
       "when": 1780479600000,
       "tag": "0002_jarvis_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780819200000,
+      "tag": "0003_live_dashboard_reminder_policies",
+      "breakpoints": true
     }
   ]
 }

@@ -14,6 +14,14 @@ import {
 import { listItemsByIds } from "@/db/queries/taskViewStates";
 import type { PlannerItem } from "@/db/schema";
 import { localIsoToUtcDate } from "@/domain/dateTime";
+import {
+  attachOccurrenceReminder,
+  createPolicyOccurrence,
+  createReminderPolicyIfMissing,
+  stopPoliciesForItem,
+  updateReminderPolicy,
+} from "@/db/queries/reminderPolicies";
+import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
 
 export async function applyAgentItemUpdates(params: {
   userId: string;
@@ -51,6 +59,7 @@ export async function applyAgentItemUpdates(params: {
       if (update.operation === "complete") {
         const completed = await markPlannerItemCompleted(params.userId, item.id);
         await cancelItemReminderChains(params.userId, [item.id]);
+        await stopPoliciesForItem(params.userId, item.id);
         if (completed) {
           updatedItems.push(completed);
           completedItemIds.push(completed.id);
@@ -87,18 +96,20 @@ export async function applyAgentItemUpdates(params: {
           .minus({ minutes: update.reminderMinutesBefore })
           .toJSDate();
         if (scheduledAt > now) {
-          const reminder = await createReminderIfMissing({
+          const policy = await createReminderPolicyIfMissing({
             userId: params.userId,
-            plannerItemId: item.id,
-            type: "event_before",
+            itemId: item.id,
+            title: item.title,
+            category: "pre_event",
+            policyType: "before_event",
+            timezone: item.timezone || params.timezone,
+            startsAt: scheduledAt,
+            nextFireAt: scheduledAt,
+            requireAck: false,
             idempotencyKey: `${item.id}:agent-before:${update.reminderMinutesBefore}:${scheduledAt.toISOString()}`,
-            scheduledAt,
-            payload: {
-              title: item.title,
-              agentConfigured: true,
-              minutesBefore: update.reminderMinutesBefore,
-            },
+            metadata: { minutesBefore: update.reminderMinutesBefore, agentConfigured: true },
           });
+          const reminder = await materializeNextPolicyReminder(policy, scheduledAt);
           if (reminder) reminderIds.push(reminder.id);
         } else {
           warnings.push(`reminder_in_past:${itemId}`);
@@ -117,19 +128,24 @@ export async function applyAgentItemUpdates(params: {
           ? DateTime.fromJSDate(now, { zone: "utc" }).plus({ minutes: 1 }).toJSDate()
           : intendedScheduledAt;
         if (scheduledAt > now) {
-          const reminder = await createReminderIfMissing({
+          const policy = await createReminderPolicyIfMissing({
             userId: params.userId,
-            plannerItemId: item.id,
-            type: item.kind === "training" ? "training_followup" : "followup",
+            itemId: item.id,
+            title: item.title,
+            category: "post_event",
+            policyType: "post_event_menu",
+            timezone: item.timezone || params.timezone,
+            startsAt: intendedScheduledAt,
+            nextFireAt: scheduledAt,
+            requireAck: false,
             idempotencyKey: `${item.id}:agent-followup:${update.followupMinutesAfter}:${intendedScheduledAt.toISOString()}`,
-            scheduledAt,
-            payload: {
-              title: item.title,
-              agentConfigured: true,
+            metadata: {
               minutesAfter: update.followupMinutesAfter,
-              prompt: `Как прошло: ${item.title}?`,
+              agentConfigured: true,
+              catchup: isRecentPast,
             },
           });
+          const reminder = await materializeNextPolicyReminder(policy, scheduledAt);
           if (reminder) reminderIds.push(reminder.id);
           if (isRecentPast) warnings.push(`followup_catchup_scheduled:${itemId}`);
         } else {
@@ -365,9 +381,35 @@ async function recreateRemindersAfterReschedule(params: {
       scheduledAt,
       repeatUntilAck: reminder.repeatUntilAck,
       recurrenceKey: reminder.recurrenceKey,
+      policyId: reminder.policyId,
+      purpose: reminder.purpose,
+      menuType: reminder.menuType,
+      autoDeleteAfterResponse: reminder.autoDeleteAfterResponse,
       payload: { ...payload, rescheduledByAgent: true },
     });
-    if (created) reminderIds.push(created.id);
+    if (reminder.policyId) {
+      await updateReminderPolicy({
+        policyId: reminder.policyId,
+        userId: params.userId,
+        nextFireAt: scheduledAt,
+      });
+    }
+    if (created) {
+      reminderIds.push(created.id);
+      if (reminder.policyId) {
+        await createPolicyOccurrence({
+          policyId: reminder.policyId,
+          reminderId: created.id,
+          scheduledFor: scheduledAt,
+          metadata: { rescheduledByAgent: true },
+        });
+        await attachOccurrenceReminder({
+          policyId: reminder.policyId,
+          scheduledFor: scheduledAt,
+          reminderId: created.id,
+        });
+      }
+    }
   }
   return reminderIds;
 }

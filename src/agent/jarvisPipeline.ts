@@ -17,6 +17,13 @@ import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
 import { filterDuplicateActionPlan } from "@/services/actionPlanDedup";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 import { bindContextualCompletionTarget } from "@/services/contextualAgentBinding";
+import { listManageableItems } from "@/db/queries/items";
+import { listItemsByIds } from "@/db/queries/taskViewStates";
+import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
+import {
+  refreshDashboardAfterMutation,
+  renderReminderPolicyList,
+} from "@/telegram/liveDashboard";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
 import { detectHardManagementIntent } from "./hardManagementIntent";
@@ -74,6 +81,9 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       trace.toolCallsExecuted = [handled.intent];
       trace.updatedItemIds = handled.result.affectedItemIds;
       await replyToolResult(ctx, handled.result);
+      if (handled.result.affectedItemIds.length) {
+        await refreshDashboardBestEffort(ctx, timezone);
+      }
       return;
     }
 
@@ -112,6 +122,9 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       ...executionResult.validationWarnings,
     ];
     trace.finalAction = executionResult.finalAction;
+    if (executionResult.mutationOccurred) {
+      await refreshDashboardBestEffort(ctx, timezone);
+    }
   } catch (error) {
     if (error instanceof MandatoryAiError) {
       applyAiTelemetry(trace, error.telemetry);
@@ -161,6 +174,7 @@ async function executeAgentProposal(params: {
     updatedItemIds: [] as string[],
     validationWarnings: [] as string[],
     finalAction: "agent_replied",
+    mutationOccurred: false,
   };
 
   if (params.execution.actionPlan) {
@@ -181,10 +195,23 @@ async function executeAgentProposal(params: {
         forceCommit: false,
       });
       result.createdItemIds = actionResult.savedItemIds;
+      result.mutationOccurred ||= actionResult.savedItemIds.length > 0;
       result.validationWarnings.push(...actionResult.validatorWarnings);
       result.finalAction = actionResult.finalAction;
     } else {
       result.finalAction = "all_proposed_actions_already_exist";
+    }
+    if (params.execution.reminderPolicies.length) {
+      const policyResult = await executePolicyProposals({
+        execution: params.execution,
+        userId: owner.id,
+        timezone: params.timezone,
+        createdItemIds: result.createdItemIds,
+        now: params.now,
+      });
+      result.toolCallsExecuted.push(...policyResult.toolCallsExecuted);
+      result.validationWarnings.push(...policyResult.warnings);
+      result.mutationOccurred ||= policyResult.policyCount > 0;
     }
     if (params.execution.viewScope) {
       const view = await executeViewOrManagementTool(params.execution, base);
@@ -207,6 +234,7 @@ async function executeAgentProposal(params: {
       now: params.now,
     });
     result.updatedItemIds = updateResult.updatedItems.map((item) => item.id);
+    result.mutationOccurred = updateResult.updatedItems.length > 0;
     result.validationWarnings = updateResult.warnings;
     result.finalAction = "updated_existing_items";
     await syncItemsToCalendarBestEffort(updateResult.updatedItems);
@@ -228,6 +256,37 @@ async function executeAgentProposal(params: {
           ? taskManagementKeyboard(updateResult.updatedItems)
           : undefined,
     });
+    if (params.execution.reminderPolicies.length) {
+      const policyResult = await executePolicyProposals({
+        execution: params.execution,
+        userId: owner.id,
+        timezone: params.timezone,
+        createdItemIds: [],
+        now: params.now,
+      });
+      result.toolCallsExecuted.push(...policyResult.toolCallsExecuted);
+      result.validationWarnings.push(...policyResult.warnings);
+      result.mutationOccurred ||= policyResult.policyCount > 0;
+    }
+    return result;
+  }
+
+  if (params.execution.reminderPolicies.length) {
+    const policyResult = await executePolicyProposals({
+      execution: params.execution,
+      userId: owner.id,
+      timezone: params.timezone,
+      createdItemIds: [],
+      now: params.now,
+    });
+    result.toolCallsExecuted.push(...policyResult.toolCallsExecuted);
+    result.validationWarnings.push(...policyResult.warnings);
+    result.mutationOccurred = policyResult.policyCount > 0;
+    result.finalAction = "updated_reminder_policies";
+    await replyAndRecord(
+      params.ctx,
+      params.execution.reply ?? `Настроил политик напоминаний: ${policyResult.policyCount}.`,
+    );
     return result;
   }
 
@@ -257,6 +316,7 @@ async function executeAgentProposal(params: {
     result.toolCallsExecuted.push(toolResult.name);
     result.updatedItemIds = toolResult.result.affectedItemIds;
     result.finalAction = toolResult.name;
+    result.mutationOccurred = toolResult.result.metadata?.dashboardRefreshRequested === true;
     await replyToolResult(params.ctx, toolResult.result);
     return result;
   }
@@ -316,6 +376,31 @@ async function executeViewOrManagementTool(
   if (execution.viewScope === "evening") {
     return { name: "render_evening", result: await renderEveningReviewTool(base) };
   }
+  if (execution.viewScope === "dashboard") {
+    return {
+      name: "render_dashboard",
+      result: {
+        handled: true,
+        reply: "Обновляю живой план.",
+        affectedItemIds: [],
+        metadata: { dashboardRefreshRequested: true },
+      },
+    };
+  }
+  if (execution.viewScope === "reminders" || execution.viewScope === "longterm") {
+    return {
+      name: execution.viewScope === "longterm" ? "render_longterm" : "render_reminders",
+      result: {
+        handled: true,
+        reply: await renderReminderPolicyList({
+          userId: base.userId,
+          timezone: base.timezone,
+          longTermOnly: execution.viewScope === "longterm",
+        }),
+        affectedItemIds: [],
+      },
+    };
+  }
   if (execution.resetMode === "all") {
     return { name: "prepare_reset_active_plan", result: await prepareResetActivePlanTool(base) };
   }
@@ -343,4 +428,49 @@ async function replyToolResult(ctx: BotContext, result: JarvisToolResult) {
     result.reply,
     result.replyMarkup ? { reply_markup: result.replyMarkup } : undefined,
   );
+}
+
+async function executePolicyProposals(params: {
+  execution: AgentExecution;
+  userId: string;
+  timezone: string;
+  createdItemIds: string[];
+  now: Date;
+}) {
+  const [created, manageable] = await Promise.all([
+    listItemsByIds(params.userId, params.createdItemIds),
+    listManageableItems(params.userId, 100),
+  ]);
+  const availableItems = [
+    ...new Map([...created, ...manageable].map((item) => [item.id, item])).values(),
+  ];
+  const applied = await applyAgentReminderPolicies({
+    userId: params.userId,
+    timezone: params.timezone,
+    proposals: params.execution.reminderPolicies,
+    availableItems,
+    now: params.now,
+  });
+  return {
+    policyCount: applied.policies.length,
+    warnings: applied.warnings,
+    toolCallsExecuted: [
+      ...new Set(params.execution.reminderPolicies.map((policy) => policy.operation)),
+    ],
+  };
+}
+
+async function refreshDashboardBestEffort(ctx: BotContext, timezone: string) {
+  if (!ctx.chat?.id || !ctx.owner) return;
+  try {
+    await refreshDashboardAfterMutation({
+      userId: ctx.owner.id,
+      chatId: ctx.chat.id,
+      timezone,
+    });
+  } catch (error) {
+    logger.warn("Live dashboard refresh failed without blocking mutation", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

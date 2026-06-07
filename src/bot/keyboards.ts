@@ -52,6 +52,58 @@ export function singleItemManagementKeyboard(itemId: string) {
     .text("Удалить", `manage:delete:${itemId}`);
 }
 
+export function liveDashboardKeyboard(items: PlannerItem[]) {
+  const keyboard = new InlineKeyboard();
+  for (const [index, item] of items.slice(0, 7).entries()) {
+    keyboard.text(String(index + 1), `dashboard:item:${item.id}`);
+  }
+  if (items.length) keyboard.row();
+  return keyboard
+    .text("➕ Добавить", "dashboard:add")
+    .text("🔔 Напоминания", "dashboard:reminders")
+    .row()
+    .text("📅 Дальние", "dashboard:longterm")
+    .text("🧹 Очистить", "dashboard:cleanup");
+}
+
+export function itemMenuKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("✅ Выполнено", `done:${itemId}`)
+    .text("⏭ Перенести", `manage:reschedule:${itemId}`)
+    .row()
+    .text("✏️ Изменить", `manage:edit:${itemId}`)
+    .text("🗑 Удалить", `manage:delete:${itemId}`)
+    .row()
+    .text("🔔 Напомнить", `item:remind:${itemId}`)
+    .text("📝 Итоги", `item:results:${itemId}`)
+    .row()
+    .text("🔙 К плану", "dashboard:refresh");
+}
+
+export function eventReactionKeyboard(itemId: string, kind = "event") {
+  const doneLabel = kind === "training" ? "✅ Сделал" : "✅ Завершено";
+  return new InlineKeyboard()
+    .text(doneLabel, `done:${itemId}`)
+    .text(kind === "tentative_event" ? "❌ Не было" : "❌ Отменить", `manage:delete:${itemId}`)
+    .row()
+    .text("⏭ Перенести", `manage:reschedule:${itemId}`)
+    .text(kind === "training" ? "📊 Результат" : "📝 Итоги", `item:results:${itemId}`)
+    .row()
+    .text("✏️ Изменить", `manage:edit:${itemId}`)
+    .text("🔙 План", "dashboard:refresh");
+}
+
+export function reminderMenuKeyboard(reminderId: string, plannerItemId?: string | null) {
+  const keyboard = new InlineKeyboard()
+    .text("✅ Сделал", `reminder:ack:${reminderId}`)
+    .text("⏰ Отложить", `reminder:snooze:${reminderId}:60`)
+    .row()
+    .text("🔕 Пауза", `reminder:pause:${reminderId}`)
+    .text("🗑 Удалить", `reminder:delete:${reminderId}`);
+  if (plannerItemId) keyboard.row().text("🔙 К плану", "dashboard:refresh");
+  return keyboard;
+}
+
 export function tentativeEventFollowupKeyboard(itemId: string) {
   return new InlineKeyboard()
     .text("Был", `tentative:happened:${itemId}`)

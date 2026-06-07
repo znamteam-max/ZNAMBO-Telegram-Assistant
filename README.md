@@ -1,6 +1,6 @@
 # Personal Telegram Daily Assistant
 
-Current application version: `2.3.0`.
+Current application version: `2.4.0`.
 
 Release summaries are stored as one file per version in [`versions/`](./versions/README.md).
 
@@ -18,7 +18,8 @@ Telegram
   -> OpenAI Responses / transcription
   -> ActionPlan with multiple action_plan_items
   -> smart commit or confirmation
-  -> planner_items + reminders + reminder_deliveries + memory_facts
+  -> planner_items + reminder_policies + policy_occurrences + reminders
+  -> live dashboard + Telegram message lifecycle registry
   -> best-effort Google/Yandex Calendar sync
 
 External minute scheduler: cron-job.org or Cloudflare Worker
@@ -34,13 +35,16 @@ Postgres
 
 - Next.js App Router API routes for Telegram, reminders, calendar integrations, health and export.
 - Drizzle/Postgres schema and migrations for users, messages, conversation history, action plans, action plan items, planner items, reminders, reminder deliveries, memory facts, summaries, Google Calendar connections, sync state and audit log.
-- grammY bot with `/start`, `/today`, `/tomorrow`, `/week`, `/tasks`, `/settings`, `/calendar`, `/remindertest`, `/export`, `/forget`.
+- grammY bot with `/start`, `/dashboard`, `/today`, `/tomorrow`, `/week`, `/tasks`, `/reminders`, `/longterm`, `/cleanup_chat`, `/settings`, `/calendar`, `/remindertest`, `/export`, `/forget`.
 - Jarvis Mode agent loop before planner capture: plan views, numbered task view state, delete/done by displayed indices, yesterday review, cleanup and undo.
 - Smart commit mode: `confirm_all`, `auto_low_risk`, `auto_all_with_undo`.
 - Multi-action `ActionPlan` instead of a single mechanical pending action.
 - OpenAI Responses API tool call for multi-action planning, with deterministic heuristic fallback for tests and obvious cases.
 - OpenAI audio transcription for voice/audio/video note/video, with 20 MB Telegram Bot API guard and 25 MB OpenAI guard.
 - Protected reminder dispatcher with atomic `FOR UPDATE SKIP LOCKED` claiming, delivery records and repeat-until-ack scheduling.
+- Reminder Policy Engine for one-time, before-event, post-event reaction, interval-window, recurring, nag-until-ack and long-term rules.
+- Live Plan Dashboard that retires the previous dashboard and sends one current bottom-most control center after mutations.
+- Telegram message registry for deleting or disabling stale reminder cards, item menus and dashboards.
 - External minute scheduler support through cron-job.org or the optional Cloudflare Worker project.
 - Google Calendar OAuth, encrypted refresh token storage and event sync.
 - Yandex Calendar sync via CalDAV as a best-effort calendar provider. Calendar failure does not block DB records or Telegram reminders.
@@ -128,9 +132,13 @@ Jarvis Mode adds:
 ```text
 assistant.task_view_states
 assistant.agent_actions
+assistant.live_dashboards
+assistant.telegram_message_registry
+assistant.reminder_policies
+assistant.reminder_policy_occurrences
 ```
 
-Apply `drizzle/0002_jarvis_mode.sql` before enabling production verification for numbered list management.
+Apply `drizzle/0003_live_dashboard_reminder_policies.sql` before enabling V2.4 production traffic.
 
 ## Owner Telegram ID
 

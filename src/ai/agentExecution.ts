@@ -54,6 +54,7 @@ export const agentExecutionTool = {
       "viewScope",
       "resetMode",
       "itemUpdates",
+      "reminderPolicies",
       "memoryFacts",
       "clarificationQuestions",
     ],
@@ -69,13 +70,26 @@ export const agentExecutionTool = {
           "store_memory",
           "reply",
           "clarify",
+          "manage_reminder_policies",
         ],
       },
       reply: { type: ["string", "null"] },
       actionPlan: nullableActionPlanSchema,
       viewScope: {
         type: ["string", "null"],
-        enum: ["full", "today", "tomorrow", "week", "tasks", "yesterday", "evening", null],
+        enum: [
+          "full",
+          "today",
+          "tomorrow",
+          "week",
+          "tasks",
+          "yesterday",
+          "evening",
+          "dashboard",
+          "reminders",
+          "longterm",
+          null,
+        ],
       },
       resetMode: { type: ["string", "null"], enum: ["all", "garbage", null] },
       itemUpdates: {
@@ -105,6 +119,87 @@ export const agentExecutionTool = {
             followupMinutesAfter: { type: ["integer", "null"], minimum: 0 },
             exposeManagementButtons: { type: "boolean" },
             note: { type: ["string", "null"] },
+          },
+        },
+      },
+      reminderPolicies: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "operation",
+            "itemIds",
+            "itemTitle",
+            "title",
+            "category",
+            "policyType",
+            "startsAtLocal",
+            "endsAtLocal",
+            "nextFireAtLocal",
+            "recurrenceRule",
+            "intervalMinutes",
+            "requireAck",
+            "maxOccurrences",
+            "minutesBefore",
+          ],
+          properties: {
+            operation: {
+              type: "string",
+              enum: [
+                "create_reminder_policy",
+                "attach_reminder_policy_to_items",
+                "create_interval_window_policy",
+                "create_recurring_policy",
+                "create_post_event_reaction_policy",
+                "create_before_event_policy",
+              ],
+            },
+            itemIds: { type: "array", items: { type: "string" } },
+            itemTitle: { type: ["string", "null"] },
+            title: { type: "string" },
+            category: {
+              type: "string",
+              enum: [
+                "today_focus",
+                "event",
+                "pre_event",
+                "post_event",
+                "task_deadline",
+                "nag_until_done",
+                "long_term",
+                "recurring_home",
+                "recurring_car",
+                "recurring_finance",
+                "health",
+                "training",
+                "content",
+                "admin",
+                "project",
+                "someday",
+              ],
+            },
+            policyType: {
+              type: "string",
+              enum: [
+                "one_time",
+                "before_event",
+                "after_event",
+                "post_event_menu",
+                "interval_window",
+                "recurring",
+                "nag_until_ack",
+                "long_term",
+              ],
+            },
+            startsAtLocal: { type: ["string", "null"] },
+            endsAtLocal: { type: ["string", "null"] },
+            nextFireAtLocal: { type: ["string", "null"] },
+            recurrenceRule: { type: ["string", "null"] },
+            intervalMinutes: { type: ["integer", "null"], minimum: 1 },
+            requireAck: { type: "boolean" },
+            maxOccurrences: { type: ["integer", "null"], minimum: 1 },
+            minutesBefore: { type: ["integer", "null"], minimum: 1 },
           },
         },
       },
@@ -183,6 +278,9 @@ function inferExecutionTools(execution: AgentExecution) {
   if (execution.viewScope) tools.push(`render_${execution.viewScope}`);
   if (execution.resetMode) tools.push(`reset_active_plan:${execution.resetMode}`);
   if (execution.itemUpdates.length) tools.push("update_existing_items");
+  if (execution.reminderPolicies.length) {
+    tools.push(...new Set(execution.reminderPolicies.map((policy) => policy.operation)));
+  }
   if (execution.memoryFacts.length) tools.push("store_memory");
   if (!tools.length) tools.push(execution.intent);
   return tools;
@@ -245,6 +343,15 @@ RESULT: intent=create_plan; actionPlan содержит только новую 
 USER при существующем item id=22222222-2222-4222-8222-222222222222, Эфир ВС в 13:00:
 Эфир ВС с 13 до 20 сделай
 RESULT: intent=update_existing_items; один itemUpdate для этого ID; operation=reschedule; startAtLocal сегодня 13:00; endAtLocal сегодня 20:00.
+
+Reminder policy rules:
+- reminderPolicies всегда массив, даже если политик нет.
+- Для "каждые полчаса", "каждый час", "пока не отмечу", weekly, biweekly и long-term создавай одну задачу в actionPlan и одну reminder policy. Не создавай пачку reminder items.
+- Для окна повторов используй create_interval_window_policy, policyType=interval_window, startsAtLocal, endsAtLocal, intervalMinutes и requireAck.
+- Для еженедельных и двухнедельных напоминаний используй create_recurring_policy, policyType=recurring или long_term и recurrenceRule=weekly/every_2_weeks.
+- Для "за час до каждого события" используй create_before_event_policy для реальных item IDs, minutesBefore=60. Не создавай generic task.
+- Для меню реакции после события используй create_post_event_reaction_policy, policyType=post_event_menu для каждого item ID.
+- Для запросов показать живой план, напоминания или дальние записи используй viewScope=dashboard/reminders/longterm.
 
 Контекст с реальными item IDs и последним task view:
 ${params.activeContext}`;

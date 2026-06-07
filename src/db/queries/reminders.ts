@@ -43,6 +43,11 @@ export async function claimDueReminders(params: {
       r.acked_at as "ackedAt",
       r.parent_reminder_id as "parentReminderId",
       r.recurrence_key as "recurrenceKey",
+      r.policy_id as "policyId",
+      r.purpose,
+      r.menu_type as "menuType",
+      r.auto_delete_after_response as "autoDeleteAfterResponse",
+      r.superseded_by_message_id as "supersededByMessageId",
       r.payload,
       r.created_at as "createdAt",
       r.updated_at as "updatedAt"
@@ -224,6 +229,10 @@ export async function createReminderIfMissing(params: {
   repeatUntilAck?: boolean;
   parentReminderId?: string | null;
   recurrenceKey?: string | null;
+  policyId?: string | null;
+  purpose?: string | null;
+  menuType?: string | null;
+  autoDeleteAfterResponse?: boolean;
   payload?: Record<string, unknown>;
 }) {
   const [row] = await getDb()
@@ -237,6 +246,10 @@ export async function createReminderIfMissing(params: {
       repeatUntilAck: params.repeatUntilAck ?? false,
       parentReminderId: params.parentReminderId,
       recurrenceKey: params.recurrenceKey,
+      policyId: params.policyId,
+      purpose: params.purpose,
+      menuType: params.menuType,
+      autoDeleteAfterResponse: params.autoDeleteAfterResponse ?? true,
       payload: params.payload ?? {},
     })
     .onConflictDoNothing({ target: reminders.idempotencyKey })
@@ -295,6 +308,10 @@ export async function snoozeReminder(params: {
     repeatUntilAck: source.repeatUntilAck,
     parentReminderId: source.parentReminderId ?? source.id,
     recurrenceKey: source.recurrenceKey,
+    policyId: source.policyId,
+    purpose: source.purpose,
+    menuType: source.menuType,
+    autoDeleteAfterResponse: source.autoDeleteAfterResponse,
     payload: { ...source.payload, snoozedFrom: source.id },
   });
 }

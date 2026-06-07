@@ -239,8 +239,12 @@ describe("runDueReminders", () => {
 
     expect(sender.sendMessage).toHaveBeenCalledWith(
       "52203584",
-      expect.stringContaining("Красочный забег"),
+      "Событие «Красочный забег» завершилось. Что делаем?",
       expect.objectContaining({ reply_markup: expect.anything() }),
     );
+    const keyboard = sender.sendMessage.mock.calls[0]?.[2]?.reply_markup as {
+      inline_keyboard: Array<Array<{ text: string }>>;
+    };
+    expect(keyboard.inline_keyboard.flat().map((button) => button.text)).toContain("📝 Итоги");
   });
 });

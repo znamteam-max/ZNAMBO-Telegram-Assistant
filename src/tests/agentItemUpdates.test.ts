@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   updatePlannerItemSchedule: vi.fn(),
   cancelItemReminderChains: vi.fn(),
   listActiveRemindersForItems: vi.fn(),
+  createReminderPolicyIfMissing: vi.fn(),
+  stopPoliciesForItem: vi.fn(),
+  materializeNextPolicyReminder: vi.fn(),
 }));
 
 vi.mock("@/db/queries/taskViewStates", () => ({
@@ -28,6 +31,15 @@ vi.mock("@/db/queries/items", () => ({
   updatePlannerItemSchedule: mocks.updatePlannerItemSchedule,
 }));
 
+vi.mock("@/db/queries/reminderPolicies", () => ({
+  createReminderPolicyIfMissing: mocks.createReminderPolicyIfMissing,
+  stopPoliciesForItem: mocks.stopPoliciesForItem,
+}));
+
+vi.mock("@/services/reminderPolicyEngine", () => ({
+  materializeNextPolicyReminder: mocks.materializeNextPolicyReminder,
+}));
+
 import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
 
 describe("agent item update execution", () => {
@@ -43,6 +55,14 @@ describe("agent item update execution", () => {
     mocks.updatePlannerItemSchedule.mockResolvedValue(event);
     mocks.listActiveRemindersForItems.mockResolvedValue([]);
     mocks.cancelItemReminderChains.mockResolvedValue(undefined);
+    mocks.stopPoliciesForItem.mockResolvedValue(undefined);
+    mocks.createReminderPolicyIfMissing.mockImplementation(async (input) => ({
+      id: input.policyType === "before_event" ? "before-policy" : "followup-policy",
+      ...input,
+    }));
+    mocks.materializeNextPolicyReminder.mockImplementation(async (policy) => ({
+      id: policy.policyType === "before_event" ? "before-id" : "followup-id",
+    }));
   });
 
   it("executes reminder and follow-up tools against existing item ids", async () => {
@@ -64,18 +84,18 @@ describe("agent item update execution", () => {
       ],
     });
 
-    expect(mocks.createReminderIfMissing).toHaveBeenNthCalledWith(
+    expect(mocks.createReminderPolicyIfMissing).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        type: "event_before",
-        scheduledAt: new Date("2026-06-07T09:00:00.000Z"),
+        policyType: "before_event",
+        nextFireAt: new Date("2026-06-07T09:00:00.000Z"),
       }),
     );
-    expect(mocks.createReminderIfMissing).toHaveBeenNthCalledWith(
+    expect(mocks.createReminderPolicyIfMissing).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        type: "followup",
-        scheduledAt: new Date("2026-06-07T11:15:00.000Z"),
+        policyType: "post_event_menu",
+        nextFireAt: new Date("2026-06-07T11:15:00.000Z"),
       }),
     );
     expect(result.updatedItems).toHaveLength(1);
@@ -84,8 +104,8 @@ describe("agent item update execution", () => {
   });
 
   it("schedules a one-minute catch-up for a recently missed follow-up", async () => {
-    mocks.createReminderIfMissing.mockReset();
-    mocks.createReminderIfMissing.mockResolvedValue({ id: "catchup-id" });
+    mocks.materializeNextPolicyReminder.mockReset();
+    mocks.materializeNextPolicyReminder.mockResolvedValue({ id: "catchup-id" });
 
     const result = await applyAgentItemUpdates({
       userId: "user-id",
@@ -105,10 +125,10 @@ describe("agent item update execution", () => {
       ],
     });
 
-    expect(mocks.createReminderIfMissing).toHaveBeenCalledWith(
+    expect(mocks.createReminderPolicyIfMissing).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "followup",
-        scheduledAt: new Date("2026-06-07T12:01:00.000Z"),
+        policyType: "post_event_menu",
+        nextFireAt: new Date("2026-06-07T12:01:00.000Z"),
         idempotencyKey:
           "11111111-1111-4111-8111-111111111111:agent-followup:15:2026-06-07T11:15:00.000Z",
       }),
@@ -145,6 +165,10 @@ describe("agent item update execution", () => {
     expect(mocks.cancelItemReminderChains).toHaveBeenCalledWith("user-id", [
       "11111111-1111-4111-8111-111111111111",
     ]);
+    expect(mocks.stopPoliciesForItem).toHaveBeenCalledWith(
+      "user-id",
+      "11111111-1111-4111-8111-111111111111",
+    );
     expect(result.completedItemIds).toEqual([
       "11111111-1111-4111-8111-111111111111",
     ]);

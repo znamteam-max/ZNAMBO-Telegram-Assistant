@@ -194,6 +194,11 @@ export const plannerItems = assistantTable(
     endAt: timestamp("end_at", { withTimezone: true }),
     dueAt: timestamp("due_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    category: text("category"),
+    visibility: text("visibility").default("active"),
+    sourcePolicyId: uuid("source_policy_id"),
     priority: integer("priority").notNull().default(3),
     source: text("source").notNull().default("telegram"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
@@ -270,6 +275,11 @@ export const reminders = assistantTable(
     ackedAt: timestamp("acked_at", { withTimezone: true }),
     parentReminderId: uuid("parent_reminder_id"),
     recurrenceKey: text("recurrence_key"),
+    policyId: uuid("policy_id"),
+    purpose: text("purpose"),
+    menuType: text("menu_type"),
+    autoDeleteAfterResponse: boolean("auto_delete_after_response").notNull().default(true),
+    supersededByMessageId: bigint("superseded_by_message_id", { mode: "bigint" }),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default(emptyJson),
     ...timestamps,
   },
@@ -283,6 +293,112 @@ export const reminders = assistantTable(
     index("reminders_due_idx").on(table.status, table.scheduledAt),
     index("reminders_user_idx").on(table.userId),
     index("reminders_ack_idx").on(table.userId, table.repeatUntilAck, table.ackedAt),
+    index("reminders_policy_idx").on(table.policyId),
+  ],
+);
+
+export const reminderPolicies = assistantTable(
+  "reminder_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id").references(() => plannerItems.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    category: text("category").notNull(),
+    policyType: text("policy_type").notNull(),
+    status: text("status").notNull().default("active"),
+    timezone: text("timezone").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    nextFireAt: timestamp("next_fire_at", { withTimezone: true }),
+    recurrenceRule: text("recurrence_rule"),
+    intervalMinutes: integer("interval_minutes"),
+    requireAck: boolean("require_ack").notNull().default(false),
+    maxOccurrences: integer("max_occurrences"),
+    quietHours: jsonb("quiet_hours").$type<Record<string, unknown> | null>(),
+    escalationPolicy: jsonb("escalation_policy").$type<Record<string, unknown> | null>(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    ...timestamps,
+  },
+  (table) => [
+    index("reminder_policies_user_status_idx").on(table.userId, table.status),
+    index("reminder_policies_next_fire_idx").on(table.status, table.nextFireAt),
+    index("reminder_policies_item_idx").on(table.itemId),
+  ],
+);
+
+export const reminderPolicyOccurrences = assistantTable(
+  "reminder_policy_occurrences",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => reminderPolicies.id, { onDelete: "cascade" }),
+    reminderId: uuid("reminder_id").references(() => reminders.id, { onDelete: "set null" }),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    ackedAt: timestamp("acked_at", { withTimezone: true }),
+    skippedAt: timestamp("skipped_at", { withTimezone: true }),
+    status: text("status").notNull().default("scheduled"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
+  },
+  (table) => [
+    uniqueIndex("reminder_policy_occurrences_policy_time_uq").on(
+      table.policyId,
+      table.scheduledFor,
+    ),
+    index("reminder_policy_occurrences_status_idx").on(table.status, table.scheduledFor),
+  ],
+);
+
+export const liveDashboards = assistantTable(
+  "live_dashboards",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").notNull(),
+    messageId: integer("message_id").notNull(),
+    dashboardType: text("dashboard_type").notNull().default("main"),
+    status: text("status").notNull().default("active"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    ...timestamps,
+  },
+  (table) => [
+    index("live_dashboards_user_chat_status_idx").on(table.userId, table.chatId, table.status),
+    index("live_dashboards_created_idx").on(table.createdAt),
+  ],
+);
+
+export const telegramMessageRegistry = assistantTable(
+  "telegram_message_registry",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").notNull(),
+    messageId: integer("message_id").notNull(),
+    purpose: text("purpose").notNull(),
+    relatedItemId: uuid("related_item_id").references(() => plannerItems.id, {
+      onDelete: "set null",
+    }),
+    relatedReminderId: uuid("related_reminder_id").references(() => reminders.id, {
+      onDelete: "set null",
+    }),
+    status: text("status").notNull().default("active"),
+    deleteAfter: timestamp("delete_after", { withTimezone: true }),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("telegram_message_registry_chat_message_uq").on(table.chatId, table.messageId),
+    index("telegram_message_registry_item_idx").on(table.relatedItemId, table.status),
+    index("telegram_message_registry_purpose_idx").on(table.chatId, table.purpose, table.status),
   ],
 );
 
@@ -443,6 +559,10 @@ export const agentActions = assistantTable(
 export type User = typeof users.$inferSelect;
 export type PlannerItem = typeof plannerItems.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
+export type ReminderPolicy = typeof reminderPolicies.$inferSelect;
+export type ReminderPolicyOccurrence = typeof reminderPolicyOccurrences.$inferSelect;
+export type LiveDashboard = typeof liveDashboards.$inferSelect;
+export type TelegramMessageRegistryEntry = typeof telegramMessageRegistry.$inferSelect;
 export type PendingAction = typeof pendingActions.$inferSelect;
 export type Memory = typeof memories.$inferSelect;
 export type MemoryFact = typeof memoryFacts.$inferSelect;

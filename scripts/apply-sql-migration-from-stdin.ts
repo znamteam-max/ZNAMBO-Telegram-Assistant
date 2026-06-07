@@ -17,8 +17,7 @@ const sql = postgres(databaseUrl, {
 
 try {
   const migration = await fs.readFile(migrationPath, "utf8");
-  const statements = migration
-    .split("--> statement-breakpoint")
+  const statements = splitMigrationStatements(migration)
     .map((statement) => statement.trim())
     .filter(Boolean);
 
@@ -48,7 +47,12 @@ try {
           'memory_facts',
           'conversation_summaries',
           'reminder_deliveries',
-          'calendar_sync_jobs'
+          'calendar_sync_jobs',
+          'planner_items',
+          'live_dashboards',
+          'telegram_message_registry',
+          'reminder_policies',
+          'reminder_policy_occurrences'
         )
       )
     order by table_name, column_name
@@ -77,4 +81,13 @@ async function retry(fn: () => Promise<void>, label: string) {
     }
   }
   throw new Error(`${label} failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+
+function splitMigrationStatements(migration: string) {
+  if (migration.includes("--> statement-breakpoint")) {
+    return migration.split("--> statement-breakpoint");
+  }
+  return migration.split(
+    /(?<=;)\s*(?=(?:ALTER TABLE|CREATE TABLE|CREATE INDEX|DO \$\$ BEGIN)\b)/,
+  );
 }

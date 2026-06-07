@@ -18,6 +18,11 @@ import { markUserOnboarded, updateUserTimezone } from "@/db/queries/users";
 import { assertValidZone } from "@/domain/dateTime";
 import { getCalendarProvider, getEnv, isGoogleCalendarConfigured } from "@/lib/env";
 import { createGoogleCalendarAuthUrl } from "@/integrations/googleCalendar";
+import {
+  refreshDashboardAfterMutation,
+  renderReminderPolicyList,
+} from "@/telegram/liveDashboard";
+import { cleanupTransientMessages } from "@/telegram/messageLifecycle";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -122,6 +127,43 @@ export function registerCommands(bot: Bot<BotContext>) {
   bot.command("tomorrow", async (ctx) => replyJarvisTool(ctx, await renderCommandSchedule(ctx, "tomorrow")));
   bot.command("week", async (ctx) => replyJarvisTool(ctx, await renderCommandSchedule(ctx, "week")));
   bot.command("tasks", async (ctx) => replyJarvisTool(ctx, await renderCommandTasks(ctx)));
+  bot.command("dashboard", async (ctx) => {
+    const owner = requireOwner(ctx);
+    if (!ctx.chat?.id) return;
+    await refreshDashboardAfterMutation({
+      userId: owner.id,
+      chatId: ctx.chat.id,
+      timezone: owner.timezone,
+    });
+  });
+  bot.command("reminders", async (ctx) => {
+    const owner = requireOwner(ctx);
+    await replyAndRecord(
+      ctx,
+      await renderReminderPolicyList({ userId: owner.id, timezone: owner.timezone }),
+    );
+  });
+  bot.command("longterm", async (ctx) => {
+    const owner = requireOwner(ctx);
+    await replyAndRecord(
+      ctx,
+      await renderReminderPolicyList({
+        userId: owner.id,
+        timezone: owner.timezone,
+        longTermOnly: true,
+      }),
+    );
+  });
+  bot.command("cleanup_chat", async (ctx) => {
+    const owner = requireOwner(ctx);
+    if (!ctx.chat?.id) return;
+    await cleanupTransientMessages({ userId: owner.id, chatId: String(ctx.chat.id) });
+    await refreshDashboardAfterMutation({
+      userId: owner.id,
+      chatId: ctx.chat.id,
+      timezone: owner.timezone,
+    });
+  });
   bot.command("review_yesterday", async (ctx) => replyJarvisTool(ctx, await renderCommandYesterday(ctx)));
   bot.command("cleanup_garbage", async (ctx) => replyJarvisTool(ctx, await runCommandCleanup(ctx)));
   bot.command("admin_reset_active_plan", async (ctx) =>

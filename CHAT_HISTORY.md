@@ -385,3 +385,28 @@ npm run lint -> passed
 npm run build -> passed
 production behavioral commit -> 29cbfa7efcd1e1b8dd47131d32f3696da6d7d01b
 ```
+
+### Turn: V2.4.0 Live Plan Dashboard and Reminder Policy Engine
+
+The attached specification requested a clean Telegram UX with one live plan, policy-backed
+reminders, post-event reaction menus, stale-card cleanup and separate version reporting.
+
+Implemented:
+
+```text
+Live Plan Dashboard lifecycle
+Telegram message registry and safe cleanup
+Reminder Policy Engine and occurrence tracking
+typed OpenAI reminder policy proposals
+post-event reaction menu delivery
+dashboard refresh after mutations, callbacks and reminder delivery
+/dashboard, /reminders, /longterm and /cleanup_chat
+```
+
+Validation before production rollout:
+
+```text
+npm test -> 26 files, 83 tests passed
+npm run lint -> passed
+npm run build -> passed
+```

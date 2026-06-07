@@ -18,7 +18,9 @@ import {
 import { getUserById } from "@/db/queries/users";
 import { formatReminderMessage } from "@/bot/formatters";
 import {
+  eventReactionKeyboard,
   reminderActionKeyboard,
+  reminderMenuKeyboard,
   singleItemManagementKeyboard,
   tentativeEventFollowupKeyboard,
 } from "@/bot/keyboards";
@@ -27,6 +29,9 @@ import { renderAndSaveTaskView } from "@/agent/views/renderAndSaveTaskView";
 import { sortJarvisItemsForDisplay } from "@/agent/views/renderShared";
 
 import { getBot } from "@/bot/createBot";
+import { advancePolicyAfterDelivery } from "@/services/reminderPolicyEngine";
+import { registerBotMessage } from "@/telegram/messageLifecycle";
+import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -59,11 +64,29 @@ export async function runDueReminders(params?: {
         status: "sent",
         telegramMessageId: sentMessage.message_id,
       });
+      if (!params?.sender && sentMessage.message_id) {
+        const user = await getUserById(reminder.userId);
+        if (user) {
+          await registerBotMessage({
+            userId: reminder.userId,
+            chatId: user.telegramUserId.toString(),
+            messageId: sentMessage.message_id,
+            purpose: reminder.purpose ?? (isPostEventReminder(reminder) ? "followup" : "reminder"),
+            relatedItemId: reminder.plannerItemId,
+            relatedReminderId: reminder.id,
+          });
+        }
+      }
       const autoArchivedTest = await archiveTestReminderIfNeeded(reminder);
       if (!autoArchivedTest) {
-        await scheduleRepeatUntilAck(reminder, now);
-        await scheduleNextRecurringOccurrence(reminder, now);
+        if (reminder.policyId) {
+          await advancePolicyAfterDelivery(reminder.id, now);
+        } else {
+          await scheduleRepeatUntilAck(reminder, now);
+          await scheduleNextRecurringOccurrence(reminder, now);
+        }
       }
+      if (!params?.sender) await refreshReminderDashboardBestEffort(reminder, now);
       results.sent += 1;
     } catch (error) {
       results.failed += 1;
@@ -135,12 +158,24 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
   }
 
   const item = reminder.plannerItemId ? await getPlannerItemByAnyId(reminder.plannerItemId) : null;
-  return sender.sendMessage(user.telegramUserId.toString(), formatReminderMessage(reminder, item), {
+  const text =
+    isPostEventReminder(reminder) && item
+      ? item.kind === "training"
+        ? `Тренировка «${item.title}» завершилась. Что делаем?`
+        : `Событие «${item.title}» завершилось. Что делаем?`
+      : formatReminderMessage(reminder, item);
+  return sender.sendMessage(user.telegramUserId.toString(), text, {
     reply_markup: buildReminderKeyboard(reminder, item),
   });
 }
 
 function buildReminderKeyboard(reminder: ClaimedReminder, item: Awaited<ReturnType<typeof getPlannerItemByAnyId>>) {
+  if (isPostEventReminder(reminder) && item) {
+    return eventReactionKeyboard(item.id, item.kind);
+  }
+  if (reminder.policyId) {
+    return reminderMenuKeyboard(reminder.id, reminder.plannerItemId);
+  }
   if (reminder.repeatUntilAck || item?.kind === "recurring_task") {
     return reminderActionKeyboard(reminder.id, reminder.plannerItemId);
   }
@@ -151,6 +186,14 @@ function buildReminderKeyboard(reminder: ClaimedReminder, item: Awaited<ReturnTy
     return singleItemManagementKeyboard(item.id);
   }
   return undefined;
+}
+
+function isPostEventReminder(reminder: ClaimedReminder) {
+  return (
+    reminder.purpose === "post_event_menu" ||
+    reminder.menuType === "event_reaction" ||
+    ["followup", "training_followup", "after_event"].includes(reminder.type)
+  );
 }
 
 async function archiveTestReminderIfNeeded(reminder: ClaimedReminder) {
@@ -275,6 +318,24 @@ async function scheduleTomorrowDigests(now: Date) {
       idempotencyKey: `${user.id}:evening_checkin:${dateKey}`,
       scheduledAt: evening,
       payload: { date: dateKey },
+    });
+  }
+}
+
+async function refreshReminderDashboardBestEffort(reminder: ClaimedReminder, now: Date) {
+  try {
+    const user = await getUserById(reminder.userId);
+    if (!user) return;
+    await refreshDashboardAfterMutation({
+      userId: user.id,
+      chatId: user.telegramUserId.toString(),
+      timezone: user.timezone,
+      now,
+    });
+  } catch (error) {
+    logger.warn("Reminder dashboard refresh failed", {
+      reminderId: reminder.id,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 }

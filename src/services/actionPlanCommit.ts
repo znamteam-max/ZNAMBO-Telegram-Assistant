@@ -3,7 +3,15 @@ import { DateTime } from "luxon";
 
 import { actionPlanSchema, type ActionPlan, type ActionPlanItem } from "@/ai/schemas";
 import { getDb } from "@/db/client";
-import { actionPlanItems, actionPlans, auditLog, plannerItems, reminders } from "@/db/schema";
+import {
+  actionPlanItems,
+  actionPlans,
+  auditLog,
+  plannerItems,
+  reminderPolicies,
+  reminderPolicyOccurrences,
+  reminders,
+} from "@/db/schema";
 import { localIsoToUtcDate } from "@/domain/dateTime";
 import type { MaterializedItem, MaterializedReminder } from "@/domain/types";
 import { UserFacingError } from "@/lib/errors";
@@ -141,6 +149,8 @@ export async function commitStoredActionPlan(params: {
           startAt: materialized.item.startAt,
           endAt: materialized.item.endAt,
           dueAt: materialized.item.dueAt,
+          category: categoryForItem(materialized.item.kind),
+          visibility: materialized.item.kind === "recurring_task" ? "long_term" : "active",
           priority: materialized.item.priority,
           metadata: materialized.item.metadata,
         })
@@ -158,10 +168,30 @@ export async function commitStoredActionPlan(params: {
 
       if (materialized.reminders.length) {
         createdReminders.push(...materialized.reminders);
-        await tx
-          .insert(reminders)
-          .values(
-            materialized.reminders.map((reminder) => ({
+        for (const reminder of materialized.reminders) {
+          const [policy] = await tx
+            .insert(reminderPolicies)
+            .values({
+              userId: params.userId,
+              itemId: item.id,
+              title: item.title,
+              category: policyCategoryForReminder(reminder.type, item.kind),
+              policyType: policyTypeForReminder(reminder.type),
+              timezone: item.timezone,
+              startsAt: reminder.scheduledAt,
+              nextFireAt: reminder.scheduledAt,
+              recurrenceRule: reminder.recurrenceKey,
+              requireAck: reminder.repeatUntilAck ?? false,
+              metadata: {
+                actionPlanId: planRecord.id,
+                actionPlanSequence: index,
+                reminderType: reminder.type,
+              },
+            })
+            .returning();
+          const [createdReminder] = await tx
+            .insert(reminders)
+            .values({
               userId: params.userId,
               plannerItemId: item.id,
               type: reminder.type,
@@ -169,10 +199,22 @@ export async function commitStoredActionPlan(params: {
               scheduledAt: reminder.scheduledAt,
               repeatUntilAck: reminder.repeatUntilAck ?? false,
               recurrenceKey: reminder.recurrenceKey,
+              policyId: policy?.id,
+              purpose: purposeForReminder(reminder.type),
+              menuType: menuTypeForReminder(reminder.type),
               payload: reminder.payload,
-            })),
-          )
-          .onConflictDoNothing();
+            })
+            .onConflictDoNothing()
+            .returning();
+          if (policy && createdReminder) {
+            await tx.insert(reminderPolicyOccurrences).values({
+              policyId: policy.id,
+              reminderId: createdReminder.id,
+              scheduledFor: reminder.scheduledAt,
+              metadata: { actionPlanId: planRecord.id },
+            });
+          }
+        }
       }
 
       await tx.insert(auditLog).values({
@@ -305,4 +347,49 @@ function buildEndAt(action: ActionPlanItem, timezone: string, startAt: Date | nu
   if (action.endAtLocal) return localIsoToUtcDate(action.endAtLocal, timezone);
   if (!startAt || !action.durationMinutes) return null;
   return DateTime.fromJSDate(startAt, { zone: "utc" }).plus({ minutes: action.durationMinutes }).toJSDate();
+}
+
+function policyTypeForReminder(type: string) {
+  if (["event_before", "1h", "30m", "15m", "24h", "day_morning"].includes(type)) {
+    return "before_event";
+  }
+  if (["followup", "training_followup", "after_event"].includes(type)) {
+    return "post_event_menu";
+  }
+  if (type === "recurring") return "recurring";
+  if (type === "until_ack") return "nag_until_ack";
+  return "one_time";
+}
+
+function policyCategoryForReminder(type: string, kind: string) {
+  if (["followup", "training_followup", "after_event"].includes(type)) return "post_event";
+  if (["event_before", "1h", "30m", "15m", "24h", "day_morning"].includes(type)) {
+    return "pre_event";
+  }
+  if (kind === "training") return "training";
+  if (type === "recurring") return "long_term";
+  return "task_deadline";
+}
+
+function purposeForReminder(type: string) {
+  if (["followup", "training_followup", "after_event"].includes(type)) return "post_event_menu";
+  if (["event_before", "1h", "30m", "15m", "24h", "day_morning"].includes(type)) {
+    return "pre_event";
+  }
+  if (type === "recurring") return "recurring_check";
+  return "reminder";
+}
+
+function menuTypeForReminder(type: string) {
+  return ["followup", "training_followup", "after_event"].includes(type)
+    ? "event_reaction"
+    : "reminder";
+}
+
+function categoryForItem(kind: string) {
+  if (kind === "training") return "training";
+  if (kind === "event" || kind === "tentative_event") return "event";
+  if (kind === "preparation_task") return "project";
+  if (kind === "recurring_task") return "long_term";
+  return "today_focus";
 }

@@ -28,6 +28,8 @@ export async function GET() {
     defaultTimezone: env.DEFAULT_TIMEZONE,
     pipelineMode: env.JARVIS_MODE_ENABLED ? "jarvis" : "legacy_v2",
     jarvisModeEnabled: env.JARVIS_MODE_ENABLED,
+    liveDashboardEnabled: true,
+    reminderPolicyEngineEnabled: true,
     openAiConfigured: Boolean(env.OPENAI_API_KEY),
     openAiRequiredForNaturalLanguage: env.OPENAI_REQUIRED_FOR_NATURAL_LANGUAGE,
     lastSuccessfulAiCallAt: lastSuccessfulAi?.createdAt?.toISOString() ?? null,

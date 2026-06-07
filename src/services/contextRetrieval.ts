@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 
 import { listItemsBetween, listManageableItems, listOpenTasks, listOverdueOpenItems } from "@/db/queries/items";
 import { getLatestDeliveredReminderContext } from "@/db/queries/reminders";
+import { listActiveReminderPolicies } from "@/db/queries/reminderPolicies";
 
 import { listRecentConversationMessages } from "./conversation";
 import { listRecentConversationSummaries, listRelevantMemoryFacts } from "./memory";
@@ -31,6 +32,7 @@ export async function buildActiveContext(params: {
     overdueItems,
     weekItems,
     latestDeliveredReminder,
+    reminderPolicies,
   ] = await Promise.all([
     listRelevantMemoryFacts({ userId: params.userId, query: params.query, limit: 12 }),
     listRecentConversationSummaries(params.userId, 3),
@@ -45,6 +47,7 @@ export async function buildActiveContext(params: {
       userId: params.userId,
       since: nowLocal.minus({ minutes: 45 }).toUTC().toJSDate(),
     }),
+    listActiveReminderPolicies(params.userId, 40),
   ]);
 
   return [
@@ -91,6 +94,16 @@ export async function buildActiveContext(params: {
       .filter((item) => item.kind === "recurring_task")
       .map(formatContextItem(params.timezone))
       .join("\n") || "- none",
+    "",
+    "Reminder policies:",
+    reminderPolicies.length
+      ? reminderPolicies
+          .map(
+            (policy) =>
+              `- id=${policy.id}; itemId=${policy.itemId ?? "none"}; type=${policy.policyType}; category=${policy.category}; title=${policy.title}; next=${policy.nextFireAt?.toISOString() ?? "none"}; interval=${policy.intervalMinutes ?? "none"}; recurrence=${policy.recurrenceRule ?? "none"}; requireAck=${policy.requireAck}`,
+          )
+          .join("\n")
+      : "- none",
     "",
     "Unfinished training plans:",
     manageableItems

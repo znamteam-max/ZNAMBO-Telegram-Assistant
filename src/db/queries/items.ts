@@ -113,6 +113,8 @@ export async function createManualPlannerItem(params: {
   startAt?: Date | null;
   endAt?: Date | null;
   dueAt?: Date | null;
+  category?: string | null;
+  visibility?: string | null;
   metadata?: Record<string, unknown>;
 }) {
   const [item] = await getDb()
@@ -125,6 +127,8 @@ export async function createManualPlannerItem(params: {
       startAt: params.startAt,
       endAt: params.endAt,
       dueAt: params.dueAt,
+      category: params.category,
+      visibility: params.visibility ?? "active",
       metadata: params.metadata ?? {},
     })
     .returning();
@@ -250,7 +254,7 @@ export async function markPlannerItemCompleted(
 export async function cancelPlannerItem(userId: string, itemId: string): Promise<PlannerItem | null> {
   const [item] = await getDb()
     .update(plannerItems)
-    .set({ status: "cancelled", updatedAt: new Date() })
+    .set({ status: "cancelled", cancelledAt: new Date(), updatedAt: new Date() })
     .where(and(eq(plannerItems.userId, userId), eq(plannerItems.id, itemId)))
     .returning();
   return item ?? null;
@@ -265,6 +269,8 @@ export async function cancelPlannerItemWithMetadata(params: {
     .update(plannerItems)
     .set({
       status: "cancelled",
+      cancelledAt: new Date(),
+      archivedAt: new Date(),
       metadata: sql`${plannerItems.metadata} || ${JSON.stringify(params.metadata)}::jsonb`,
       updatedAt: new Date(),
     })
@@ -366,6 +372,7 @@ function visibleItemSql() {
     and coalesce(${plannerItems.metadata}->>'garbage', 'false') <> 'true'
     and coalesce(${plannerItems.metadata}->>'command', '') <> 'remindertest'
     and coalesce(${plannerItems.metadata}->>'source', '') <> 'remindertest'
+    and coalesce(${plannerItems.visibility}, 'active') <> 'hidden'
   `;
 }
 
