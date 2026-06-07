@@ -32,6 +32,7 @@ export function taskManagementKeyboard(items: PlannerItem[]) {
       .text(`Готово ${label}`, `done:${item.id}`)
       .text(`Перенести ${label}`, `manage:reschedule:${item.id}`)
       .text(`Удалить ${label}`, `manage:delete:${item.id}`)
+      .text(`Изменить ${label}`, `manage:edit:${item.id}`)
       .row();
   }
   keyboard

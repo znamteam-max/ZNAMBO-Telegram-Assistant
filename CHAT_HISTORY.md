@@ -229,3 +229,31 @@ npm test -> 18 files passed, 56 tests passed
 npm run lint -> passed
 npm run build -> passed
 ```
+
+### Turn: mandatory OpenAI observability started
+
+User report:
+
+```text
+A natural-language schedule list was saved as generic end-of-day tasks.
+A follow-up instruction to update every event was saved as one generic task.
+The project must prove that OpenAI is called and that proposed tools are actually executed.
+```
+
+Root cause found:
+
+```text
+decideUserIntentWithAI currently calls only decideUserIntentDeterministic and never calls OpenAI.
+The ordered-list deterministic branch directly creates generic planner items.
+buildActionPlan catches every OpenAI error and silently falls back to heuristicBuildActionPlan.
+Existing traces therefore cannot prove an AI request happened.
+```
+
+Implementation started:
+
+```text
+Add mandatory per-turn OpenAI telemetry.
+Replace silent heuristic fallback with fail-closed behavior when AI is required.
+Add an actual Responses API health check and /aihealth.
+Connect model-proposed structured tools to create and update execution.
+```

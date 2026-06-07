@@ -13,6 +13,10 @@ import {
   executeActivePlanReset,
   previewActivePlanReset,
 } from "@/services/activePlanReset";
+import { runOpenAiHealthCheck } from "@/ai/aiHealth";
+import { proposeAgentExecution } from "@/ai/agentExecution";
+import { buildJarvisContext } from "@/agent/context/buildJarvisContext";
+import { writeAudit } from "@/db/queries/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +36,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "owner_not_found" }, { status: 404 });
   }
 
-  const body = (await request.json().catch(() => ({}))) as { action?: string; itemId?: string };
+  const body = (await request.json().catch(() => ({}))) as {
+    action?: string;
+    itemId?: string;
+    text?: string;
+  };
   if (body.action === "preview") {
     const result = await previewActivePlanReset({ userId: owner.id, mode: "garbage" });
     return NextResponse.json({
@@ -92,6 +100,80 @@ export async function POST(request: Request) {
       reminderStatus: reminder?.status ?? null,
       deliveryStatus: delivery?.status ?? null,
       deliveredAt: delivery?.deliveredAt ?? null,
+    });
+  }
+  if (body.action === "ai_health") {
+    const telemetry = await runOpenAiHealthCheck();
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.ai_health",
+      details: {
+        ...telemetry,
+        pipelineUsed: "production_probe",
+        toolCallsExecuted: telemetry.aiSucceeded ? ["report_ai_health"] : [],
+        fallbackUsed: false,
+        fallbackReason: null,
+        finalAction: telemetry.aiSucceeded ? "ai_health_succeeded" : "ai_health_failed",
+        createdItemIds: [],
+        updatedItemIds: [],
+        validationWarnings: [],
+      },
+    });
+    return NextResponse.json({ ok: telemetry.aiSucceeded, telemetry });
+  }
+  if (body.action === "agent_probe" && typeof body.text === "string") {
+    const now = new Date();
+    const context = await buildJarvisContext({
+      userId: owner.id,
+      timezone: owner.timezone,
+      query: body.text,
+      now,
+    });
+    const proposed = await proposeAgentExecution({
+      text: body.text,
+      timezone: owner.timezone,
+      now,
+      activeContext: context.activeContext,
+    });
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.agent_decision_trace",
+      details: {
+        ...proposed.telemetry,
+        pipelineUsed: "production_probe",
+        preRouterIntent: null,
+        toolCallsExecuted: [],
+        fallbackUsed: false,
+        fallbackReason: null,
+        validationWarnings: [],
+        finalAction: "agent_probe_no_execution",
+        createdItemIds: [],
+        updatedItemIds: [],
+      },
+    });
+    return NextResponse.json({
+      ok: true,
+      telemetry: proposed.telemetry,
+      proposal: {
+        intent: proposed.execution.intent,
+        viewScope: proposed.execution.viewScope,
+        resetMode: proposed.execution.resetMode,
+        actionTypes: proposed.execution.actionPlan?.actions.map((action) => action.actionType) ?? [],
+        kinds: proposed.execution.actionPlan?.actions.map((action) => action.kind) ?? [],
+        titles: proposed.execution.actionPlan?.actions.map((action) => action.title) ?? [],
+        startAtLocal:
+          proposed.execution.actionPlan?.actions.map((action) => action.startAtLocal) ?? [],
+        updateItemIds: proposed.execution.itemUpdates.flatMap((update) => update.itemIds),
+        reminderMinutesBefore: proposed.execution.itemUpdates.map(
+          (update) => update.reminderMinutesBefore,
+        ),
+        followupMinutesAfter: proposed.execution.itemUpdates.map(
+          (update) => update.followupMinutesAfter,
+        ),
+        exposeManagementButtons: proposed.execution.itemUpdates.map(
+          (update) => update.exposeManagementButtons,
+        ),
+      },
     });
   }
 

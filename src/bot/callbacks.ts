@@ -218,6 +218,17 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await ctx.reply("Напиши новое время для этой задачи одним сообщением. Например: перенеси на завтра 11:30.");
   });
 
+  bot.callbackQuery(/^manage:edit:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const item = await getPlannerItemById(owner.id, ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      item
+        ? `Что изменить в «${item.title}»? Напиши одним сообщением, например: «перенеси на 15:00 и напомни за 30 минут».`
+        : "Не нашёл эту запись.",
+    );
+  });
+
   bot.callbackQuery(/^manage:delete:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const item = await cancelPlannerItem(owner.id, ctx.match[1]);

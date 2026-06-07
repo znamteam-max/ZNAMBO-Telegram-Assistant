@@ -98,6 +98,7 @@ export async function buildActiveContext(params: {
 
 function formatContextItem(defaultTimezone: string) {
   return (item: {
+    id: string;
     kind: string;
     title: string;
     startAt: Date | null;
@@ -121,6 +122,6 @@ function formatContextItem(defaultTimezone: string) {
     ]
       .filter(Boolean)
       .join(", ");
-    return `- ${local}: ${item.kind} ${item.title}${flags ? ` (${flags})` : ""}`;
+    return `- id=${item.id}; ${local}: ${item.kind} ${item.title}${flags ? ` (${flags})` : ""}`;
   };
 }

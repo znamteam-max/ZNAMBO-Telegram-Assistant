@@ -1,6 +1,6 @@
 import { getDb } from "../client";
 import { auditLog } from "../schema";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 export async function writeAudit(params: {
   userId?: string | null;
@@ -36,6 +36,25 @@ export async function getLatestAuditByActions(params: { userId: string; actions:
     .select()
     .from(auditLog)
     .where(and(eq(auditLog.userId, params.userId), inArray(auditLog.action, params.actions)))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function getLatestAiAuditStatus(params?: { succeeded?: boolean }) {
+  const conditions = [
+    inArray(auditLog.action, ["assistant.agent_decision_trace", "assistant.ai_health"]),
+    sql`${auditLog.details}->>'aiCalled' = 'true'`,
+  ];
+  if (typeof params?.succeeded === "boolean") {
+    conditions.push(sql`${auditLog.details}->>'aiSucceeded' = ${String(params.succeeded)}`);
+  }
+  const [row] = await getDb()
+    .select()
+    .from(auditLog)
+    .where(
+      and(...conditions),
+    )
     .orderBy(desc(auditLog.createdAt))
     .limit(1);
   return row ?? null;

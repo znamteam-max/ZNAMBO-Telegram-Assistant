@@ -28,10 +28,6 @@ export function validatePlannerItemsBeforeSave(params: {
   const originalLower = original.toLowerCase();
   const originalHasBullets = hasMultipleBulletMarkers(original);
 
-  if (isHardManagementText(original)) {
-    warnings.push("hard management command reached planner save validator");
-  }
-
   for (const action of params.plan.actions) {
     const title = action.title.trim();
     const normalizedTitle = normalize(title);

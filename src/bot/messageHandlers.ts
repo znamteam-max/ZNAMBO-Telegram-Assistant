@@ -78,7 +78,7 @@ async function handleNaturalText(ctx: BotContext, text: string) {
 }
 
 async function handleNaturalLanguageTurn(ctx: BotContext, text: string, timezone: string) {
-  if (getEnv().JARVIS_MODE_ENABLED) {
+  if (getEnv().OPENAI_REQUIRED_FOR_NATURAL_LANGUAGE || getEnv().JARVIS_MODE_ENABLED) {
     await handleJarvisTurn(ctx, text, timezone);
     return;
   }

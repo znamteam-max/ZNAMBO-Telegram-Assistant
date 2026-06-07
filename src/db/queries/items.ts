@@ -272,6 +272,22 @@ export async function cancelPlannerItemWithMetadata(params: {
   return item ?? null;
 }
 
+export async function mergePlannerItemMetadata(params: {
+  userId: string;
+  itemId: string;
+  metadata: Record<string, unknown>;
+}): Promise<PlannerItem | null> {
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({
+      metadata: sql`${plannerItems.metadata} || ${JSON.stringify(params.metadata)}::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.id, params.itemId)))
+    .returning();
+  return item ?? null;
+}
+
 export async function cancelCalendarSyncJobsForItem(plannerItemId: string) {
   await getDb()
     .update(calendarSyncJobs)

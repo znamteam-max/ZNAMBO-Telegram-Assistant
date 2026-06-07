@@ -13,6 +13,7 @@ beforeEach(() => {
   process.env.OPENAI_MEMORY_MODEL = "gpt-4o-mini";
   process.env.OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
   process.env.OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
+  process.env.OPENAI_REQUIRED_FOR_NATURAL_LANGUAGE = "true";
   process.env.ENABLE_AGENT_PLANNER_V2 = "true";
   process.env.ENABLE_MEMORY_EMBEDDINGS = "false";
   process.env.SMART_COMMIT_MODE = "auto_low_risk";

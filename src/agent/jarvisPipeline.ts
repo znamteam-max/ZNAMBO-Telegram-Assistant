@@ -3,145 +3,125 @@ import { logger } from "@/lib/logger";
 
 import type { BotContext } from "@/bot/context";
 import { requireOwner } from "@/bot/context";
-import { handleIncomingUserMessage } from "@/bot/messagePipeline";
+import { executeActionPlanForMessage } from "@/bot/messagePipeline";
 import { replyAndRecord } from "@/bot/reply";
+import { taskManagementKeyboard } from "@/bot/keyboards";
+import {
+  MandatoryAiError,
+  proposeAgentExecution,
+  type AiCallTelemetry,
+} from "@/ai/agentExecution";
+import type { AgentExecution } from "@/ai/schemas/agentExecution";
+import { storePlanMemoryFacts } from "@/services/memory";
+import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
-import { detectHardManagementIntent, SAFE_MANAGEMENT_FALLBACK_REPLY } from "./hardManagementIntent";
+import { detectHardManagementIntent } from "./hardManagementIntent";
 import { handleHardManagementIntent } from "./hardManagementRouter";
-import { decideJarvisTurn } from "./jarvisDecision";
 import {
   cleanupGarbageTool,
-  deleteItemsByIndicesTool,
-  markDoneByIndicesTool,
+  prepareResetActivePlanTool,
   renderEveningReviewTool,
-  renderRecentRangeTool,
   renderScheduleViewTool,
   renderTaskViewTool,
   renderYesterdayReviewTool,
-  undoLastActionTool,
 } from "./jarvisTools";
-import { validateJarvisDecision } from "./validation/decisionValidator";
 import type { JarvisToolResult } from "./types";
+
+const AI_SAFE_FAILURE_REPLY =
+  "Не могу безопасно обработать это сообщение без OpenAI. Ничего не создал и не изменил. Попробуй ещё раз чуть позже или проверь /aihealth.";
 
 export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: string) {
   const owner = requireOwner(ctx);
   const now = new Date();
   const preRouterIntent = detectHardManagementIntent(text);
-  const hardTrace: Record<string, unknown> = {
-    rawText: text.slice(0, 1200),
+  const trace: Record<string, unknown> = {
     pipelineUsed: "jarvis",
     preRouterIntent: preRouterIntent?.intent ?? null,
-    finalIntent: null,
+    aiRequired: !isAllowedDeterministicIntent(preRouterIntent?.intent),
+    aiCalled: false,
+    aiSucceeded: false,
+    aiModel: null,
+    openaiResponseId: null,
+    requestStartedAt: null,
+    requestFinishedAt: null,
+    latencyMs: null,
+    inputTokens: null,
+    outputTokens: null,
+    totalTokens: null,
+    structuredOutputValid: false,
+    toolCallsProposed: [],
+    toolCallsExecuted: [],
     fallbackUsed: false,
-    createItemAttempted: false,
-    createItemBlockedByValidator: false,
-    finalAction: "hard_router_started",
-  };
-  if (preRouterIntent) {
-    try {
-      const handled = await handleHardManagementIntent({ ctx, text, timezone, now });
-      hardTrace.finalIntent = handled?.intent ?? preRouterIntent.intent;
-      hardTrace.finalAction = `hard_management_${handled?.intent ?? preRouterIntent.intent}`;
-      if (handled) {
-        hardTrace.affectedItemIds = handled.result.affectedItemIds;
-        await replyToolResult(ctx, handled.result);
-      } else {
-        await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
-      }
-    } catch (error) {
-      hardTrace.finalIntent = preRouterIntent.intent;
-      hardTrace.finalAction = "hard_management_safe_failure";
-      hardTrace.error = error instanceof Error ? error.message : String(error);
-      logger.warn("Hard management handler failed without legacy fallback", {
-        intent: preRouterIntent.intent,
-        error: hardTrace.error,
-      });
-      await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
-    } finally {
-      await writeAudit({
-        userId: owner.id,
-        action: "assistant.jarvis_trace",
-        entityType: "telegram_message",
-        entityId: ctx.dbMessageId,
-        details: hardTrace,
-      });
-    }
-    return;
-  }
-
-  const jarvisContext = await buildJarvisContext({
-    userId: owner.id,
-    timezone,
-    query: text,
-    now,
-  });
-  const decision = decideJarvisTurn(text);
-  const validation = validateJarvisDecision(decision);
-
-  const trace: Record<string, unknown> = {
-    rawText: text.slice(0, 1200),
-    pipelineUsed: "jarvis",
-    preRouterIntent: null,
-    finalIntent: decision.intent,
-    fallbackUsed: false,
-    createItemAttempted: decision.shouldCreateItems,
-    createItemBlockedByValidator: false,
-    intent: decision.intent,
-    mode: decision.mode,
-    confidence: decision.confidence,
-    shouldCreateItems: decision.shouldCreateItems,
-    toolName: decision.toolName,
-    reason: decision.reason,
-    validationWarnings: validation.warnings,
-    contextError: jarvisContext.contextError,
-    lastTaskViewStateId: jarvisContext.lastTaskViewState?.id ?? null,
+    fallbackReason: null,
+    validationWarnings: [],
     finalAction: "started",
+    createdItemIds: [],
+    updatedItemIds: [],
+    errorCode: null,
+    safeErrorMessage: null,
   };
 
   try {
-    if (!validation.ok) {
-      trace.finalAction = "blocked_by_jarvis_decision_validator";
-      await replyAndRecord(ctx, "Остановил действие: команда управления не должна создавать новые задачи. Покажи список через /tasks или «дай план целиком».");
+    if (isAllowedDeterministicIntent(preRouterIntent?.intent)) {
+      const handled = await handleHardManagementIntent({ ctx, text, timezone, now });
+      if (!handled) throw new Error("Deterministic management intent was not handled");
+      trace.finalAction = `deterministic_${handled.intent}`;
+      trace.toolCallsProposed = [handled.intent];
+      trace.toolCallsExecuted = [handled.intent];
+      trace.updatedItemIds = handled.result.affectedItemIds;
+      await replyToolResult(ctx, handled.result);
       return;
     }
 
-    const result = await executeJarvisTool({
-      ctx,
+    const jarvisContext = await buildJarvisContext({
+      userId: owner.id,
+      timezone,
+      query: text,
+      now,
+    });
+    const proposed = await proposeAgentExecution({
       text,
       timezone,
       now,
-      intent: decision.intent,
+      activeContext: jarvisContext.activeContext,
+      preRouterIntent: preRouterIntent?.intent ?? null,
     });
-
-    if (result?.handled) {
-      trace.finalAction = `jarvis_tool_${decision.intent}`;
-      trace.affectedItemIds = result.affectedItemIds;
-      trace.viewStateId = result.viewStateId ?? null;
-      await replyToolResult(ctx, result);
+    applyAiTelemetry(trace, proposed.telemetry);
+    const executionResult = await executeAgentProposal({
+      ctx,
+      execution: proposed.execution,
+      text,
+      timezone,
+      now,
+      activeContext: jarvisContext.activeContext,
+    });
+    trace.toolCallsExecuted = executionResult.toolCallsExecuted;
+    trace.createdItemIds = executionResult.createdItemIds;
+    trace.updatedItemIds = executionResult.updatedItemIds;
+    trace.validationWarnings = executionResult.validationWarnings;
+    trace.finalAction = executionResult.finalAction;
+  } catch (error) {
+    if (error instanceof MandatoryAiError) {
+      applyAiTelemetry(trace, error.telemetry);
+      trace.finalAction = "ai_required_failed_closed";
+      await replyAndRecord(ctx, AI_SAFE_FAILURE_REPLY);
       return;
     }
-
-    trace.finalAction = "delegated_to_v2_planner";
-    trace.fallbackUsed = true;
-    await handleIncomingUserMessage(ctx, text, timezone);
-  } catch (error) {
-    trace.finalAction = "jarvis_error";
-    trace.error = error instanceof Error ? error.message : String(error);
-    logger.warn("Jarvis pipeline failed", {
-      error: trace.error,
-      intent: decision.intent,
+    trace.finalAction = "agent_execution_failed_closed";
+    trace.errorCode = "execution";
+    trace.safeErrorMessage = "Agent tool execution failed safely.";
+    logger.warn("Mandatory agent execution failed closed", {
+      error: error instanceof Error ? error.message : String(error),
     });
-    if (decision.intent === "delegate_to_planner") {
-      trace.fallbackUsed = true;
-      await handleIncomingUserMessage(ctx, text, timezone);
-    } else {
-      await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
-    }
+    await replyAndRecord(
+      ctx,
+      "Не получилось безопасно выполнить предложенные действия. Ничего дополнительно не создаю. Проверь /debuglast.",
+    );
   } finally {
     await writeAudit({
       userId: owner.id,
-      action: "assistant.jarvis_trace",
+      action: "assistant.agent_decision_trace",
       entityType: "telegram_message",
       entityId: ctx.dbMessageId,
       details: trace,
@@ -149,13 +129,14 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
   }
 }
 
-async function executeJarvisTool(params: {
+async function executeAgentProposal(params: {
   ctx: BotContext;
+  execution: AgentExecution;
   text: string;
   timezone: string;
   now: Date;
-  intent: ReturnType<typeof decideJarvisTurn>["intent"];
-}): Promise<JarvisToolResult | null> {
+  activeContext: string;
+}) {
   const owner = requireOwner(params.ctx);
   const base = {
     userId: owner.id,
@@ -163,37 +144,148 @@ async function executeJarvisTool(params: {
     now: params.now,
     sourceMessageId: params.ctx.dbMessageId,
   };
+  const result = {
+    toolCallsExecuted: [] as string[],
+    createdItemIds: [] as string[],
+    updatedItemIds: [] as string[],
+    validationWarnings: [] as string[],
+    finalAction: "agent_replied",
+  };
 
-  switch (params.intent) {
-    case "render_full_plan":
-      return renderScheduleViewTool({ ...base, scope: "full" });
-    case "render_today":
-      return renderScheduleViewTool({ ...base, scope: "today" });
-    case "render_tomorrow":
-      return renderScheduleViewTool({ ...base, scope: "tomorrow" });
-    case "render_week":
-      return renderScheduleViewTool({ ...base, scope: "week" });
-    case "render_recent_range":
-      return renderRecentRangeTool({ ...base, days: 2 });
-    case "render_tasks":
-      return renderTaskViewTool(base);
-    case "render_yesterday_review":
-      return renderYesterdayReviewTool(base);
-    case "render_evening_review":
-      return renderEveningReviewTool(base);
-    case "delete_by_indices":
-      return deleteItemsByIndicesTool({ ...base, text: params.text });
-    case "mark_done_by_indices":
-      return markDoneByIndicesTool({ ...base, text: params.text });
-    case "cleanup_garbage":
-      return cleanupGarbageTool(base);
-    case "reset_active_plan":
-      return null;
-    case "undo_last_action":
-      return undoLastActionTool(base);
-    case "delegate_to_planner":
-      return null;
+  if (params.execution.actionPlan) {
+    result.toolCallsExecuted.push("create_action_plan");
+    const actionResult = await executeActionPlanForMessage(params.ctx, {
+      text: params.text,
+      timezone: params.timezone,
+      now: params.now,
+      activeContext: params.activeContext,
+      plan: params.execution.actionPlan,
+      forceCommit: false,
+    });
+    result.createdItemIds = actionResult.savedItemIds;
+    result.validationWarnings = actionResult.validatorWarnings;
+    result.finalAction = actionResult.finalAction;
+    return result;
   }
+
+  if (params.execution.itemUpdates.length) {
+    result.toolCallsExecuted.push("update_existing_items");
+    const updateResult = await applyAgentItemUpdates({
+      userId: owner.id,
+      updates: params.execution.itemUpdates,
+      now: params.now,
+    });
+    result.updatedItemIds = updateResult.updatedItems.map((item) => item.id);
+    result.validationWarnings = updateResult.warnings;
+    result.finalAction = "updated_existing_items";
+    const lines = [
+      params.execution.reply ?? "Обновил существующие события.",
+      "",
+      ...updateResult.updatedItems.map((item) => `• ${item.title}`),
+      updateResult.reminderIds.length
+        ? `Напоминаний и follow-up создано: ${updateResult.reminderIds.length}.`
+        : "Новых напоминаний не создано.",
+    ];
+    await replyAndRecord(params.ctx, lines.join("\n"), {
+      reply_markup:
+        updateResult.exposeManagementButtons && updateResult.updatedItems.length
+          ? taskManagementKeyboard(updateResult.updatedItems)
+          : undefined,
+    });
+    return result;
+  }
+
+  if (params.execution.memoryFacts.length) {
+    result.toolCallsExecuted.push("store_memory");
+    await storePlanMemoryFacts({
+      userId: owner.id,
+      sourceMessageId: params.ctx.dbMessageId,
+      plan: {
+        intent: "answer",
+        summary: null,
+        reply: params.execution.reply,
+        confidence: 0.9,
+        requiresConfirmation: false,
+        actions: [],
+        memoryCandidates: params.execution.memoryFacts,
+        clarificationQuestions: [],
+      },
+    });
+    result.finalAction = "stored_memory";
+    await replyAndRecord(params.ctx, params.execution.reply ?? "Запомнил.");
+    return result;
+  }
+
+  const toolResult = await executeViewOrManagementTool(params.execution, base);
+  if (toolResult) {
+    result.toolCallsExecuted.push(toolResult.name);
+    result.updatedItemIds = toolResult.result.affectedItemIds;
+    result.finalAction = toolResult.name;
+    await replyToolResult(params.ctx, toolResult.result);
+    return result;
+  }
+
+  result.toolCallsExecuted.push(params.execution.intent);
+  result.finalAction = params.execution.intent;
+  const reply = [
+    params.execution.reply,
+    ...params.execution.clarificationQuestions,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  await replyAndRecord(params.ctx, reply || "Уточни, пожалуйста, что именно нужно сделать.");
+  return result;
+}
+
+async function executeViewOrManagementTool(
+  execution: AgentExecution,
+  base: {
+    userId: string;
+    timezone: string;
+    now: Date;
+    sourceMessageId?: string | null;
+  },
+): Promise<{ name: string; result: JarvisToolResult } | null> {
+  if (execution.viewScope === "full") {
+    return { name: "render_full", result: await renderScheduleViewTool({ ...base, scope: "full" }) };
+  }
+  if (execution.viewScope === "today") {
+    return { name: "render_today", result: await renderScheduleViewTool({ ...base, scope: "today" }) };
+  }
+  if (execution.viewScope === "tomorrow") {
+    return { name: "render_tomorrow", result: await renderScheduleViewTool({ ...base, scope: "tomorrow" }) };
+  }
+  if (execution.viewScope === "week") {
+    return { name: "render_week", result: await renderScheduleViewTool({ ...base, scope: "week" }) };
+  }
+  if (execution.viewScope === "tasks") {
+    return { name: "render_tasks", result: await renderTaskViewTool(base) };
+  }
+  if (execution.viewScope === "yesterday") {
+    return { name: "render_yesterday", result: await renderYesterdayReviewTool(base) };
+  }
+  if (execution.viewScope === "evening") {
+    return { name: "render_evening", result: await renderEveningReviewTool(base) };
+  }
+  if (execution.resetMode === "all") {
+    return { name: "prepare_reset_active_plan", result: await prepareResetActivePlanTool(base) };
+  }
+  if (execution.resetMode === "garbage" || execution.intent === "cleanup_garbage") {
+    return { name: "cleanup_garbage", result: await cleanupGarbageTool(base) };
+  }
+  return null;
+}
+
+function isAllowedDeterministicIntent(intent?: string | null) {
+  return (
+    intent === "delete_by_indices" ||
+    intent === "mark_done_by_indices" ||
+    intent === "reschedule_by_indices"
+  );
+}
+
+function applyAiTelemetry(trace: Record<string, unknown>, telemetry: AiCallTelemetry) {
+  Object.assign(trace, telemetry);
 }
 
 async function replyToolResult(ctx: BotContext, result: JarvisToolResult) {

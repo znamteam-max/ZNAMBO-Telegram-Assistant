@@ -17,6 +17,9 @@ export async function buildActionPlan(params: {
   const now = params.now ?? new Date();
 
   if (!getEnv().ENABLE_AGENT_PLANNER_V2 || !canUseOpenAI()) {
+    if (getEnv().OPENAI_REQUIRED_FOR_NATURAL_LANGUAGE) {
+      throw new Error("OpenAI is required for natural-language planning");
+    }
     return validateActionPlan({
       plan: heuristicBuildActionPlan({ ...params, now }),
       text: params.text,
@@ -51,6 +54,7 @@ export async function buildActionPlan(params: {
       now,
     });
   } catch (error) {
+    if (getEnv().OPENAI_REQUIRED_FOR_NATURAL_LANGUAGE) throw error;
     logger.warn("Planner V2 fell back to deterministic heuristic", {
       error: error instanceof Error ? error.message : String(error),
     });

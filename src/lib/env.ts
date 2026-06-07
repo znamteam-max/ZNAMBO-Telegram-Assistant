@@ -17,6 +17,7 @@ const envSchema = z.object({
   OPENAI_MEMORY_MODEL: z.string().default("gpt-4o-mini"),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   OPENAI_TRANSCRIPTION_MODEL: z.string().default("gpt-4o-mini-transcribe"),
+  OPENAI_REQUIRED_FOR_NATURAL_LANGUAGE: z.coerce.boolean().default(true),
   ENABLE_MEMORY_EMBEDDINGS: z.coerce.boolean().default(false),
   ENABLE_AGENT_PLANNER_V2: z.coerce.boolean().default(true),
   JARVIS_MODE_ENABLED: z.coerce.boolean().default(true),

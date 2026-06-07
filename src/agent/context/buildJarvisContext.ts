@@ -24,7 +24,20 @@ export async function buildJarvisContext(params: {
       "",
       "Last task view state:",
       lastTaskViewState
-        ? `- ${lastTaskViewState.title}; scope=${lastTaskViewState.scope}; items=${lastTaskViewState.itemIds.length}`
+        ? [
+            `- ${lastTaskViewState.title}; scope=${lastTaskViewState.scope}; items=${lastTaskViewState.itemIds.length}`,
+            ...(Array.isArray(lastTaskViewState.itemsSnapshot)
+              ? (lastTaskViewState.itemsSnapshot as Array<{
+                  displayIndex?: number;
+                  itemId?: string;
+                  kind?: string;
+                  title?: string;
+                }>).map(
+                  (item) =>
+                    `  ${item.displayIndex ?? "?"}. id=${item.itemId ?? "unknown"}; ${item.kind ?? "item"}; ${item.title ?? ""}`,
+                )
+              : []),
+          ].join("\n")
         : "- none",
     ].join("\n"),
     contextError: activeContextResult.contextError,

@@ -9,7 +9,8 @@ import {
   undoLastActionTool,
 } from "@/agent/jarvisTools";
 import type { JarvisToolResult } from "@/agent/types";
-import { getLatestAuditByActions } from "@/db/queries/audit";
+import { getLatestAuditByActions, writeAudit } from "@/db/queries/audit";
+import { runOpenAiHealthCheck } from "@/ai/aiHealth";
 import { deleteMemoryForUser, exportOwnerData, listActiveMemories } from "@/db/queries/memories";
 import { createManualPlannerItem } from "@/db/queries/items";
 import { createReminderIfMissing } from "@/db/queries/reminders";
@@ -59,6 +60,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/cleanup_garbage — убрать тестовый или случайный мусор",
         "/undo — откатить последнее удаление или cleanup",
         "/remindertest 2 — тестовое напоминание через N минут",
+        "/aihealth — реальная проверка OpenAI Responses API и tool calling",
         "/calendar — статус календаря",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -152,6 +154,46 @@ export function registerCommands(bot: Bot<BotContext>) {
     );
   });
 
+  bot.command("aihealth", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const telemetry = await runOpenAiHealthCheck();
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.ai_health",
+      entityType: "telegram_message",
+      entityId: ctx.dbMessageId,
+      details: {
+        ...telemetry,
+        pipelineUsed: "aihealth",
+        toolCallsExecuted: telemetry.aiSucceeded ? ["report_ai_health"] : [],
+        fallbackUsed: false,
+        fallbackReason: null,
+        finalAction: telemetry.aiSucceeded ? "ai_health_succeeded" : "ai_health_failed",
+        createdItemIds: [],
+        updatedItemIds: [],
+        validationWarnings: [],
+      },
+    });
+    await replyAndRecord(
+      ctx,
+      telemetry.aiSucceeded
+        ? [
+            "OpenAI: connected",
+            `Model: ${telemetry.aiModel ?? "unknown"}`,
+            `Response ID: ${telemetry.openaiResponseId ?? "unknown"}`,
+            `Latency: ${telemetry.latencyMs ?? "unknown"} ms`,
+            "Structured output: valid",
+            "Tool calling: available",
+            "No tasks were created.",
+          ].join("\n")
+        : [
+            "OpenAI: unavailable",
+            `Error type: ${telemetry.errorCode ?? "unknown"}`,
+            "No tasks were created.",
+          ].join("\n"),
+    );
+  });
+
   bot.command("export", async (ctx) => {
     const owner = requireOwner(ctx);
     const data = await exportOwnerData(owner.id);
@@ -186,7 +228,12 @@ export function registerCommands(bot: Bot<BotContext>) {
     const owner = requireOwner(ctx);
     const row = await getLatestAuditByActions({
       userId: owner.id,
-      actions: ["assistant.jarvis_trace", "assistant.decision_trace"],
+      actions: [
+        "assistant.agent_decision_trace",
+        "assistant.ai_health",
+        "assistant.jarvis_trace",
+        "assistant.decision_trace",
+      ],
     });
     if (!row) {
       await ctx.reply("Пока нет decision trace.");
@@ -195,21 +242,37 @@ export function registerCommands(bot: Bot<BotContext>) {
     const details = row.details as Record<string, unknown>;
     await ctx.reply(
       [
-        "Последнее решение:",
-        `pipeline: ${String(details.pipelineUsed ?? "unknown")}`,
-        `pre-router: ${String(details.preRouterIntent ?? "none")}`,
-        `intent: ${String(details.intent ?? "unknown")}`,
-        `final-intent: ${String(details.finalIntent ?? details.intent ?? "unknown")}`,
-        `confidence: ${String(details.confidence ?? "unknown")}`,
-        `items: ${String(details.extractedItemCount ?? 0)}`,
-        `final: ${String(details.finalAction ?? "unknown")}`,
-        `fallback: ${String(details.fallbackUsed ?? false)}`,
-        `create-attempted: ${String(details.createItemAttempted ?? false)}`,
-        `create-blocked: ${String(details.createItemBlockedByValidator ?? false)}`,
-        `warnings: ${Array.isArray(details.validatorWarnings) ? details.validatorWarnings.length : 0}`,
+        "Последнее AI-решение:",
+        `Pipeline: ${String(details.pipelineUsed ?? "unknown")}`,
+        `Pre-router: ${String(details.preRouterIntent ?? "none")}`,
+        `AI required: ${yesNo(details.aiRequired)}`,
+        `AI called: ${yesNo(details.aiCalled)}`,
+        `AI succeeded: ${yesNo(details.aiSucceeded)}`,
+        `Model: ${String(details.aiModel ?? "unknown")}`,
+        `Response ID: ${String(details.openaiResponseId ?? "none")}`,
+        `Latency: ${String(details.latencyMs ?? "unknown")} ms`,
+        `Tokens: ${String(details.inputTokens ?? "?")} in / ${String(details.outputTokens ?? "?")} out / ${String(details.totalTokens ?? "?")} total`,
+        `Structured output: ${details.structuredOutputValid === true ? "valid" : "invalid"}`,
+        `Tool calls proposed: ${formatList(details.toolCallsProposed)}`,
+        `Tool calls executed: ${formatList(details.toolCallsExecuted)}`,
+        `Fallback used: ${yesNo(details.fallbackUsed)}`,
+        `Fallback reason: ${String(details.fallbackReason ?? "none")}`,
+        `Created items: ${formatList(details.createdItemIds)}`,
+        `Updated items: ${formatList(details.updatedItemIds)}`,
+        `Warnings: ${formatList(details.validationWarnings)}`,
+        `Final action: ${String(details.finalAction ?? "unknown")}`,
+        `Error: ${String(details.errorCode ?? "none")}`,
       ].join("\n"),
     );
   });
+}
+
+function yesNo(value: unknown) {
+  return value === true ? "yes" : "no";
+}
+
+function formatList(value: unknown) {
+  return Array.isArray(value) && value.length ? value.map(String).join(", ") : "none";
 }
 
 async function renderCommandSchedule(

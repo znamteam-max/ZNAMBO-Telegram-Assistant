@@ -118,7 +118,7 @@ export async function handleIncomingUserMessage(ctx: BotContext, text: string, t
 
     const planFromDecision = buildActionPlanFromDecision({ decision, text, timezone, now });
     if (planFromDecision) {
-      const result = await handleActionPlan(ctx, {
+      const result = await executeActionPlanForMessage(ctx, {
         text,
         timezone,
         now,
@@ -147,7 +147,7 @@ export async function handleIncomingUserMessage(ctx: BotContext, text: string, t
       return;
     }
 
-    const result = await handleActionPlan(ctx, {
+    const result = await executeActionPlanForMessage(ctx, {
       text,
       timezone,
       now,
@@ -186,30 +186,20 @@ async function buildActiveContextBestEffort(params: {
   }
 }
 
-async function handleActionPlan(
+export async function executeActionPlanForMessage(
   ctx: BotContext,
   params: {
     text: string;
     timezone: string;
     now: Date;
     activeContext: string;
-    decision: AssistantDecision;
+    decision?: AssistantDecision;
     plan: ActionPlan;
     forceCommit: boolean;
     committedIntro?: string;
   },
 ): Promise<{ finalAction: string; validatorWarnings: string[]; savedItemIds: string[] }> {
   const owner = requireOwner(ctx);
-  const hardIntent = detectHardManagementIntent(params.text);
-  if (hardIntent) {
-    await replyAndRecord(ctx, SAFE_MANAGEMENT_FALLBACK_REPLY);
-    return {
-      finalAction: "blocked_hard_management_before_plan_save",
-      validatorWarnings: ["hard management command blocked before planner save"],
-      savedItemIds: [],
-    };
-  }
-
   if (params.plan.intent === "answer" || params.plan.intent === "clarify") {
     await replyAndRecord(ctx, formatActionPlanCard(params.plan, params.timezone));
     return { finalAction: `replied_${params.plan.intent}`, validatorWarnings: [], savedItemIds: [] };
