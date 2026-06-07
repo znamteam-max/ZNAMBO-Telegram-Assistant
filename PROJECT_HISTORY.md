@@ -1371,3 +1371,157 @@ Remaining operational limitation:
 ```text
 best-effort external calendar entries are not deleted during active-plan reset; their pending sync jobs are cancelled and the assistant database remains the source of truth
 ```
+
+### 13.27. Mandatory OpenAI observability and agent execution rollout
+
+Production incident:
+
+```text
+The headed list "На сегодня" was bypassing OpenAI and was saved by the deterministic ordered-list path.
+The three timed entries became generic tasks due at 23:59.
+The relative instruction about every event was saved as a fourth generic task.
+decideUserIntentWithAI did not call OpenAI at all.
+The legacy ActionPlan builder silently used heuristic fallback after OpenAI errors.
+```
+
+Implemented:
+
+```text
+all non-command natural-language turns now use the mandatory Jarvis agent pipeline
+OPENAI_REQUIRED_FOR_NATURAL_LANGUAGE defaults to true
+only exact saved-view index operations remain deterministic natural-language operations
+OpenAI failures are fail-closed and cannot create or update planner items
+the agent uses a forced strict Responses API function tool with Zod validation
+one schema-only retry is allowed; authentication, rate-limit and network failures are not hidden
+the model must choose one primary execution path per turn
+relative references receive real planner item IDs and latest task-view IDs in retrieval context
+model-proposed item updates create before-event reminders, follow-ups and management metadata
+task management keyboards now include separate edit controls
+recently missed follow-ups receive an idempotent one-minute catch-up
+```
+
+Per-turn audit telemetry stored in `assistant.audit_log`:
+
+```text
+pipelineUsed
+preRouterIntent
+aiRequired
+aiCalled
+aiSucceeded
+aiModel
+openaiResponseId
+requestStartedAt
+requestFinishedAt
+latencyMs
+inputTokens
+outputTokens
+totalTokens
+structuredOutputValid
+toolCallsProposed
+toolCallsExecuted
+fallbackUsed
+fallbackReason
+validationWarnings
+finalAction
+createdItemIds
+updatedItemIds
+errorCode
+safeErrorMessage
+```
+
+Operational diagnostics:
+
+```text
+/aihealth performs a real minimal Responses API request with a harmless strict tool
+/debuglast renders the latest mandatory AI trace
+/api/health exposes only safe OpenAI status fields
+the protected production probe can verify model proposals without mutating user data
+the protected confirmed execution probe verifies model proposal -> validation -> DB tool execution
+```
+
+Production proof on behavioral commit `4fb97b3528b0eb9793b79b23f36538548a578ba9`:
+
+```text
+health ok -> true
+openAiConfigured -> true
+openAiRequiredForNaturalLanguage -> true
+lastAiModel -> gpt-4o-mini-2024-07-18
+lastAiErrorType -> null
+Telegram webhook pending updates -> 0
+Telegram webhook last error -> none
+reminder runner -> ok
+```
+
+Real OpenAI health call:
+
+```text
+aiCalled -> true
+aiSucceeded -> true
+structuredOutputValid -> true
+toolCallsProposed -> report_ai_health
+model -> gpt-4o-mini-2024-07-18
+a safe OpenAI response ID and token usage were returned and audited
+no planner items were created
+```
+
+Exact production list execution:
+
+```text
+input -> headed three-item "На сегодня" list from the incident
+toolCallsProposed -> create_action_plan
+toolCallsExecuted -> create_action_plan
+fallbackUsed -> false
+created items -> 3
+kinds -> event, event, training
+titles -> Красочный забег, Эфир ВС, Тренировка Z2
+local start times -> 10:00, 13:00, 22:00
+dueAt -> null for all three
+```
+
+Exact production relative update execution:
+
+```text
+input -> remind one hour before every event, ask afterwards, expose separate management controls
+toolCallsProposed -> update_existing_items
+toolCallsExecuted -> update_existing_items
+fallbackUsed -> false
+updated items -> the same 3 created item IDs
+managementButtonsRequested -> true for all three
+future reminders/follow-ups were created
+past one-hour reminders were reported as validation warnings instead of backdated
+the recently missed race follow-up was scheduled as an idempotent catch-up
+```
+
+Automatic delivery proof:
+
+```text
+the model-driven catch-up reminder was not run manually
+cron-job.org claimed it automatically
+reminder status -> sent
+delivery status -> sent
+Telegram delivery timestamp was recorded
+```
+
+Production data repair:
+
+```text
+preview found exactly four records from the reported incident
+three generic 23:59 tasks and the generic management-instruction task were archived
+post-cleanup targeted garbage count -> 0
+the corrected model-driven records were then created through the protected execution proof
+```
+
+Final validation:
+
+```text
+npm test -> 20 files passed, 64 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+Remaining limitation:
+
+```text
+the protected execution proof does not render a Telegram summary card itself
+the normal webhook path uses the same proposal, validator, commit and update services and adds the user-facing summary/buttons
+```

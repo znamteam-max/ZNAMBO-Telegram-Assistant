@@ -257,3 +257,57 @@ Replace silent heuristic fallback with fail-closed behavior when AI is required.
 Add an actual Responses API health check and /aihealth.
 Connect model-proposed structured tools to create and update execution.
 ```
+
+### Turn: mandatory OpenAI execution completed and proven in production
+
+Root cause:
+
+```text
+decideUserIntentWithAI was deterministic-only and never called OpenAI.
+The ordered-list branch directly saved generic tasks.
+The legacy planner silently enabled heuristic fallback after OpenAI errors.
+```
+
+Production changes:
+
+```text
+natural-language planning now requires a real OpenAI Responses API call
+failures stop safely with no DB mutation and no legacy fallback
+assistant.agent_decision_trace stores model, response ID, timing, token, schema, tool and mutation telemetry
+/aihealth makes a real strict tool-calling request
+/debuglast displays the mandatory trace
+health exposes safe OpenAI status only
+strict agent tool output plus one schema-only retry was added
+relative updates resolve real item IDs and create reminder/follow-up policies
+management keyboards include edit, reschedule and delete controls
+```
+
+Real production verification:
+
+```text
+OpenAI health connected with gpt-4o-mini-2024-07-18
+the exact headed daily list produced one create_action_plan
+the plan created event/event/training at 10:00/13:00/22:00 with no 23:59 due dates
+the exact relative instruction produced and executed update_existing_items for all three IDs
+three future reminders/follow-ups were created
+a recent missed follow-up was caught up and delivered automatically by cron-job.org
+audit rows contain proposed/executed tools and created/updated IDs
+fallbackUsed remained false
+```
+
+Incident cleanup:
+
+```text
+the four confirmed bad records were previewed and archived
+no unrelated active record was selected
+correct structured records now replace the generic tasks
+```
+
+Validation:
+
+```text
+npm test -> 20 files, 64 tests passed
+npm run lint -> passed
+npm run build -> passed
+verified behavioral production commit -> 4fb97b3528b0eb9793b79b23f36538548a578ba9
+```
