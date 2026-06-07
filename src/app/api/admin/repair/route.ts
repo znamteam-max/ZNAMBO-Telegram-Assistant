@@ -14,9 +14,21 @@ import {
   previewActivePlanReset,
 } from "@/services/activePlanReset";
 import { runOpenAiHealthCheck } from "@/ai/aiHealth";
-import { MandatoryAiError, proposeAgentExecution } from "@/ai/agentExecution";
+import {
+  MandatoryAiError,
+  proposeAgentExecution,
+  type AiCallTelemetry,
+} from "@/ai/agentExecution";
+import { validatePlannerItemsBeforeSave } from "@/ai/antiGarbageValidator";
 import { buildJarvisContext } from "@/agent/context/buildJarvisContext";
 import { writeAudit } from "@/db/queries/audit";
+import { createIdempotencyKey } from "@/lib/idempotency";
+import {
+  commitStoredActionPlan,
+  createStoredActionPlan,
+} from "@/services/actionPlanCommit";
+import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
+import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +52,7 @@ export async function POST(request: Request) {
     action?: string;
     itemId?: string;
     text?: string;
+    confirm?: boolean;
   };
   if (body.action === "preview") {
     const result = await previewActivePlanReset({ userId: owner.id, mode: "garbage" });
@@ -201,6 +214,151 @@ export async function POST(request: Request) {
       },
     });
   }
+  if (
+    body.action === "agent_execute" &&
+    typeof body.text === "string" &&
+    body.confirm === true
+  ) {
+    const now = new Date();
+    const context = await buildJarvisContext({
+      userId: owner.id,
+      timezone: owner.timezone,
+      query: body.text,
+      now,
+    });
+    let proposed;
+    try {
+      proposed = await proposeAgentExecution({
+        text: body.text,
+        timezone: owner.timezone,
+        now,
+        activeContext: context.activeContext,
+      });
+    } catch (error) {
+      if (!(error instanceof MandatoryAiError)) throw error;
+      await writeAgentExecutionAudit({
+        userId: owner.id,
+        telemetry: error.telemetry,
+        finalAction: "agent_execute_failed_closed",
+      });
+      return NextResponse.json({ ok: false, telemetry: error.telemetry }, { status: 502 });
+    }
+
+    const createdItemIds: string[] = [];
+    const updatedItemIds: string[] = [];
+    const reminderIds: string[] = [];
+    let createdReminderCount = 0;
+    const toolCallsExecuted: string[] = [];
+    const validationWarnings: string[] = [];
+    let finalAction = "agent_execute_unsupported";
+
+    if (proposed.execution.actionPlan) {
+      const validation = validatePlannerItemsBeforeSave({
+        plan: proposed.execution.actionPlan,
+        originalMessage: body.text,
+      });
+      validationWarnings.push(...validation.warnings);
+      if (!validation.ok) {
+        await writeAgentExecutionAudit({
+          userId: owner.id,
+          telemetry: proposed.telemetry,
+          finalAction: "agent_execute_blocked_by_validator",
+          validationWarnings,
+        });
+        return NextResponse.json(
+          { ok: false, error: "validation_failed", validationWarnings },
+          { status: 422 },
+        );
+      }
+
+      toolCallsExecuted.push("create_action_plan");
+      const storedPlan = await createStoredActionPlan({
+        userId: owner.id,
+        plan: proposed.execution.actionPlan,
+        idempotencyKey: createIdempotencyKey([
+          owner.id,
+          body.text,
+          "protected-agent-execute-v1",
+        ]),
+        commitMode: owner.smartCommitMode,
+      });
+      const committed = await commitStoredActionPlan({
+        actionPlanId: storedPlan.id,
+        userId: owner.id,
+        timezone: owner.timezone,
+        now,
+      });
+      if (committed.status === "committed") {
+        createdItemIds.push(...committed.items.map((item) => item.id));
+        createdReminderCount = committed.reminders.length;
+        await syncItemsToCalendarBestEffort(committed.items);
+        finalAction = "agent_execute_committed_action_plan";
+      } else {
+        finalAction = `agent_execute_${committed.status}`;
+      }
+    } else if (proposed.execution.itemUpdates.length) {
+      toolCallsExecuted.push("update_existing_items");
+      const updated = await applyAgentItemUpdates({
+        userId: owner.id,
+        updates: proposed.execution.itemUpdates,
+        now,
+      });
+      updatedItemIds.push(...updated.updatedItems.map((item) => item.id));
+      reminderIds.push(...updated.reminderIds);
+      validationWarnings.push(...updated.warnings);
+      finalAction = "agent_execute_updated_existing_items";
+    }
+
+    await writeAgentExecutionAudit({
+      userId: owner.id,
+      telemetry: proposed.telemetry,
+      finalAction,
+      toolCallsExecuted,
+      createdItemIds,
+      updatedItemIds,
+      validationWarnings,
+    });
+    return NextResponse.json({
+      ok: toolCallsExecuted.length > 0,
+      telemetry: proposed.telemetry,
+      execution: {
+        finalAction,
+        toolCallsExecuted,
+        createdItemIds,
+        updatedItemIds,
+        reminderIds,
+        createdReminderCount,
+        validationWarnings,
+      },
+    });
+  }
 
   return NextResponse.json({ ok: false, error: "unsupported_action" }, { status: 400 });
+}
+
+async function writeAgentExecutionAudit(params: {
+  userId: string;
+  telemetry: AiCallTelemetry;
+  finalAction: string;
+  toolCallsExecuted?: string[];
+  createdItemIds?: string[];
+  updatedItemIds?: string[];
+  validationWarnings?: string[];
+}) {
+  await writeAudit({
+    userId: params.userId,
+    action: "assistant.agent_decision_trace",
+    details: {
+      ...params.telemetry,
+      pipelineUsed: "production_execute",
+      preRouterIntent: null,
+      toolCallsExecuted: params.toolCallsExecuted ?? [],
+      fallbackUsed: false,
+      fallbackReason: null,
+      validationWarnings: params.validationWarnings ?? [],
+      finalAction: params.finalAction,
+      createdItemIds: params.createdItemIds ?? [],
+      updatedItemIds: params.updatedItemIds ?? [],
+    },
+  });
 }
