@@ -60,6 +60,9 @@ describe("mandatory OpenAI agent execution proposal", () => {
       "2026-06-07T22:00:00",
     ]);
     expect(result.execution.actionPlan?.actions.every((item) => item.dueAtLocal === null)).toBe(true);
+    expect(mocks.create.mock.calls[0]?.[0]?.instructions).toContain(
+      "Не выбирай render_today для такого сообщения.",
+    );
     expect(result.telemetry).toEqual(
       expect.objectContaining({
         aiCalled: true,
@@ -177,4 +180,3 @@ function action(
     metadata: {},
   };
 }
-
