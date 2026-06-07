@@ -43,6 +43,15 @@ export function taskManagementKeyboard(items: PlannerItem[]) {
   return keyboard;
 }
 
+export function singleItemManagementKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("Готово", `done:${itemId}`)
+    .text("Перенести", `manage:reschedule:${itemId}`)
+    .row()
+    .text("Изменить", `manage:edit:${itemId}`)
+    .text("Удалить", `manage:delete:${itemId}`);
+}
+
 export function tentativeEventFollowupKeyboard(itemId: string) {
   return new InlineKeyboard()
     .text("Был", `tentative:happened:${itemId}`)

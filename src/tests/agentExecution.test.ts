@@ -68,7 +68,7 @@ describe("mandatory OpenAI agent execution proposal", () => {
       "Не выбирай render_today для такого сообщения.",
     );
     expect(mocks.create.mock.calls[0]?.[0]?.instructions).toContain(
-      "Выбирай ровно один primary path.",
+      "Выбирай ровно один primary mutation path.",
     );
     expect(result.telemetry).toEqual(
       expect.objectContaining({
@@ -100,6 +100,9 @@ describe("mandatory OpenAI agent execution proposal", () => {
         itemUpdates: [
           {
             itemIds: ids,
+            operation: "configure",
+            startAtLocal: null,
+            endAtLocal: null,
             reminderMinutesBefore: 60,
             followupMinutesAfter: 15,
             exposeManagementButtons: true,
@@ -189,6 +192,136 @@ describe("mandatory OpenAI agent execution proposal", () => {
     expect(actionItem.properties.metadata.additionalProperties).toBe(false);
     expect(actionItem.properties.reminders.items.properties.payload.additionalProperties).toBe(false);
   });
+
+  it("completes only the item from the latest delivered follow-up", async () => {
+    const itemId = "11111111-1111-4111-8111-111111111111";
+    mocks.create.mockResolvedValue(
+      responseFor({
+        intent: "update_existing_items",
+        reply: "Отмечу забег выполненным.",
+        actionPlan: null,
+        viewScope: null,
+        resetMode: null,
+        itemUpdates: [
+          {
+            itemIds: [itemId],
+            operation: "complete",
+            startAtLocal: null,
+            endAtLocal: null,
+            reminderMinutesBefore: null,
+            followupMinutesAfter: null,
+            exposeManagementButtons: false,
+            note: "Completion reply to the latest delivered follow-up.",
+          },
+        ],
+        memoryFacts: [],
+        clarificationQuestions: [],
+      }),
+    );
+
+    const result = await proposeAgentExecution({
+      text: "Отлично! Выполнено, поставь это сделанным",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-07T10:09:00.000Z"),
+      activeContext: `Latest delivered reminder/follow-up:\n- itemId=${itemId}; title=Красочный забег`,
+    });
+
+    expect(result.execution.itemUpdates).toEqual([
+      expect.objectContaining({
+        itemIds: [itemId],
+        operation: "complete",
+      }),
+    ]);
+  });
+
+  it("creates only the new preparation and requests a post-execution today view", async () => {
+    mocks.create.mockResolvedValue(
+      responseFor({
+        intent: "create_plan",
+        reply: "Добавлю подготовку и покажу итоговый план.",
+        actionPlan: {
+          intent: "plan",
+          summary: "Подготовка к ЧМ вечером",
+          reply: null,
+          confidence: 0.95,
+          requiresConfirmation: false,
+          actions: [
+            {
+              ...action(
+                "preparation",
+                "preparation_task",
+                "Подготовка к ЧМ",
+                "2026-06-07T21:00:00",
+              ),
+              location: "дома",
+            },
+          ],
+          memoryCandidates: [],
+          clarificationQuestions: [],
+        },
+        viewScope: "today",
+        resetMode: null,
+        itemUpdates: [],
+        memoryFacts: [],
+        clarificationQuestions: [],
+      }),
+    );
+
+    const result = await proposeAgentExecution({
+      text: "Дай план на сегодня, добавь вечером подготовку к ЧМ дома",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-07T10:25:00.000Z"),
+      activeContext: "Today:\n- Эфир ВС\n- Тренировка Z2",
+    });
+
+    expect(result.execution.viewScope).toBe("today");
+    expect(result.execution.actionPlan?.actions.map((item) => item.title)).toEqual([
+      "Подготовка к ЧМ",
+    ]);
+  });
+
+  it("proposes one reschedule operation for an event time range", async () => {
+    const itemId = "22222222-2222-4222-8222-222222222222";
+    mocks.create.mockResolvedValue(
+      responseFor({
+        intent: "update_existing_items",
+        reply: "Продлил эфир до 20:00.",
+        actionPlan: null,
+        viewScope: null,
+        resetMode: null,
+        itemUpdates: [
+          {
+            itemIds: [itemId],
+            operation: "reschedule",
+            startAtLocal: "2026-06-07T13:00:00",
+            endAtLocal: "2026-06-07T20:00:00",
+            reminderMinutesBefore: null,
+            followupMinutesAfter: null,
+            exposeManagementButtons: true,
+            note: null,
+          },
+        ],
+        memoryFacts: [],
+        clarificationQuestions: [],
+      }),
+    );
+
+    const result = await proposeAgentExecution({
+      text: "Эфир ВС с 13 до 20 сделай",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-07T10:27:00.000Z"),
+      activeContext: `Today:\n- id=${itemId}; 2026-06-07 13:00: event Эфир ВС`,
+    });
+
+    expect(result.execution.itemUpdates).toEqual([
+      expect.objectContaining({
+        itemIds: [itemId],
+        operation: "reschedule",
+        startAtLocal: "2026-06-07T13:00:00",
+        endAtLocal: "2026-06-07T20:00:00",
+      }),
+    ]);
+  });
 });
 
 function responseFor(argumentsValue: Record<string, unknown>) {
@@ -207,8 +340,8 @@ function responseFor(argumentsValue: Record<string, unknown>) {
 }
 
 function action(
-  actionType: "event" | "training",
-  kind: "event" | "training",
+  actionType: "event" | "training" | "preparation",
+  kind: "event" | "training" | "preparation_task",
   title: string,
   startAtLocal: string,
 ) {

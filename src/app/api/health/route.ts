@@ -7,6 +7,7 @@ import {
   isYandexCalendarConfigured,
 } from "@/lib/env";
 import { getLatestAiAuditStatus } from "@/db/queries/audit";
+import { APP_VERSION } from "@/lib/version";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,7 @@ export async function GET() {
   const lastCallDetails = lastAiCall?.details as Record<string, unknown> | undefined;
   return NextResponse.json({
     ok: true,
+    appVersion: APP_VERSION,
     deploymentCommit: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
     appUrl: env.NEXT_PUBLIC_APP_URL,
     defaultTimezone: env.DEFAULT_TIMEZONE,

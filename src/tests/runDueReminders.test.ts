@@ -199,4 +199,48 @@ describe("runDueReminders", () => {
     expect(mocks.archiveDeliveredTestItem).toHaveBeenCalledWith("user-id", "test-item-id");
     expect(mocks.createReminderIfMissing).not.toHaveBeenCalled();
   });
+
+  it("includes per-item management buttons on configured follow-ups", async () => {
+    const now = new Date("2026-06-07T09:45:00.000Z");
+    const reminder = {
+      id: "followup-id",
+      userId: "user-id",
+      plannerItemId: "item-id",
+      type: "followup",
+      scheduledAt: now,
+      status: "claimed",
+      claimedAt: now,
+      sentAt: null,
+      telegramMessageId: null,
+      attemptCount: 1,
+      lastError: null,
+      repeatUntilAck: false,
+      ackedAt: null,
+      parentReminderId: null,
+      recurrenceKey: null,
+      payload: { title: "Красочный забег" },
+      createdAt: now,
+      updatedAt: now,
+    };
+    mocks.claimDueReminders.mockResolvedValue([reminder]);
+    mocks.getPlannerItemByAnyId.mockResolvedValue({
+      id: "item-id",
+      kind: "event",
+      title: "Красочный забег",
+      timezone: "Europe/Moscow",
+      startAt: new Date("2026-06-07T07:00:00.000Z"),
+      endAt: new Date("2026-06-07T08:00:00.000Z"),
+      dueAt: null,
+      metadata: { managementButtonsRequested: true },
+    });
+    const sender = { sendMessage: vi.fn().mockResolvedValue({ message_id: 1004 }) };
+
+    await runDueReminders({ now, sender });
+
+    expect(sender.sendMessage).toHaveBeenCalledWith(
+      "52203584",
+      expect.stringContaining("Красочный забег"),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+  });
 });

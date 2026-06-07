@@ -85,6 +85,9 @@ export const agentExecutionTool = {
           additionalProperties: false,
           required: [
             "itemIds",
+            "operation",
+            "startAtLocal",
+            "endAtLocal",
             "reminderMinutesBefore",
             "followupMinutesAfter",
             "exposeManagementButtons",
@@ -92,6 +95,12 @@ export const agentExecutionTool = {
           ],
           properties: {
             itemIds: { type: "array", minItems: 1, items: { type: "string" } },
+            operation: {
+              type: "string",
+              enum: ["configure", "complete", "reschedule"],
+            },
+            startAtLocal: { type: ["string", "null"] },
+            endAtLocal: { type: ["string", "null"] },
             reminderMinutesBefore: { type: ["integer", "null"], minimum: 1 },
             followupMinutesAfter: { type: ["integer", "null"], minimum: 0 },
             exposeManagementButtons: { type: "boolean" },
@@ -195,15 +204,20 @@ function buildAgentInstructions(params: {
 - Сначала пойми намерение, затем предложи исполняемые инструменты. Не превращай инструкцию управления в новую задачу.
 - Заголовки "На сегодня:", "На завтра:" и похожие перед непустым списком новых дел означают create_plan, а не render_view.
 - render_view разрешён только при явном запросе показать существующий план: "покажи", "что у меня", "дай план", "какие задачи".
-- Выбирай ровно один primary path. При create_plan: actionPlan заполнен, viewScope=null, resetMode=null, itemUpdates=[].
-- При update_existing_items: actionPlan=null, viewScope=null, resetMode=null. При render_view: actionPlan=null и itemUpdates=[].
+- Выбирай ровно один primary mutation path. При create_plan: actionPlan заполнен, resetMode=null, itemUpdates=[].
+- viewScope может быть заполнен вместе с create_plan только если пользователь одновременно просит показать план после добавления. Это post-execution view, а не причина копировать существующие items.
+- При update_existing_items: actionPlan=null, resetMode=null. При render_view без изменений: actionPlan=null и itemUpdates=[].
 - Поля action metadata и reminder payload всегда возвращай как пустые объекты {}. Вся исполняемая семантика должна находиться в типизированных полях.
 - Списки с конкретным временем классифицируй по смыслу: забег/эфир/встреча = event, тренировка/Z2 = training. Используй startAtLocal, не dueAtLocal 23:59.
 - Если пользователь ссылается на "каждое событие", "их", "эти встречи", используй item IDs из контекста и intent=update_existing_items. Не создавай новый item из инструкции.
+- Для настроек напоминаний используй operation=configure, startAtLocal=null, endAtLocal=null.
+- Для "выполнено", "сделано", "поставь сделанным" используй operation=complete только для предмета текущего разговора. Если в контексте есть Latest delivered reminder/follow-up, используй только его item ID, а не все события дня.
+- Для изменения времени используй operation=reschedule и ровно один update на item ID. Заполняй startAtLocal и endAtLocal полными локальными ISO datetime. Если пользователь меняет только окончание, сохрани существующее начало из контекста.
 - Для "за час до каждого события" ставь reminderMinutesBefore=60 для всех подходящих item IDs.
 - Для "после спроси как прошло" ставь followupMinutesAfter=15.
 - Для кнопок удаления/переноса/редактирования ставь exposeManagementButtons=true.
 - Новые независимые дела возвращай как actionPlan. Сохраняй каждое действие отдельно.
+- В гибридном запросе "дай план на сегодня, добавь вечером подготовку к ЧМ дома" actionPlan должен содержать только новую "Подготовку к ЧМ"; существующие события из контекста нельзя повторять. Поставь viewScope=today, чтобы приложение показало итоговый план после сохранения.
 - Просьбы показать план/задачи возвращай как render_view.
 - Reset и cleanup возвращай отдельными intent, никогда как actionPlan.
 - Не выдумывай item ID. Используй только ID из контекста.
@@ -220,6 +234,17 @@ RESULT: intent=create_plan; один actionPlan с тремя отдельным
 2) actionType=event, kind=event, title="Эфир ВС", startAtLocal сегодня 13:00;
 3) actionType=training, kind=training, title="Тренировка Z2", startAtLocal сегодня 22:00.
 У всех трёх dueAtLocal=null. Не выбирай render_today для такого сообщения.
+
+USER после доставленного follow-up по item id=11111111-1111-4111-8111-111111111111:
+Отлично! Выполнено, поставь это сделанным
+RESULT: intent=update_existing_items; один itemUpdate только для этого ID; operation=complete; остальные поля изменения времени и напоминаний null.
+
+USER: Дай план на сегодня, добавь вечером подготовку к ЧМ дома
+RESULT: intent=create_plan; actionPlan содержит только новую подготовку к ЧМ; viewScope=today. Не включай в actionPlan уже существующие Эфир ВС или Тренировку Z2.
+
+USER при существующем item id=22222222-2222-4222-8222-222222222222, Эфир ВС в 13:00:
+Эфир ВС с 13 до 20 сделай
+RESULT: intent=update_existing_items; один itemUpdate для этого ID; operation=reschedule; startAtLocal сегодня 13:00; endAtLocal сегодня 20:00.
 
 Контекст с реальными item IDs и последним task view:
 ${params.activeContext}`;

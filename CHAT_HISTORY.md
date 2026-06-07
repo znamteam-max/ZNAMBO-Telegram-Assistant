@@ -311,3 +311,23 @@ npm run lint -> passed
 npm run build -> passed
 verified behavioral production commit -> 4fb97b3528b0eb9793b79b23f36538548a578ba9
 ```
+
+### Turn: contextual completion and hybrid planning incident
+
+Fresh production transcript:
+
+```text
+"Отлично! Выполнено" after a race follow-up updated all three current items instead of completing only the race.
+"Дай план на сегодня, добавь вечером подготовку к ЧМ дома" recreated existing schedule items together with the new preparation item.
+"Эфир ВС с 13 до 20 сделай" reported the same item twice.
+```
+
+Implementation goals:
+
+```text
+add explicit item update operations for completion and time changes
+retrieve the item associated with the latest delivered follow-up
+support view-plus-create requests without copying existing context into a new ActionPlan
+deduplicate updated items and summaries
+create a separate version report file for every released version
+```

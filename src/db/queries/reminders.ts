@@ -186,6 +186,34 @@ export async function getLatestReminderDelivery(reminderId: string) {
   return row ?? null;
 }
 
+export async function getLatestDeliveredReminderContext(params: {
+  userId: string;
+  since: Date;
+}) {
+  const [row] = await getDb()
+    .select({
+      reminderId: reminders.id,
+      reminderType: reminders.type,
+      plannerItemId: plannerItems.id,
+      plannerItemTitle: plannerItems.title,
+      plannerItemKind: plannerItems.kind,
+      deliveredAt: reminderDeliveries.deliveredAt,
+    })
+    .from(reminderDeliveries)
+    .innerJoin(reminders, eq(reminderDeliveries.reminderId, reminders.id))
+    .innerJoin(plannerItems, eq(reminders.plannerItemId, plannerItems.id))
+    .where(
+      and(
+        eq(reminderDeliveries.userId, params.userId),
+        eq(reminderDeliveries.status, "sent"),
+        gte(reminderDeliveries.deliveredAt, params.since),
+      ),
+    )
+    .orderBy(desc(reminderDeliveries.deliveredAt))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function createReminderIfMissing(params: {
   userId: string;
   plannerItemId?: string | null;

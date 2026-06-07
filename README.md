@@ -1,5 +1,9 @@
 # Personal Telegram Daily Assistant
 
+Current application version: `2.3.0`.
+
+Release summaries are stored as one file per version in [`versions/`](./versions/README.md).
+
 Приватный Telegram-бот-ежедневник для одного владельца. V2 работает как smart AI planner: принимает текст, голос, audio, video note и короткие video/mp4, сохраняет историю и расшифровки, достает контекст из памяти, извлекает несколько действий из одного сообщения и создает встречи, задачи, подготовку, тренировки, tentative-события, recurring reminders и repeat-until-ack напоминания.
 
 ## Архитектура

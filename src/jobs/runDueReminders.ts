@@ -17,7 +17,11 @@ import {
 } from "@/db/queries/reminders";
 import { getUserById } from "@/db/queries/users";
 import { formatReminderMessage } from "@/bot/formatters";
-import { reminderActionKeyboard, tentativeEventFollowupKeyboard } from "@/bot/keyboards";
+import {
+  reminderActionKeyboard,
+  singleItemManagementKeyboard,
+  tentativeEventFollowupKeyboard,
+} from "@/bot/keyboards";
 import { logger } from "@/lib/logger";
 import { renderAndSaveTaskView } from "@/agent/views/renderAndSaveTaskView";
 import { sortJarvisItemsForDisplay } from "@/agent/views/renderShared";
@@ -142,6 +146,9 @@ function buildReminderKeyboard(reminder: ClaimedReminder, item: Awaited<ReturnTy
   }
   if (reminder.type === "followup" && item?.kind === "tentative_event") {
     return tentativeEventFollowupKeyboard(item.id);
+  }
+  if (item?.metadata?.managementButtonsRequested === true) {
+    return singleItemManagementKeyboard(item.id);
   }
   return undefined;
 }

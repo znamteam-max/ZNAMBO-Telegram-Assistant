@@ -3,8 +3,14 @@ import { NextResponse } from "next/server";
 import { getAllowedTelegramUserIds, requireEnv } from "@/lib/env";
 import { constantTimeEquals } from "@/lib/secrets";
 import { getUserByTelegramId } from "@/db/queries/users";
-import { createManualPlannerItem, getPlannerItemById } from "@/db/queries/items";
 import {
+  cancelPlannerItemWithMetadata,
+  createManualPlannerItem,
+  getPlannerItemById,
+  listVisibleActivePlanItems,
+} from "@/db/queries/items";
+import {
+  cancelItemReminderChains,
   createReminderIfMissing,
   getLatestReminderDelivery,
   getLatestReminderForItem,
@@ -29,6 +35,7 @@ import {
 } from "@/services/actionPlanCommit";
 import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
+import { filterDuplicateActionPlan } from "@/services/actionPlanDedup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,9 +58,50 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     action?: string;
     itemId?: string;
+    itemIds?: string[];
     text?: string;
     confirm?: boolean;
   };
+  if (body.action === "planner_snapshot") {
+    const items = await listVisibleActivePlanItems(owner.id, 100);
+    return NextResponse.json({
+      ok: true,
+      items: items.map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        title: item.title,
+        status: item.status,
+        startAt: item.startAt?.toISOString() ?? null,
+        endAt: item.endAt?.toISOString() ?? null,
+        dueAt: item.dueAt?.toISOString() ?? null,
+        completedAt: item.completedAt?.toISOString() ?? null,
+      })),
+    });
+  }
+  if (
+    body.action === "archive_items" &&
+    body.confirm === true &&
+    Array.isArray(body.itemIds)
+  ) {
+    const itemIds = [...new Set(body.itemIds)].slice(0, 25);
+    const archived = [];
+    for (const itemId of itemIds) {
+      const item = await cancelPlannerItemWithMetadata({
+        userId: owner.id,
+        itemId,
+        metadata: {
+          archivedBy: "protected_admin_repair",
+          archivedAt: new Date().toISOString(),
+          archiveReason: "confirmed_duplicate_or_incident_record",
+        },
+      });
+      if (item) {
+        archived.push({ id: item.id, title: item.title });
+        await cancelItemReminderChains(owner.id, [item.id]);
+      }
+    }
+    return NextResponse.json({ ok: true, archived });
+  }
   if (body.action === "preview") {
     const result = await previewActivePlanReset({ userId: owner.id, mode: "garbage" });
     return NextResponse.json({
@@ -202,6 +250,9 @@ export async function POST(request: Request) {
         startAtLocal:
           proposed.execution.actionPlan?.actions.map((action) => action.startAtLocal) ?? [],
         updateItemIds: proposed.execution.itemUpdates.flatMap((update) => update.itemIds),
+        updateOperations: proposed.execution.itemUpdates.map((update) => update.operation),
+        updateStartAtLocal: proposed.execution.itemUpdates.map((update) => update.startAtLocal),
+        updateEndAtLocal: proposed.execution.itemUpdates.map((update) => update.endAtLocal),
         reminderMinutesBefore: proposed.execution.itemUpdates.map(
           (update) => update.reminderMinutesBefore,
         ),
@@ -253,10 +304,16 @@ export async function POST(request: Request) {
     let finalAction = "agent_execute_unsupported";
 
     if (proposed.execution.actionPlan) {
-      const validation = validatePlannerItemsBeforeSave({
+      const deduped = await filterDuplicateActionPlan({
+        userId: owner.id,
+        timezone: owner.timezone,
         plan: proposed.execution.actionPlan,
+      });
+      const validation = validatePlannerItemsBeforeSave({
+        plan: deduped.plan,
         originalMessage: body.text,
       });
+      validationWarnings.push(...deduped.warnings);
       validationWarnings.push(...validation.warnings);
       if (!validation.ok) {
         await writeAgentExecutionAudit({
@@ -271,41 +328,47 @@ export async function POST(request: Request) {
         );
       }
 
-      toolCallsExecuted.push("create_action_plan");
-      const storedPlan = await createStoredActionPlan({
-        userId: owner.id,
-        plan: proposed.execution.actionPlan,
-        idempotencyKey: createIdempotencyKey([
-          owner.id,
-          body.text,
-          "protected-agent-execute-v1",
-        ]),
-        commitMode: owner.smartCommitMode,
-      });
-      const committed = await commitStoredActionPlan({
-        actionPlanId: storedPlan.id,
-        userId: owner.id,
-        timezone: owner.timezone,
-        now,
-      });
-      if (committed.status === "committed") {
-        createdItemIds.push(...committed.items.map((item) => item.id));
-        createdReminderCount = committed.reminders.length;
-        await syncItemsToCalendarBestEffort(committed.items);
-        finalAction = "agent_execute_committed_action_plan";
+      if (!deduped.plan.actions.length) {
+        finalAction = "agent_execute_all_proposed_actions_already_exist";
       } else {
-        finalAction = `agent_execute_${committed.status}`;
+        toolCallsExecuted.push("create_action_plan");
+        const storedPlan = await createStoredActionPlan({
+          userId: owner.id,
+          plan: deduped.plan,
+          idempotencyKey: createIdempotencyKey([
+            owner.id,
+            body.text,
+            "protected-agent-execute-v1",
+          ]),
+          commitMode: owner.smartCommitMode,
+        });
+        const committed = await commitStoredActionPlan({
+          actionPlanId: storedPlan.id,
+          userId: owner.id,
+          timezone: owner.timezone,
+          now,
+        });
+        if (committed.status === "committed") {
+          createdItemIds.push(...committed.items.map((item) => item.id));
+          createdReminderCount = committed.reminders.length;
+          await syncItemsToCalendarBestEffort(committed.items);
+          finalAction = "agent_execute_committed_action_plan";
+        } else {
+          finalAction = `agent_execute_${committed.status}`;
+        }
       }
     } else if (proposed.execution.itemUpdates.length) {
       toolCallsExecuted.push("update_existing_items");
       const updated = await applyAgentItemUpdates({
         userId: owner.id,
         updates: proposed.execution.itemUpdates,
+        timezone: owner.timezone,
         now,
       });
       updatedItemIds.push(...updated.updatedItems.map((item) => item.id));
       reminderIds.push(...updated.reminderIds);
       validationWarnings.push(...updated.warnings);
+      await syncItemsToCalendarBestEffort(updated.updatedItems);
       finalAction = "agent_execute_updated_existing_items";
     }
 

@@ -2,13 +2,44 @@ import { z } from "zod";
 
 import { actionPlanSchema, memoryCandidateSchema } from "../schemas";
 
-export const agentItemUpdateSchema = z.object({
-  itemIds: z.array(z.string().uuid()).min(1),
-  reminderMinutesBefore: z.number().int().positive().nullable(),
-  followupMinutesAfter: z.number().int().nonnegative().nullable(),
-  exposeManagementButtons: z.boolean(),
-  note: z.string().nullable(),
-});
+export const agentItemUpdateSchema = z
+  .object({
+    itemIds: z.array(z.string().uuid()).min(1),
+    operation: z.enum(["configure", "complete", "reschedule"]),
+    startAtLocal: z.string().nullable(),
+    endAtLocal: z.string().nullable(),
+    reminderMinutesBefore: z.number().int().positive().nullable(),
+    followupMinutesAfter: z.number().int().nonnegative().nullable(),
+    exposeManagementButtons: z.boolean(),
+    note: z.string().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.operation === "configure" && (value.startAtLocal || value.endAtLocal)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "configure updates cannot change schedule",
+      });
+    }
+    if (value.operation === "complete") {
+      if (
+        value.startAtLocal ||
+        value.endAtLocal ||
+        value.reminderMinutesBefore !== null ||
+        value.followupMinutesAfter !== null
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "complete updates cannot change schedule or reminder policy",
+        });
+      }
+    }
+    if (value.operation === "reschedule" && !value.startAtLocal && !value.endAtLocal) {
+      ctx.addIssue({
+        code: "custom",
+        message: "reschedule updates require a start or end time",
+      });
+    }
+  });
 
 export const agentExecutionSchema = z.object({
   intent: z.enum([
@@ -32,4 +63,3 @@ export const agentExecutionSchema = z.object({
 
 export type AgentExecution = z.infer<typeof agentExecutionSchema>;
 export type AgentItemUpdate = z.infer<typeof agentItemUpdateSchema>;
-

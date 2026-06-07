@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
 
 import { listItemsBetween, listManageableItems, listOpenTasks, listOverdueOpenItems } from "@/db/queries/items";
+import { getLatestDeliveredReminderContext } from "@/db/queries/reminders";
 
 import { listRecentConversationMessages } from "./conversation";
 import { listRecentConversationSummaries, listRelevantMemoryFacts } from "./memory";
@@ -29,6 +30,7 @@ export async function buildActiveContext(params: {
     tomorrowItems,
     overdueItems,
     weekItems,
+    latestDeliveredReminder,
   ] = await Promise.all([
     listRelevantMemoryFacts({ userId: params.userId, query: params.query, limit: 12 }),
     listRecentConversationSummaries(params.userId, 3),
@@ -39,6 +41,10 @@ export async function buildActiveContext(params: {
     listItemsBetween({ userId: params.userId, from: tomorrowFrom, to: tomorrowTo, limit: 25 }),
     listOverdueOpenItems({ userId: params.userId, before: todayFrom, limit: 15 }),
     listItemsBetween({ userId: params.userId, from: todayFrom, to: weekTo, limit: 35 }),
+    getLatestDeliveredReminderContext({
+      userId: params.userId,
+      since: nowLocal.minus({ hours: 12 }).toUTC().toJSDate(),
+    }),
   ]);
 
   return [
@@ -56,6 +62,11 @@ export async function buildActiveContext(params: {
           .reverse()
           .map((message) => `- ${message.role}: ${message.transcript ?? message.text ?? ""}`)
           .join("\n")
+      : "- none",
+    "",
+    "Latest delivered reminder/follow-up:",
+    latestDeliveredReminder
+      ? `- reminderId=${latestDeliveredReminder.reminderId}; type=${latestDeliveredReminder.reminderType}; itemId=${latestDeliveredReminder.plannerItemId}; kind=${latestDeliveredReminder.plannerItemKind}; title=${latestDeliveredReminder.plannerItemTitle}; deliveredAt=${latestDeliveredReminder.deliveredAt?.toISOString() ?? "unknown"}`
       : "- none",
     "",
     "Active tasks:",

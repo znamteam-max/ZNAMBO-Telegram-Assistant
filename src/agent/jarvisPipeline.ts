@@ -14,6 +14,8 @@ import {
 import type { AgentExecution } from "@/ai/schemas/agentExecution";
 import { storePlanMemoryFacts } from "@/services/memory";
 import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
+import { filterDuplicateActionPlan } from "@/services/actionPlanDedup";
+import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
 import { detectHardManagementIntent } from "./hardManagementIntent";
@@ -153,18 +155,36 @@ async function executeAgentProposal(params: {
   };
 
   if (params.execution.actionPlan) {
-    result.toolCallsExecuted.push("create_action_plan");
-    const actionResult = await executeActionPlanForMessage(params.ctx, {
-      text: params.text,
+    const deduped = await filterDuplicateActionPlan({
+      userId: owner.id,
       timezone: params.timezone,
-      now: params.now,
-      activeContext: params.activeContext,
       plan: params.execution.actionPlan,
-      forceCommit: false,
     });
-    result.createdItemIds = actionResult.savedItemIds;
-    result.validationWarnings = actionResult.validatorWarnings;
-    result.finalAction = actionResult.finalAction;
+    result.validationWarnings.push(...deduped.warnings);
+    if (deduped.plan.actions.length) {
+      result.toolCallsExecuted.push("create_action_plan");
+      const actionResult = await executeActionPlanForMessage(params.ctx, {
+        text: params.text,
+        timezone: params.timezone,
+        now: params.now,
+        activeContext: params.activeContext,
+        plan: deduped.plan,
+        forceCommit: false,
+      });
+      result.createdItemIds = actionResult.savedItemIds;
+      result.validationWarnings.push(...actionResult.validatorWarnings);
+      result.finalAction = actionResult.finalAction;
+    } else {
+      result.finalAction = "all_proposed_actions_already_exist";
+    }
+    if (params.execution.viewScope) {
+      const view = await executeViewOrManagementTool(params.execution, base);
+      if (view) {
+        result.toolCallsExecuted.push(view.name);
+        await replyToolResult(params.ctx, view.result);
+        result.finalAction = `${result.finalAction}_and_${view.name}`;
+      }
+    }
     return result;
   }
 
@@ -173,19 +193,25 @@ async function executeAgentProposal(params: {
     const updateResult = await applyAgentItemUpdates({
       userId: owner.id,
       updates: params.execution.itemUpdates,
+      timezone: params.timezone,
       now: params.now,
     });
     result.updatedItemIds = updateResult.updatedItems.map((item) => item.id);
     result.validationWarnings = updateResult.warnings;
     result.finalAction = "updated_existing_items";
+    await syncItemsToCalendarBestEffort(updateResult.updatedItems);
     const lines = [
-      params.execution.reply ?? "Обновил существующие события.",
+      buildUpdateIntro(params.execution.reply, updateResult),
       "",
       ...updateResult.updatedItems.map((item) => `• ${item.title}`),
-      updateResult.reminderIds.length
-        ? `Напоминаний и follow-up создано: ${updateResult.reminderIds.length}.`
-        : "Новых напоминаний не создано.",
     ];
+    if (updateResult.configuredItemIds.length || updateResult.reminderIds.length) {
+      lines.push(
+        updateResult.reminderIds.length
+          ? `Напоминаний и follow-up создано: ${updateResult.reminderIds.length}.`
+          : "Новых напоминаний не создано.",
+      );
+    }
     await replyAndRecord(params.ctx, lines.join("\n"), {
       reply_markup:
         updateResult.exposeManagementButtons && updateResult.updatedItems.length
@@ -235,6 +261,19 @@ async function executeAgentProposal(params: {
     .join("\n");
   await replyAndRecord(params.ctx, reply || "Уточни, пожалуйста, что именно нужно сделать.");
   return result;
+}
+
+function buildUpdateIntro(
+  proposedReply: string | null,
+  result: Awaited<ReturnType<typeof applyAgentItemUpdates>>,
+) {
+  if (result.completedItemIds.length && !result.rescheduledItemIds.length) {
+    return "Готово. Отметил выполненным:";
+  }
+  if (result.rescheduledItemIds.length && !result.completedItemIds.length) {
+    return "Обновил время:";
+  }
+  return proposedReply ?? "Обновил существующие события.";
 }
 
 async function executeViewOrManagementTool(
