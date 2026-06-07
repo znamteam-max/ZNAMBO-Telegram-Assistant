@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { plannerItems, reminderDeliveries, reminders, type Reminder } from "../schema";
@@ -163,6 +163,26 @@ export async function restoreReminderState(params: {
     })
     .where(and(eq(reminders.userId, params.userId), eq(reminders.id, params.reminderId)))
     .returning();
+  return row ?? null;
+}
+
+export async function getLatestReminderForItem(userId: string, plannerItemId: string) {
+  const [row] = await getDb()
+    .select()
+    .from(reminders)
+    .where(and(eq(reminders.userId, userId), eq(reminders.plannerItemId, plannerItemId)))
+    .orderBy(desc(reminders.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function getLatestReminderDelivery(reminderId: string) {
+  const [row] = await getDb()
+    .select()
+    .from(reminderDeliveries)
+    .where(eq(reminderDeliveries.reminderId, reminderId))
+    .orderBy(desc(reminderDeliveries.createdAt))
+    .limit(1);
   return row ?? null;
 }
 
