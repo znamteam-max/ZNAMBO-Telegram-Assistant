@@ -66,6 +66,38 @@ describe("agent item update execution", () => {
     expect(result.reminderIds).toEqual(["before-id", "followup-id"]);
     expect(result.exposeManagementButtons).toBe(true);
   });
+
+  it("schedules a one-minute catch-up for a recently missed follow-up", async () => {
+    mocks.createReminderIfMissing.mockReset();
+    mocks.createReminderIfMissing.mockResolvedValue({ id: "catchup-id" });
+
+    const result = await applyAgentItemUpdates({
+      userId: "user-id",
+      now: new Date("2026-06-07T12:00:00.000Z"),
+      updates: [
+        {
+          itemIds: ["11111111-1111-4111-8111-111111111111"],
+          reminderMinutesBefore: 60,
+          followupMinutesAfter: 15,
+          exposeManagementButtons: true,
+          note: null,
+        },
+      ],
+    });
+
+    expect(mocks.createReminderIfMissing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "followup",
+        scheduledAt: new Date("2026-06-07T12:01:00.000Z"),
+        idempotencyKey:
+          "11111111-1111-4111-8111-111111111111:agent-followup:15:2026-06-07T11:15:00.000Z",
+      }),
+    );
+    expect(result.reminderIds).toEqual(["catchup-id"]);
+    expect(result.warnings).toContain(
+      "followup_catchup_scheduled:11111111-1111-4111-8111-111111111111",
+    );
+  });
 });
 
 function makeItem(): PlannerItem {

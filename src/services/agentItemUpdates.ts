@@ -59,15 +59,21 @@ export async function applyAgentItemUpdates(params: {
 
       if (update.followupMinutesAfter !== null) {
         const base = item.endAt ?? DateTime.fromJSDate(start, { zone: "utc" }).plus({ minutes: 60 }).toJSDate();
-        const scheduledAt = DateTime.fromJSDate(base, { zone: "utc" })
+        const intendedScheduledAt = DateTime.fromJSDate(base, { zone: "utc" })
           .plus({ minutes: update.followupMinutesAfter })
           .toJSDate();
+        const catchupWindowMs = 24 * 60 * 60 * 1000;
+        const isRecentPast =
+          intendedScheduledAt <= now && now.getTime() - intendedScheduledAt.getTime() <= catchupWindowMs;
+        const scheduledAt = isRecentPast
+          ? DateTime.fromJSDate(now, { zone: "utc" }).plus({ minutes: 1 }).toJSDate()
+          : intendedScheduledAt;
         if (scheduledAt > now) {
           const reminder = await createReminderIfMissing({
             userId: params.userId,
             plannerItemId: item.id,
             type: item.kind === "training" ? "training_followup" : "followup",
-            idempotencyKey: `${item.id}:agent-followup:${update.followupMinutesAfter}:${scheduledAt.toISOString()}`,
+            idempotencyKey: `${item.id}:agent-followup:${update.followupMinutesAfter}:${intendedScheduledAt.toISOString()}`,
             scheduledAt,
             payload: {
               title: item.title,
@@ -76,6 +82,9 @@ export async function applyAgentItemUpdates(params: {
             },
           });
           if (reminder) reminderIds.push(reminder.id);
+          if (isRecentPast) warnings.push(`followup_catchup_scheduled:${itemId}`);
+        } else {
+          warnings.push(`followup_in_past:${itemId}`);
         }
       }
 
@@ -103,4 +112,3 @@ export async function applyAgentItemUpdates(params: {
 function dedupeItems(items: PlannerItem[]) {
   return [...new Map(items.map((item) => [item.id, item])).values()];
 }
-
