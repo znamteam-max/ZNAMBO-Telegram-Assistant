@@ -43,6 +43,8 @@ describe("Jarvis mandatory AI guard", () => {
       activeContext: "context",
       contextError: null,
       lastTaskViewState: null,
+      latestFollowupItemId: null,
+      latestFollowupDeliveredAt: null,
     });
     mocks.proposeAgentExecution.mockResolvedValue({
       execution: {

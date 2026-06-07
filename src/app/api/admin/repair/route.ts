@@ -36,6 +36,7 @@ import {
 import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 import { filterDuplicateActionPlan } from "@/services/actionPlanDedup";
+import { bindContextualCompletionTarget } from "@/services/contextualAgentBinding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -302,12 +303,18 @@ export async function POST(request: Request) {
     const toolCallsExecuted: string[] = [];
     const validationWarnings: string[] = [];
     let finalAction = "agent_execute_unsupported";
+    const bound = bindContextualCompletionTarget({
+      execution: proposed.execution,
+      text: body.text,
+      latestFollowupItemId: context.latestFollowupItemId,
+    });
+    validationWarnings.push(...bound.warnings);
 
-    if (proposed.execution.actionPlan) {
+    if (bound.execution.actionPlan) {
       const deduped = await filterDuplicateActionPlan({
         userId: owner.id,
         timezone: owner.timezone,
-        plan: proposed.execution.actionPlan,
+        plan: bound.execution.actionPlan,
       });
       const validation = validatePlannerItemsBeforeSave({
         plan: deduped.plan,
@@ -357,11 +364,11 @@ export async function POST(request: Request) {
           finalAction = `agent_execute_${committed.status}`;
         }
       }
-    } else if (proposed.execution.itemUpdates.length) {
+    } else if (bound.execution.itemUpdates.length) {
       toolCallsExecuted.push("update_existing_items");
       const updated = await applyAgentItemUpdates({
         userId: owner.id,
-        updates: proposed.execution.itemUpdates,
+        updates: bound.execution.itemUpdates,
         timezone: owner.timezone,
         sourceText: body.text,
         now,

@@ -2,6 +2,7 @@ import { buildActiveContext } from "@/services/contextRetrieval";
 import { logger } from "@/lib/logger";
 import { listItemsByIds } from "@/db/queries/taskViewStates";
 import { isActiveItem } from "@/domain/itemVisibility";
+import { getLatestDeliveredReminderContext } from "@/db/queries/reminders";
 
 import { loadLatestTaskView } from "../state/taskViewState";
 import type { JarvisContext } from "../types";
@@ -13,9 +14,10 @@ export async function buildJarvisContext(params: {
   now?: Date;
 }): Promise<JarvisContext> {
   const now = params.now ?? new Date();
-  const [activeContextResult, lastTaskViewState] = await Promise.all([
+  const [activeContextResult, lastTaskViewState, latestFollowup] = await Promise.all([
     buildActiveContextBestEffort({ ...params, now }),
     loadLatestTaskViewBestEffort(params.userId),
+    loadLatestFollowupBestEffort(params.userId, now),
   ]);
   const activeTaskViewItems = lastTaskViewState
     ? await loadActiveTaskViewItemsBestEffort(params.userId, lastTaskViewState.itemIds)
@@ -40,7 +42,22 @@ export async function buildJarvisContext(params: {
     ].join("\n"),
     contextError: activeContextResult.contextError,
     lastTaskViewState,
+    latestFollowupItemId: latestFollowup?.plannerItemId ?? null,
+    latestFollowupDeliveredAt: latestFollowup?.deliveredAt ?? null,
   };
+}
+
+async function loadLatestFollowupBestEffort(userId: string, now: Date) {
+  try {
+    return await getLatestDeliveredReminderContext({
+      userId,
+      since: new Date(now.getTime() - 45 * 60 * 1000),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("Jarvis latest follow-up retrieval failed", { error: message });
+    return null;
+  }
 }
 
 async function loadActiveTaskViewItemsBestEffort(userId: string, itemIds: string[]) {

@@ -52,6 +52,8 @@ export type JarvisContext = {
   activeContext: string;
   contextError: string | null;
   lastTaskViewState: TaskViewState | null;
+  latestFollowupItemId: string | null;
+  latestFollowupDeliveredAt: Date | null;
 };
 
 export type JarvisToolResult = {

@@ -43,7 +43,7 @@ export async function buildActiveContext(params: {
     listItemsBetween({ userId: params.userId, from: todayFrom, to: weekTo, limit: 35 }),
     getLatestDeliveredReminderContext({
       userId: params.userId,
-      since: nowLocal.minus({ hours: 12 }).toUTC().toJSDate(),
+      since: nowLocal.minus({ minutes: 45 }).toUTC().toJSDate(),
     }),
   ]);
 

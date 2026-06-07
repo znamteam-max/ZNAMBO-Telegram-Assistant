@@ -16,6 +16,7 @@ import { storePlanMemoryFacts } from "@/services/memory";
 import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
 import { filterDuplicateActionPlan } from "@/services/actionPlanDedup";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
+import { bindContextualCompletionTarget } from "@/services/contextualAgentBinding";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
 import { detectHardManagementIntent } from "./hardManagementIntent";
@@ -90,9 +91,14 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       preRouterIntent: preRouterIntent?.intent ?? null,
     });
     applyAiTelemetry(trace, proposed.telemetry);
+    const bound = bindContextualCompletionTarget({
+      execution: proposed.execution,
+      text,
+      latestFollowupItemId: jarvisContext.latestFollowupItemId,
+    });
     const executionResult = await executeAgentProposal({
       ctx,
-      execution: proposed.execution,
+      execution: bound.execution,
       text,
       timezone,
       now,
@@ -101,7 +107,10 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     trace.toolCallsExecuted = executionResult.toolCallsExecuted;
     trace.createdItemIds = executionResult.createdItemIds;
     trace.updatedItemIds = executionResult.updatedItemIds;
-    trace.validationWarnings = executionResult.validationWarnings;
+    trace.validationWarnings = [
+      ...bound.warnings,
+      ...executionResult.validationWarnings,
+    ];
     trace.finalAction = executionResult.finalAction;
   } catch (error) {
     if (error instanceof MandatoryAiError) {
