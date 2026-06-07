@@ -331,3 +331,57 @@ support view-plus-create requests without copying existing context into a new Ac
 deduplicate updated items and summaries
 create a separate version report file for every released version
 ```
+
+### Turn: V2.3.0 released
+
+Implemented:
+
+```text
+typed configure, complete and reschedule item operations
+single-item completion binding for a fresh delivered follow-up
+active-only task-view and item targeting
+explicit source-time validation before reschedule writes
+duplicate merging for repeated updates to one item
+ActionPlan deduplication against active planner records
+same-day preparation/task title deduplication
+post-execution schedule rendering for hybrid requests
+per-item management buttons on configured follow-ups
+reminder policy recalculation after rescheduling
+```
+
+Production repair:
+
+```text
+archived the duplicate Эфир ВС
+archived the duplicate Тренировка Z2
+archived the preparation duplicate created during protected verification
+kept the original records with their reminder policies
+```
+
+Final production state:
+
+```text
+Эфир ВС -> 13:00-20:00
+Подготовка к ЧМ -> 22:00
+Тренировка Z2 -> 23:00
+webhook pending -> 0
+webhook last error -> none
+```
+
+Version files:
+
+```text
+versions/V2.0.0.md
+versions/V2.1.0.md
+versions/V2.2.0.md
+versions/V2.3.0.md
+```
+
+Validation:
+
+```text
+npm test -> 22 files, 75 tests passed
+npm run lint -> passed
+npm run build -> passed
+production behavioral commit -> 29cbfa7efcd1e1b8dd47131d32f3696da6d7d01b
+```

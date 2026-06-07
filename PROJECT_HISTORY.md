@@ -1525,3 +1525,75 @@ Remaining limitation:
 the protected execution proof does not render a Telegram summary card itself
 the normal webhook path uses the same proposal, validator, commit and update services and adds the user-facing summary/buttons
 ```
+
+### 13.28. V2.3.0 contextual planner operations
+
+Fresh production behavior report:
+
+```text
+a generic completion reply after a follow-up updated three items instead of completing one
+a hybrid "show today + add preparation" request copied existing event/training context into new records
+time-change replies did not reliably mutate start/end fields
+one event update produced duplicate titles in the response
+configured follow-ups did not expose the requested per-item management controls
+```
+
+Implemented:
+
+```text
+itemUpdates now use typed operations: configure, complete, reschedule
+reschedule supports explicit local start and end datetime fields
+multiple updates for the same item ID are merged before one DB mutation
+completion cancels the completed item's future reminder chain
+reschedule preserves and recalculates active reminder policies
+configured follow-ups show Done, Reschedule, Edit and Delete buttons
+the latest delivered follow-up is included in retrieval context
+generic completion replies bind to one fresh follow-up item for 45 minutes
+stale task-view snapshots are reloaded from current planner rows and filtered to active items
+non-active planner IDs cannot be mutated
+events are included in manageable current-item retrieval
+explicit clock times in source text are checked against proposed ISO times before DB writes
+hybrid create-plus-view requests support a post-execution view
+ActionPlans are deduplicated against active items before commit
+same-day task/preparation entries with the same title are treated as duplicates
+```
+
+Version reporting:
+
+```text
+application version -> 2.3.0
+/api/health now exposes appVersion
+versions/README.md defines the per-version file rule
+separate summaries created for V2.0.0, V2.1.0, V2.2.0 and V2.3.0
+```
+
+Production repair and verification:
+
+```text
+two confirmed late duplicate records were archived
+one preparation duplicate created by the protected hybrid verification was archived
+the original records and their reminder policies were preserved
+two-item reschedule executed against preparation and training IDs
+event range reschedule executed against one active event ID
+final local schedule -> Эфир ВС 13:00-20:00, Подготовка к ЧМ 22:00, Тренировка Z2 23:00
+hybrid verification after dedup created no new items
+Telegram webhook pending updates -> 0
+Telegram webhook last error -> none
+reminder runner -> ok
+```
+
+Validation:
+
+```text
+npm test -> 22 files passed, 75 tests passed
+npm run lint -> passed
+npm run build -> passed
+behavioral production commit -> 29cbfa7efcd1e1b8dd47131d32f3696da6d7d01b
+```
+
+Remaining limitations:
+
+```text
+the contextual follow-up anchor expires after 45 minutes
+calendar synchronization remains best-effort
+```
