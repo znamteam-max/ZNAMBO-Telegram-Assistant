@@ -1635,3 +1635,14 @@ npm test -> 26 files passed, 83 tests passed
 npm run lint -> passed
 npm run build -> passed
 ```
+
+Initial production rollout:
+
+```text
+production commit -> 96b41f088ea8aea956d0f0bbf195388027591cd4
+health -> appVersion 2.4.0, live dashboard enabled, policy engine enabled
+Telegram webhook -> pending 0, last error none
+reminder runner -> 200 OK
+all four V2.4 tables and planner/reminder V2.4 columns verified in Neon
+protected agent probe extended to expose and execute reminder policy proposals
+```

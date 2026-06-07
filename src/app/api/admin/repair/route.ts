@@ -7,8 +7,10 @@ import {
   cancelPlannerItemWithMetadata,
   createManualPlannerItem,
   getPlannerItemById,
+  listManageableItems,
   listVisibleActivePlanItems,
 } from "@/db/queries/items";
+import { listItemsByIds } from "@/db/queries/taskViewStates";
 import {
   cancelItemReminderChains,
   createReminderIfMissing,
@@ -37,6 +39,7 @@ import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 import { filterDuplicateActionPlan } from "@/services/actionPlanDedup";
 import { bindContextualCompletionTarget } from "@/services/contextualAgentBinding";
+import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -263,6 +266,21 @@ export async function POST(request: Request) {
         exposeManagementButtons: proposed.execution.itemUpdates.map(
           (update) => update.exposeManagementButtons,
         ),
+        reminderPolicyOperations: proposed.execution.reminderPolicies.map(
+          (policy) => policy.operation,
+        ),
+        reminderPolicyTypes: proposed.execution.reminderPolicies.map(
+          (policy) => policy.policyType,
+        ),
+        reminderPolicyTitles: proposed.execution.reminderPolicies.map(
+          (policy) => policy.title,
+        ),
+        reminderPolicyIntervals: proposed.execution.reminderPolicies.map(
+          (policy) => policy.intervalMinutes,
+        ),
+        reminderPolicyRecurrenceRules: proposed.execution.reminderPolicies.map(
+          (policy) => policy.recurrenceRule,
+        ),
       },
     });
   }
@@ -299,6 +317,7 @@ export async function POST(request: Request) {
     const createdItemIds: string[] = [];
     const updatedItemIds: string[] = [];
     const reminderIds: string[] = [];
+    const policyIds: string[] = [];
     let createdReminderCount = 0;
     const toolCallsExecuted: string[] = [];
     const validationWarnings: string[] = [];
@@ -380,6 +399,30 @@ export async function POST(request: Request) {
       finalAction = "agent_execute_updated_existing_items";
     }
 
+    if (bound.execution.reminderPolicies.length) {
+      const [createdItems, manageableItems] = await Promise.all([
+        listItemsByIds(owner.id, createdItemIds),
+        listManageableItems(owner.id, 100),
+      ]);
+      const availableItems = [
+        ...new Map([...createdItems, ...manageableItems].map((item) => [item.id, item])).values(),
+      ];
+      const applied = await applyAgentReminderPolicies({
+        userId: owner.id,
+        timezone: owner.timezone,
+        proposals: bound.execution.reminderPolicies,
+        availableItems,
+        now,
+      });
+      policyIds.push(...applied.policies.map((policy) => policy.id));
+      reminderIds.push(...applied.reminderIds);
+      validationWarnings.push(...applied.warnings);
+      toolCallsExecuted.push(
+        ...new Set(bound.execution.reminderPolicies.map((policy) => policy.operation)),
+      );
+      if (applied.policies.length) finalAction = `${finalAction}_and_reminder_policies`;
+    }
+
     await writeAgentExecutionAudit({
       userId: owner.id,
       telemetry: proposed.telemetry,
@@ -398,6 +441,7 @@ export async function POST(request: Request) {
         createdItemIds,
         updatedItemIds,
         reminderIds,
+        policyIds,
         createdReminderCount,
         validationWarnings,
       },

@@ -230,6 +230,17 @@ npm run lint -> passed
 npm run build -> passed
 ```
 
+Production status:
+
+```text
+V2.4.0 deployed from commit 96b41f088ea8aea956d0f0bbf195388027591cd4
+health is green
+Telegram webhook has no pending updates or last error
+reminder runner returns 200 OK
+Neon contains the V2.4 dashboard, registry, policy and occurrence tables
+protected production probes now report typed reminder policy proposals
+```
+
 ### Turn: mandatory OpenAI observability started
 
 User report:
