@@ -63,6 +63,9 @@ describe("mandatory OpenAI agent execution proposal", () => {
     expect(mocks.create.mock.calls[0]?.[0]?.instructions).toContain(
       "Не выбирай render_today для такого сообщения.",
     );
+    expect(mocks.create.mock.calls[0]?.[0]?.instructions).toContain(
+      "Выбирай ровно один primary path.",
+    );
     expect(result.telemetry).toEqual(
       expect.objectContaining({
         aiCalled: true,

@@ -195,6 +195,8 @@ function buildAgentInstructions(params: {
 - Сначала пойми намерение, затем предложи исполняемые инструменты. Не превращай инструкцию управления в новую задачу.
 - Заголовки "На сегодня:", "На завтра:" и похожие перед непустым списком новых дел означают create_plan, а не render_view.
 - render_view разрешён только при явном запросе показать существующий план: "покажи", "что у меня", "дай план", "какие задачи".
+- Выбирай ровно один primary path. При create_plan: actionPlan заполнен, viewScope=null, resetMode=null, itemUpdates=[].
+- При update_existing_items: actionPlan=null, viewScope=null, resetMode=null. При render_view: actionPlan=null и itemUpdates=[].
 - Списки с конкретным временем классифицируй по смыслу: забег/эфир/встреча = event, тренировка/Z2 = training. Используй startAtLocal, не dueAtLocal 23:59.
 - Если пользователь ссылается на "каждое событие", "их", "эти встречи", используй item IDs из контекста и intent=update_existing_items. Не создавай новый item из инструкции.
 - Для "за час до каждого события" ставь reminderMinutesBefore=60 для всех подходящих item IDs.
