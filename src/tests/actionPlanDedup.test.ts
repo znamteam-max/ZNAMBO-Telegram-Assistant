@@ -19,6 +19,12 @@ describe("ActionPlan existing-item deduplication", () => {
     mocks.listVisibleActivePlanItems.mockResolvedValue([
       item("event-1", "Эфир ВС", "event", "2026-06-07T10:00:00.000Z"),
       item("training-1", "Тренировка Z2", "training", "2026-06-07T19:00:00.000Z"),
+      item(
+        "prep-1",
+        "Подготовка к ЧМ",
+        "preparation_task",
+        "2026-06-07T19:00:00.000Z",
+      ),
     ]);
   });
 
@@ -47,8 +53,8 @@ describe("ActionPlan existing-item deduplication", () => {
       },
     });
 
-    expect(result.plan.actions.map((entry) => entry.title)).toEqual(["Подготовка к ЧМ"]);
-    expect(result.skippedItemIds).toEqual(["event-1", "training-1"]);
+    expect(result.plan.actions).toEqual([]);
+    expect(result.skippedItemIds).toEqual(["event-1", "training-1", "prep-1"]);
   });
 });
 

@@ -2,6 +2,7 @@ import type { ActionPlan, ActionPlanItem } from "@/ai/schemas";
 import { listVisibleActivePlanItems } from "@/db/queries/items";
 import type { PlannerItem } from "@/db/schema";
 import { localIsoToUtcDate } from "@/domain/dateTime";
+import { DateTime } from "luxon";
 
 export async function filterDuplicateActionPlan(params: {
   userId: string;
@@ -56,6 +57,17 @@ function isSamePlannerEntry(
       : null;
   if (!existingWhen && !proposedWhen) return true;
   if (!existingWhen || !proposedWhen) return false;
+  if (
+    ["task", "preparation_task", "recurring_task"].includes(item.kind) &&
+    DateTime.fromJSDate(existingWhen, { zone: "utc" })
+      .setZone(item.timezone || defaultTimezone)
+      .toISODate() ===
+      DateTime.fromJSDate(proposedWhen, { zone: "utc" })
+        .setZone(action.timezone || defaultTimezone)
+        .toISODate()
+  ) {
+    return true;
+  }
   return Math.abs(existingWhen.getTime() - proposedWhen.getTime()) <= 5 * 60 * 1000;
 }
 
