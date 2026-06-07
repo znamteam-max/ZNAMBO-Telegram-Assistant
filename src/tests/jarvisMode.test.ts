@@ -83,6 +83,18 @@ describe("Jarvis Mode decision and view-state safety", () => {
     expect(isLegacyMultilineGarbageText(text)).toBe(true);
     expect(isGarbageOrTestItem(makeItem(text))).toBe(true);
   });
+
+  it("targets only the four confirmed bad records from the mandatory-AI incident", () => {
+    const pollutedTitles = [
+      "красочный забег в 10:00",
+      "эфир ВС в 13:00",
+      "тренировка Z2 в 22:00",
+      "за час до каждого события, а после спроси как прошло, дай кнопки по удалению, переносу, редактированию каждого события отдельно",
+    ];
+
+    expect(pollutedTitles.every((title) => isGarbageOrTestItem(makeItem(title)))).toBe(true);
+    expect(isGarbageOrTestItem(makeItem("Красочный забег"))).toBe(false);
+  });
 });
 
 function makeItem(title: string, metadata: Record<string, unknown> = {}): PlannerItem {
