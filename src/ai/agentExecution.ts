@@ -43,7 +43,9 @@ export const agentExecutionTool = {
   name: "propose_agent_execution",
   description:
     "Choose and fully describe the exact tools the personal Telegram assistant must execute for this natural-language turn.",
-  strict: true,
+  // ActionPlan intentionally supports open-ended metadata and reminder payloads.
+  // Runtime Zod validation remains mandatory after the forced function call.
+  strict: false,
   parameters: {
     type: "object",
     additionalProperties: false,
@@ -262,6 +264,9 @@ export function classifyOpenAiError(error: unknown) {
   }
   if (error instanceof OpenAI.NotFoundError) {
     return { code: "invalid_model", safeMessage: "Configured OpenAI model is unavailable." };
+  }
+  if (error instanceof OpenAI.BadRequestError) {
+    return { code: "schema", safeMessage: "OpenAI rejected the agent tool schema or request." };
   }
   if (error instanceof OpenAI.APIConnectionError) {
     return { code: "network", safeMessage: "OpenAI network request failed." };

@@ -14,7 +14,7 @@ import {
   previewActivePlanReset,
 } from "@/services/activePlanReset";
 import { runOpenAiHealthCheck } from "@/ai/aiHealth";
-import { proposeAgentExecution } from "@/ai/agentExecution";
+import { MandatoryAiError, proposeAgentExecution } from "@/ai/agentExecution";
 import { buildJarvisContext } from "@/agent/context/buildJarvisContext";
 import { writeAudit } from "@/db/queries/audit";
 
@@ -129,12 +129,37 @@ export async function POST(request: Request) {
       query: body.text,
       now,
     });
-    const proposed = await proposeAgentExecution({
-      text: body.text,
-      timezone: owner.timezone,
-      now,
-      activeContext: context.activeContext,
-    });
+    let proposed;
+    try {
+      proposed = await proposeAgentExecution({
+        text: body.text,
+        timezone: owner.timezone,
+        now,
+        activeContext: context.activeContext,
+      });
+    } catch (error) {
+      if (!(error instanceof MandatoryAiError)) throw error;
+      await writeAudit({
+        userId: owner.id,
+        action: "assistant.agent_decision_trace",
+        details: {
+          ...error.telemetry,
+          pipelineUsed: "production_probe",
+          preRouterIntent: null,
+          toolCallsExecuted: [],
+          fallbackUsed: false,
+          fallbackReason: null,
+          validationWarnings: [],
+          finalAction: "agent_probe_failed_closed",
+          createdItemIds: [],
+          updatedItemIds: [],
+        },
+      });
+      return NextResponse.json(
+        { ok: false, telemetry: error.telemetry, proposal: null },
+        { status: 502 },
+      );
+    }
     await writeAudit({
       userId: owner.id,
       action: "assistant.agent_decision_trace",
