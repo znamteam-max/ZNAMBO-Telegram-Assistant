@@ -8,7 +8,11 @@ vi.mock("@/ai/openaiClient", () => ({
   getOpenAIClient: () => ({ responses: { create: mocks.create } }),
 }));
 
-import { MandatoryAiError, proposeAgentExecution } from "@/ai/agentExecution";
+import {
+  MandatoryAiError,
+  agentExecutionTool,
+  proposeAgentExecution,
+} from "@/ai/agentExecution";
 
 describe("mandatory OpenAI agent execution proposal", () => {
   beforeEach(() => {
@@ -175,6 +179,15 @@ describe("mandatory OpenAI agent execution proposal", () => {
         totalTokens: 300,
       }),
     );
+  });
+
+  it("uses a fully strict function schema for production agent output", () => {
+    const actionPlan = agentExecutionTool.parameters.properties.actionPlan.anyOf[1];
+    const actionItem = actionPlan.properties.actions.items;
+
+    expect(agentExecutionTool.strict).toBe(true);
+    expect(actionItem.properties.metadata.additionalProperties).toBe(false);
+    expect(actionItem.properties.reminders.items.properties.payload.additionalProperties).toBe(false);
   });
 });
 

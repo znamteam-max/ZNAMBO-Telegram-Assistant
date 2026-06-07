@@ -35,7 +35,7 @@ export class MandatoryAiError extends Error {
 }
 
 const nullableActionPlanSchema = {
-  anyOf: [{ type: "null" }, actionPlanJsonSchema],
+  anyOf: [{ type: "null" }, buildStrictAgentActionPlanSchema()],
 } as const;
 
 export const agentExecutionTool = {
@@ -43,9 +43,7 @@ export const agentExecutionTool = {
   name: "propose_agent_execution",
   description:
     "Choose and fully describe the exact tools the personal Telegram assistant must execute for this natural-language turn.",
-  // ActionPlan intentionally supports open-ended metadata and reminder payloads.
-  // Runtime Zod validation remains mandatory after the forced function call.
-  strict: false,
+  strict: true,
   parameters: {
     type: "object",
     additionalProperties: false,
@@ -199,6 +197,7 @@ function buildAgentInstructions(params: {
 - render_view разрешён только при явном запросе показать существующий план: "покажи", "что у меня", "дай план", "какие задачи".
 - Выбирай ровно один primary path. При create_plan: actionPlan заполнен, viewScope=null, resetMode=null, itemUpdates=[].
 - При update_existing_items: actionPlan=null, viewScope=null, resetMode=null. При render_view: actionPlan=null и itemUpdates=[].
+- Поля action metadata и reminder payload всегда возвращай как пустые объекты {}. Вся исполняемая семантика должна находиться в типизированных полях.
 - Списки с конкретным временем классифицируй по смыслу: забег/эфир/встреча = event, тренировка/Z2 = training. Используй startAtLocal, не dueAtLocal 23:59.
 - Если пользователь ссылается на "каждое событие", "их", "эти встречи", используй item IDs из контекста и intent=update_existing_items. Не создавай новый item из инструкции.
 - Для "за час до каждого события" ставь reminderMinutesBefore=60 для всех подходящих item IDs.
@@ -244,6 +243,40 @@ function createTelemetry(model: string, started: Date): AiCallTelemetry {
     errorCode: null,
     safeErrorMessage: null,
   };
+}
+
+function buildStrictAgentActionPlanSchema() {
+  const schema = JSON.parse(JSON.stringify(actionPlanJsonSchema)) as {
+    properties: {
+      actions: {
+        items: {
+          properties: {
+            metadata: Record<string, unknown>;
+            reminders: {
+              items: {
+                properties: {
+                  payload: Record<string, unknown>;
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+  schema.properties.actions.items.properties.metadata = {
+    type: "object",
+    additionalProperties: false,
+    required: [],
+    properties: {},
+  };
+  schema.properties.actions.items.properties.reminders.items.properties.payload = {
+    type: "object",
+    additionalProperties: false,
+    required: [],
+    properties: {},
+  };
+  return schema;
 }
 
 function finishTelemetry(
