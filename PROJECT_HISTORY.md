@@ -1646,3 +1646,41 @@ reminder runner -> 200 OK
 all four V2.4 tables and planner/reminder V2.4 columns verified in Neon
 protected agent probe extended to expose and execute reminder policy proposals
 ```
+
+### 13.30. V2.4.0 final production policy verification
+
+Production probes first proved that OpenAI was called successfully but exposed weak model
+classification for interval, weekly/biweekly and every-event reminder requests.
+
+Implemented without bypassing mandatory AI:
+
+```text
+post-AI semantic normalization after a valid OpenAI structured tool call
+interval-window correction to one task plus one policy
+weekly and biweekly correction to long-term recurring policies
+every-event before/post correction to update_existing_items
+expanded protected probe fields for due time, categories, windows and requireAck
+```
+
+Final validation:
+
+```text
+npm test -> 27 files passed, 87 tests passed
+npm run lint -> passed
+npm run build -> passed
+verified behavioral production commit -> b90bdcfc0e2ba4fdf322a2d233ececcbeec37d24
+OpenAI production health -> succeeded, structured output valid, response ID present
+daily-list production probe -> event, event, training at 10:00, 13:00 and 22:00
+interval production probe -> one task due 11:00 and one 08:00-11:00 policy every 30 minutes
+weekly/biweekly production probe -> recurring_car weekly and recurring_finance every_2_weeks
+before/post production probe -> existing active IDs updated, no generic task proposed
+/api/health -> ok, appVersion 2.4.0
+Telegram webhook -> pending 0, no last error
+reminder runner -> 200 OK, failed 0
+```
+
+Remaining manual acceptance:
+
+```text
+visually confirm dashboard replacement and reaction-menu callback cleanup in Telegram
+```

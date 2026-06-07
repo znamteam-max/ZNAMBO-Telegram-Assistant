@@ -421,3 +421,33 @@ npm test -> 26 files, 83 tests passed
 npm run lint -> passed
 npm run build -> passed
 ```
+
+### Turn: V2.4.0 production semantic verification
+
+The initial production probes proved that OpenAI and structured output were working, then exposed
+weak model proposals for interval, weekly/biweekly and every-event reminder requests.
+
+Implemented a post-AI semantic normalization layer. OpenAI remains mandatory and is called before
+normalization; no legacy parser or silent fallback was re-enabled.
+
+Production result:
+
+```text
+verified behavioral production commit -> b90bdcfc0e2ba4fdf322a2d233ececcbeec37d24
+AI health -> connected, structured output valid
+daily list -> event, event, training with exact start times
+interval request -> one task plus one interval-window policy
+weekly/biweekly request -> two long-term recurring policies
+before/post request -> existing active items updated, no generic task
+health -> ok
+webhook -> pending 0, no last error
+runner -> 200 OK, failed 0
+```
+
+Validation:
+
+```text
+npm test -> 27 files, 87 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
