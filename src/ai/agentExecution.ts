@@ -134,38 +134,40 @@ export async function proposeAgentExecution(params: {
   const telemetry = createTelemetry(model, started);
   telemetry.aiCalled = true;
 
-  try {
-    const response = await getOpenAIClient().responses.create({
-      model,
-      instructions: buildAgentInstructions(params),
-      input: params.text,
-      tools: [agentExecutionTool] as never,
-      tool_choice: { type: "function", name: "propose_agent_execution" } as never,
-      parallel_tool_calls: false,
-      max_output_tokens: 5000,
-    });
-    finishTelemetry(telemetry, response);
-    const call = response.output.find(
-      (item) => item.type === "function_call" && item.name === "propose_agent_execution",
-    ) as { arguments?: string } | undefined;
-    if (!call || typeof call.arguments !== "string") {
-      telemetry.errorCode = "schema";
-      telemetry.safeErrorMessage = "OpenAI did not return the required agent tool call.";
-      throw new MandatoryAiError(telemetry.safeErrorMessage, telemetry);
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const response = await getOpenAIClient().responses.create({
+        model,
+        instructions: buildAgentInstructions(params),
+        input: params.text,
+        tools: [agentExecutionTool] as never,
+        tool_choice: { type: "function", name: "propose_agent_execution" } as never,
+        parallel_tool_calls: false,
+        max_output_tokens: 5000,
+      });
+      finishTelemetry(telemetry, response);
+      const call = response.output.find(
+        (item) => item.type === "function_call" && item.name === "propose_agent_execution",
+      ) as { arguments?: string } | undefined;
+      if (!call || typeof call.arguments !== "string") {
+        throw new SyntaxError("Missing required agent tool call");
+      }
+      const execution = agentExecutionSchema.parse(JSON.parse(call.arguments));
+      telemetry.toolCallsProposed = inferExecutionTools(execution);
+      telemetry.structuredOutputValid = true;
+      telemetry.aiSucceeded = true;
+      return { execution, telemetry };
+    } catch (error) {
+      if (isStructuredOutputError(error) && attempt < 2) continue;
+      finishTelemetry(telemetry);
+      const classified = classifyOpenAiError(error);
+      telemetry.errorCode = classified.code;
+      telemetry.safeErrorMessage = classified.safeMessage;
+      throw new MandatoryAiError(classified.safeMessage, telemetry);
     }
-    const execution = agentExecutionSchema.parse(JSON.parse(call.arguments));
-    telemetry.toolCallsProposed = inferExecutionTools(execution);
-    telemetry.structuredOutputValid = true;
-    telemetry.aiSucceeded = true;
-    return { execution, telemetry };
-  } catch (error) {
-    if (error instanceof MandatoryAiError) throw error;
-    finishTelemetry(telemetry);
-    const classified = classifyOpenAiError(error);
-    telemetry.errorCode = classified.code;
-    telemetry.safeErrorMessage = classified.safeMessage;
-    throw new MandatoryAiError(classified.safeMessage, telemetry);
   }
+
+  throw new MandatoryAiError("OpenAI request failed safely.", telemetry);
 }
 
 function inferExecutionTools(execution: AgentExecution) {
@@ -259,9 +261,11 @@ function finishTelemetry(
     : null;
   telemetry.openaiResponseId = response?.id ?? telemetry.openaiResponseId;
   telemetry.aiModel = response?.model ?? telemetry.aiModel;
-  telemetry.inputTokens = response?.usage?.input_tokens ?? telemetry.inputTokens;
-  telemetry.outputTokens = response?.usage?.output_tokens ?? telemetry.outputTokens;
-  telemetry.totalTokens = response?.usage?.total_tokens ?? telemetry.totalTokens;
+  if (response?.usage) {
+    telemetry.inputTokens = (telemetry.inputTokens ?? 0) + response.usage.input_tokens;
+    telemetry.outputTokens = (telemetry.outputTokens ?? 0) + response.usage.output_tokens;
+    telemetry.totalTokens = (telemetry.totalTokens ?? 0) + response.usage.total_tokens;
+  }
 }
 
 export function classifyOpenAiError(error: unknown) {
@@ -290,4 +294,8 @@ export function classifyOpenAiError(error: unknown) {
     return { code: "schema", safeMessage: "OpenAI returned invalid structured output." };
   }
   return { code: "unknown", safeMessage: "OpenAI request failed safely." };
+}
+
+function isStructuredOutputError(error: unknown) {
+  return error instanceof SyntaxError || error instanceof z.ZodError;
 }

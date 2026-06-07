@@ -138,6 +138,44 @@ describe("mandatory OpenAI agent execution proposal", () => {
       }),
     ).rejects.toBeInstanceOf(MandatoryAiError);
   });
+
+  it("retries one stochastic structured-output failure and aggregates usage", async () => {
+    mocks.create
+      .mockResolvedValueOnce({
+        ...responseFor({ invalid: true }),
+        id: "resp_invalid",
+      })
+      .mockResolvedValueOnce(
+        responseFor({
+          intent: "reply",
+          reply: "Готово.",
+          actionPlan: null,
+          viewScope: null,
+          resetMode: null,
+          itemUpdates: [],
+          memoryFacts: [],
+          clarificationQuestions: [],
+        }),
+      );
+
+    const result = await proposeAgentExecution({
+      text: "Ответь коротко",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-07T05:00:00.000Z"),
+      activeContext: "none",
+    });
+
+    expect(mocks.create).toHaveBeenCalledTimes(2);
+    expect(result.telemetry).toEqual(
+      expect.objectContaining({
+        aiSucceeded: true,
+        openaiResponseId: "resp_test",
+        inputTokens: 200,
+        outputTokens: 100,
+        totalTokens: 300,
+      }),
+    );
+  });
 });
 
 function responseFor(argumentsValue: Record<string, unknown>) {
