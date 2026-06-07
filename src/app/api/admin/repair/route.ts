@@ -253,6 +253,8 @@ export async function POST(request: Request) {
         titles: proposed.execution.actionPlan?.actions.map((action) => action.title) ?? [],
         startAtLocal:
           proposed.execution.actionPlan?.actions.map((action) => action.startAtLocal) ?? [],
+        dueAtLocal:
+          proposed.execution.actionPlan?.actions.map((action) => action.dueAtLocal) ?? [],
         updateItemIds: proposed.execution.itemUpdates.flatMap((update) => update.itemIds),
         updateOperations: proposed.execution.itemUpdates.map((update) => update.operation),
         updateStartAtLocal: proposed.execution.itemUpdates.map((update) => update.startAtLocal),
@@ -275,11 +277,23 @@ export async function POST(request: Request) {
         reminderPolicyTitles: proposed.execution.reminderPolicies.map(
           (policy) => policy.title,
         ),
+        reminderPolicyCategories: proposed.execution.reminderPolicies.map(
+          (policy) => policy.category,
+        ),
+        reminderPolicyStartsAtLocal: proposed.execution.reminderPolicies.map(
+          (policy) => policy.startsAtLocal,
+        ),
+        reminderPolicyEndsAtLocal: proposed.execution.reminderPolicies.map(
+          (policy) => policy.endsAtLocal,
+        ),
         reminderPolicyIntervals: proposed.execution.reminderPolicies.map(
           (policy) => policy.intervalMinutes,
         ),
         reminderPolicyRecurrenceRules: proposed.execution.reminderPolicies.map(
           (policy) => policy.recurrenceRule,
+        ),
+        reminderPolicyRequireAck: proposed.execution.reminderPolicies.map(
+          (policy) => policy.requireAck,
         ),
       },
     });

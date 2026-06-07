@@ -6,6 +6,7 @@ import { getEnv } from "@/lib/env";
 import { getOpenAIClient } from "./openaiClient";
 import { agentExecutionSchema, type AgentExecution } from "./schemas/agentExecution";
 import { actionPlanJsonSchema } from "./schemas";
+import { normalizeAgentExecutionProposal } from "./agentExecutionNormalization";
 
 export type AiCallTelemetry = {
   aiRequired: boolean;
@@ -254,7 +255,14 @@ export async function proposeAgentExecution(params: {
       if (!call || typeof call.arguments !== "string") {
         throw new SyntaxError("Missing required agent tool call");
       }
-      const execution = agentExecutionSchema.parse(JSON.parse(call.arguments));
+      const parsedExecution = agentExecutionSchema.parse(JSON.parse(call.arguments));
+      const execution = normalizeAgentExecutionProposal({
+        execution: parsedExecution,
+        text: params.text,
+        timezone: params.timezone,
+        now: params.now,
+        activeContext: params.activeContext,
+      });
       telemetry.toolCallsProposed = inferExecutionTools(execution);
       telemetry.structuredOutputValid = true;
       telemetry.aiSucceeded = true;
