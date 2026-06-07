@@ -1,6 +1,6 @@
 # История проекта ZNAMBO Telegram Assistant
 
-Обновлено: 2026-06-01, Europe/Moscow.
+Обновлено: 2026-06-07, Europe/Moscow.
 
 Этот файл фиксирует историю создания и текущего состояния проекта без значений секретов. Все токены, пароли, ключи API и строки подключения намеренно не записаны.
 
@@ -1296,4 +1296,78 @@ direct local production Neon preview was attempted
 Neon pooler and direct endpoint repeatedly returned ECONNRESET
 no production cleanup mutation was applied without a reliable preview
 the confirmed owner-only cleanup flow is ready for deployment
+```
+
+### 13.26. Production repair rollout and data cleanup
+
+Production commits:
+
+```text
+d7ade75 Repair Jarvis production management flow
+3b0230c Add protected production repair endpoint
+100a7f4 Add production reminder smoke verification
+```
+
+Deployment verification:
+
+```text
+production URL -> https://znambo-telegram-assistant.vercel.app
+health ok -> true
+pipelineMode -> jarvis
+jarvisModeEnabled -> true
+deploymentCommit -> 100a7f4a7255eecea0a29963d96bf3fa42ee3ce0
+Telegram webhook pending updates -> 0
+Telegram webhook last error -> none
+protected reminder runner -> ok true, claimed 0, sent 0, failed 0
+```
+
+One-time targeted production cleanup:
+
+```text
+preview open items -> 21
+preview targeted garbage/test items -> 14
+preview test items -> 2
+preview attached active reminders -> 0
+archived targeted garbage/test items -> 14
+remaining active items -> 7
+remaining garbage items -> 0
+remaining test items -> 0
+remaining attached active reminders -> 0
+```
+
+The archived set included:
+
+```text
+legacy giant multiline meeting
+old Zoom setup/tentative call/Z2 test scenario
+old calls and content tasks listed in the production incident
+the erroneous delete-command planner item
+two old reminder-test planner items
+```
+
+Production reminder smoke:
+
+```text
+created a protected production reminder smoke due in 2 minutes
+did not manually invoke the reminder runner while waiting
+automatic scheduler delivered the reminder
+reminder status -> sent
+delivery status -> sent
+test planner item status -> cancelled
+autoArchivedAfterDelivery -> true
+post-smoke garbage/test preview -> 0
+```
+
+Final validation:
+
+```text
+npm test -> 18 files passed, 56 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+Remaining operational limitation:
+
+```text
+best-effort external calendar entries are not deleted during active-plan reset; their pending sync jobs are cancelled and the assistant database remains the source of truth
 ```

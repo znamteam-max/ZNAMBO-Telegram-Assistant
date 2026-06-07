@@ -190,3 +190,42 @@ Next step:
 ```text
 Commit and push the repair, wait for Vercel auto-deploy, verify health/webhook/runner, then apply the confirmed garbage cleanup and record the result.
 ```
+
+### Turn: production repair deployed and verified
+
+Deployment:
+
+```text
+Jarvis repair pushed to GitHub main and auto-deployed by Vercel.
+Production health confirmed pipelineMode jarvis and jarvisModeEnabled true.
+Telegram webhook has zero pending updates and no last error.
+Protected reminder runner returns ok.
+```
+
+Production cleanup:
+
+```text
+Protected preview found 21 active records and 14 targeted garbage/test records.
+Applied targeted cleanup only.
+Archived 14 polluted records.
+Remaining active records: 7.
+Remaining garbage/test records: 0.
+```
+
+Automatic reminder proof:
+
+```text
+Created a protected two-minute production reminder smoke.
+Waited for the automatic scheduler without manually invoking the runner.
+Reminder and delivery both became sent.
+The test planner item automatically became cancelled with autoArchivedAfterDelivery true.
+Final garbage/test preview remained 0.
+```
+
+Validation:
+
+```text
+npm test -> 18 files passed, 56 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
