@@ -206,6 +206,7 @@ export async function getLatestDeliveredReminderContext(params: {
       and(
         eq(reminderDeliveries.userId, params.userId),
         eq(reminderDeliveries.status, "sent"),
+        inArray(reminders.type, ["followup", "training_followup", "after_event"]),
         gte(reminderDeliveries.deliveredAt, params.since),
       ),
     )

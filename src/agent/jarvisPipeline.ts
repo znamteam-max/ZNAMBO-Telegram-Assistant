@@ -194,6 +194,7 @@ async function executeAgentProposal(params: {
       userId: owner.id,
       updates: params.execution.itemUpdates,
       timezone: params.timezone,
+      sourceText: params.text,
       now: params.now,
     });
     result.updatedItemIds = updateResult.updatedItems.map((item) => item.id);

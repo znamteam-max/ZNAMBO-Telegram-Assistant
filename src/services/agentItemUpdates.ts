@@ -19,6 +19,7 @@ export async function applyAgentItemUpdates(params: {
   userId: string;
   updates: AgentItemUpdate[];
   timezone: string;
+  sourceText?: string;
   now?: Date;
 }) {
   const now = params.now ?? new Date();
@@ -42,6 +43,10 @@ export async function applyAgentItemUpdates(params: {
         warnings.push(`item_not_found:${itemId}`);
         continue;
       }
+      if (item.status !== "active") {
+        warnings.push(`item_not_active:${itemId}`);
+        continue;
+      }
 
       if (update.operation === "complete") {
         const completed = await markPlannerItemCompleted(params.userId, item.id);
@@ -59,6 +64,7 @@ export async function applyAgentItemUpdates(params: {
           item,
           update,
           timezone: item.timezone || params.timezone,
+          sourceText: params.sourceText,
           now,
         });
         if (rescheduled.item) {
@@ -200,6 +206,7 @@ async function rescheduleItem(params: {
   item: PlannerItem;
   update: AgentItemUpdate;
   timezone: string;
+  sourceText?: string;
   now: Date;
 }) {
   const warnings: string[] = [];
@@ -224,6 +231,19 @@ async function rescheduleItem(params: {
     : oldDurationMs !== null
       ? new Date(newAnchor.getTime() + oldDurationMs)
       : params.item.endAt;
+  const timeValidation = validateExplicitScheduleTimes({
+    sourceText: params.sourceText,
+    item: params.item,
+    update: params.update,
+    timezone: params.timezone,
+  });
+  if (!timeValidation.ok) {
+    return {
+      item: null,
+      reminderIds: [] as string[],
+      warnings: [`explicit_time_mismatch:${params.item.id}`],
+    };
+  }
   const taskLike = params.item.kind === "task" || params.item.kind === "recurring_task";
   const activeReminders = await listActiveRemindersForItems(params.userId, [params.item.id]);
 
@@ -259,6 +279,48 @@ async function rescheduleItem(params: {
     warnings.push(`rescheduled_reminders_not_future:${params.item.id}`);
   }
   return { item: updated, reminderIds, warnings };
+}
+
+function validateExplicitScheduleTimes(params: {
+  sourceText?: string;
+  item: PlannerItem;
+  update: AgentItemUpdate;
+  timezone: string;
+}) {
+  const explicitTimes = extractExplicitClockTimes(params.sourceText ?? "");
+  if (!explicitTimes.size) return { ok: true };
+  const existingTimes = new Set(
+    [params.item.startAt, params.item.endAt, params.item.dueAt]
+      .filter((value): value is Date => Boolean(value))
+      .map((value) =>
+        DateTime.fromJSDate(value, { zone: "utc" }).setZone(params.timezone).toFormat("HH:mm"),
+      ),
+  );
+  const proposedTimes = [params.update.startAtLocal, params.update.endAtLocal]
+    .filter((value): value is string => Boolean(value))
+    .map((value) =>
+      DateTime.fromJSDate(localIsoToUtcDate(value, params.timezone), { zone: "utc" })
+        .setZone(params.timezone)
+        .toFormat("HH:mm"),
+    );
+  return {
+    ok: proposedTimes.every((value) => explicitTimes.has(value) || existingTimes.has(value)),
+  };
+}
+
+function extractExplicitClockTimes(text: string) {
+  const times = new Set<string>();
+  const withMinutes = text.matchAll(/\b(\d{1,2})[.:](\d{2})\b/g);
+  for (const match of withMinutes) {
+    times.add(`${String(Number(match[1])).padStart(2, "0")}:${match[2]}`);
+  }
+  const bareAfterPreposition = text.matchAll(
+    /(?:^|\s)(?:в|на|с|до)\s+(\d{1,2})(?!\d|[.:]\d)/gi,
+  );
+  for (const match of bareAfterPreposition) {
+    times.add(`${String(Number(match[1])).padStart(2, "0")}:00`);
+  }
+  return times;
 }
 
 async function recreateRemindersAfterReschedule(params: {

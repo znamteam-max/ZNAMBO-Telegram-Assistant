@@ -63,6 +63,7 @@ export async function listManageableItems(userId: string, limit = 40): Promise<P
         eq(plannerItems.userId, userId),
         inArray(plannerItems.kind, [
           "task",
+          "event",
           "preparation_task",
           "recurring_task",
           "training",

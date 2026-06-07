@@ -198,6 +198,59 @@ describe("agent item update execution", () => {
       "11111111-1111-4111-8111-111111111111",
     ]);
   });
+
+  it("blocks a proposed clock time that contradicts explicit user hours", async () => {
+    const result = await applyAgentItemUpdates({
+      userId: "user-id",
+      timezone: "Europe/Moscow",
+      sourceText: "Эфир ВС с 13 до 20 сделай",
+      now: new Date("2026-06-07T09:00:00.000Z"),
+      updates: [
+        {
+          itemIds: ["11111111-1111-4111-8111-111111111111"],
+          operation: "reschedule",
+          startAtLocal: "2026-06-07T10:00:00+03:00",
+          endAtLocal: "2026-06-07T17:00:00+03:00",
+          reminderMinutesBefore: null,
+          followupMinutesAfter: null,
+          exposeManagementButtons: true,
+          note: null,
+        },
+      ],
+    });
+
+    expect(mocks.updatePlannerItemSchedule).not.toHaveBeenCalled();
+    expect(result.warnings).toEqual([
+      "explicit_time_mismatch:11111111-1111-4111-8111-111111111111",
+    ]);
+  });
+
+  it("refuses to update a stale non-active item id", async () => {
+    mocks.listItemsByIds.mockResolvedValue([{ ...makeItem(), status: "cancelled" }]);
+
+    const result = await applyAgentItemUpdates({
+      userId: "user-id",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-07T09:00:00.000Z"),
+      updates: [
+        {
+          itemIds: ["11111111-1111-4111-8111-111111111111"],
+          operation: "complete",
+          startAtLocal: null,
+          endAtLocal: null,
+          reminderMinutesBefore: null,
+          followupMinutesAfter: null,
+          exposeManagementButtons: false,
+          note: null,
+        },
+      ],
+    });
+
+    expect(mocks.markPlannerItemCompleted).not.toHaveBeenCalled();
+    expect(result.warnings).toEqual([
+      "item_not_active:11111111-1111-4111-8111-111111111111",
+    ]);
+  });
 });
 
 function makeItem(): PlannerItem {

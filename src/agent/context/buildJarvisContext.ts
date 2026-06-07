@@ -1,5 +1,7 @@
 import { buildActiveContext } from "@/services/contextRetrieval";
 import { logger } from "@/lib/logger";
+import { listItemsByIds } from "@/db/queries/taskViewStates";
+import { isActiveItem } from "@/domain/itemVisibility";
 
 import { loadLatestTaskView } from "../state/taskViewState";
 import type { JarvisContext } from "../types";
@@ -15,6 +17,9 @@ export async function buildJarvisContext(params: {
     buildActiveContextBestEffort({ ...params, now }),
     loadLatestTaskViewBestEffort(params.userId),
   ]);
+  const activeTaskViewItems = lastTaskViewState
+    ? await loadActiveTaskViewItemsBestEffort(params.userId, lastTaskViewState.itemIds)
+    : [];
 
   return {
     now,
@@ -25,24 +30,28 @@ export async function buildJarvisContext(params: {
       "Last task view state:",
       lastTaskViewState
         ? [
-            `- ${lastTaskViewState.title}; scope=${lastTaskViewState.scope}; items=${lastTaskViewState.itemIds.length}`,
-            ...(Array.isArray(lastTaskViewState.itemsSnapshot)
-              ? (lastTaskViewState.itemsSnapshot as Array<{
-                  displayIndex?: number;
-                  itemId?: string;
-                  kind?: string;
-                  title?: string;
-                }>).map(
-                  (item) =>
-                    `  ${item.displayIndex ?? "?"}. id=${item.itemId ?? "unknown"}; ${item.kind ?? "item"}; ${item.title ?? ""}`,
-                )
-              : []),
+            `- ${lastTaskViewState.title}; scope=${lastTaskViewState.scope}; activeItems=${activeTaskViewItems.length}`,
+            ...activeTaskViewItems.map(
+              (item, index) =>
+                `  ${index + 1}. id=${item.id}; status=${item.status}; ${item.kind}; ${item.title}; startAt=${item.startAt?.toISOString() ?? "none"}; endAt=${item.endAt?.toISOString() ?? "none"}; dueAt=${item.dueAt?.toISOString() ?? "none"}`,
+            ),
           ].join("\n")
         : "- none",
     ].join("\n"),
     contextError: activeContextResult.contextError,
     lastTaskViewState,
   };
+}
+
+async function loadActiveTaskViewItemsBestEffort(userId: string, itemIds: string[]) {
+  try {
+    const items = await listItemsByIds(userId, itemIds);
+    return items.filter(isActiveItem);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("Jarvis active task-view item retrieval failed", { error: message });
+    return [];
+  }
 }
 
 async function loadLatestTaskViewBestEffort(userId: string) {

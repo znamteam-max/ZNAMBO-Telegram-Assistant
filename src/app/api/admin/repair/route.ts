@@ -363,6 +363,7 @@ export async function POST(request: Request) {
         userId: owner.id,
         updates: proposed.execution.itemUpdates,
         timezone: owner.timezone,
+        sourceText: body.text,
         now,
       });
       updatedItemIds.push(...updated.updatedItems.map((item) => item.id));
