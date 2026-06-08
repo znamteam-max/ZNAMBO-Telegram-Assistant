@@ -1684,3 +1684,56 @@ Remaining manual acceptance:
 ```text
 visually confirm dashboard replacement and reaction-menu callback cleanup in Telegram
 ```
+
+### 13.31. V2.4.1 Reminder Reliability Repair
+
+Implemented:
+
+```text
+drizzle/0004_reminder_reliability_repair.sql
+policy reconciler before every reminder claim
+idempotent occurrence/reminder recovery
+interval progression from occurrence.scheduledFor without delivery drift
+one-immediate catch-up without missed-slot bursts
+inclusive interval window ends
+user and policy quiet hours
+scheduler runtime health, /cronhealth and /policydebug
+safe scheduler fields in /api/health
+nested reminder policy setup and expanded snooze controls
+Telegram cleanup audit with planner mutation explicitly forbidden
+legacy diagnostics in /reminders and /longterm
+owner-only preview/apply repair for circle, Drik, mirror and ЖКХ
+```
+
+Production rollout:
+
+```text
+implementation commit -> 9f80c4ab8a2697cc8fcac1955c3902c0131e8bc2
+production health -> appVersion 2.4.1
+new scheduler and policy schema objects -> read successfully by production
+Telegram webhook -> pending 0, no last error
+cron-job.org -> automatic successful runner observed
+repair preview -> exactly four intended legacy groups
+repair apply -> 4 items repaired, 4 policies created, no unrelated records changed
+active policies -> 4
+policies missing next reminder -> 0
+circle and Drik catch-up slots -> advanced automatically from 10:00 to 10:30 Moscow
+mirror -> weekly long-term recurring_car policy
+ЖКХ -> every_2_weeks long-term recurring_finance policy
+OpenAI health -> real call succeeded with valid structured output and accepted tool definition
+```
+
+Validation:
+
+```text
+npm test -> 31 files passed, 95 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+Remaining manual acceptance:
+
+```text
+press Готово on one interval reminder and confirm that the item and future policy chain stop
+Vercel project scope requires CLI/connector re-authentication; GitHub auto-deploy remains operational
+```

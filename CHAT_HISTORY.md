@@ -451,3 +451,40 @@ npm test -> 27 files, 87 tests passed
 npm run lint -> passed
 npm run build -> passed
 ```
+
+### Turn: V2.4.1 Reminder Reliability Repair
+
+The attached production incident showed that legacy reminder-looking notes were not real policies
+and that interval chains could disappear after one delivery.
+
+Implemented policy reconciliation, grid-based interval advancement, catch-up without bursts,
+quiet hours, scheduler health, legacy diagnostics, nested reminder controls and an owner-only
+repair flow for the four specified production groups.
+
+Production result:
+
+```text
+implementation commit -> 9f80c4ab8a2697cc8fcac1955c3902c0131e8bc2
+health -> appVersion 2.4.1
+webhook -> pending 0, no last error
+automatic scheduler -> observed successfully
+repair preview -> only circle, Drik, mirror and ЖКХ
+repair apply -> 4 items and 4 policies
+active policies -> 4
+missing next reminders -> 0
+circle and Drik -> catch-up delivered and next grid slot set to 10:30 Moscow
+mirror -> weekly long-term policy
+ЖКХ -> biweekly long-term policy
+OpenAI health -> connected with valid structured output and tool support
+```
+
+Validation:
+
+```text
+npm test -> 31 files, 95 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+The remaining owner-only acceptance step is pressing `Готово` on an interval reminder and checking
+that future reminders stop.

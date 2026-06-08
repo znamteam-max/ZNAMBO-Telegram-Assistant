@@ -1,6 +1,6 @@
 # Personal Telegram Daily Assistant
 
-Current application version: `2.4.0`.
+Current application version: `2.4.1`.
 
 Release summaries are stored as one file per version in [`versions/`](./versions/README.md).
 
@@ -24,8 +24,10 @@ Telegram
 
 External minute scheduler: cron-job.org or Cloudflare Worker
   -> /api/reminders/run
+  -> reconcile active reminder policies
   -> atomic reminder claim
   -> Telegram notification
+  -> advance from occurrence.scheduledFor without interval drift
 
 Postgres
   -> Drizzle schema + migrations
@@ -43,12 +45,15 @@ Postgres
 - OpenAI audio transcription for voice/audio/video note/video, with 20 MB Telegram Bot API guard and 25 MB OpenAI guard.
 - Protected reminder dispatcher with atomic `FOR UPDATE SKIP LOCKED` claiming, delivery records and repeat-until-ack scheduling.
 - Reminder Policy Engine for one-time, before-event, post-event reaction, interval-window, recurring, nag-until-ack and long-term rules.
+- Policy reconciler that recreates a missing next occurrence/reminder idempotently before each runner claim.
+- Catch-up without bursts, interval-grid scheduling, inclusive window ends and user/policy quiet hours.
+- Scheduler observability through `/cronhealth`, `/policydebug` and safe `/api/health` fields.
 - Live Plan Dashboard that retires the previous dashboard and sends one current bottom-most control center after mutations.
 - Telegram message registry for deleting or disabling stale reminder cards, item menus and dashboards.
 - External minute scheduler support through cron-job.org or the optional Cloudflare Worker project.
 - Google Calendar OAuth, encrypted refresh token storage and event sync.
 - Yandex Calendar sync via CalDAV as a best-effort calendar provider. Calendar failure does not block DB records or Telegram reminders.
-- Vitest coverage for allowlist, idempotency middleware, date conversion, reminder policy, pending action double-click safety, oversized media, agenda ordering, calendar failure preservation and V2 planner acceptance cases.
+- Vitest coverage for allowlist, idempotency middleware, date conversion, reminder policy repair/reconciliation, catch-up, interval drift, pending action double-click safety, oversized media, agenda ordering, calendar failure preservation and V2 planner acceptance cases.
 
 ## Prerequisites
 

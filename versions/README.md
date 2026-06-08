@@ -16,3 +16,4 @@ Version index:
 - `V2.2.0.md` - mandatory observable OpenAI agent execution.
 - `V2.3.0.md` - contextual completion, hybrid planning and typed item updates.
 - `V2.4.0.md` - Live Plan Dashboard, Reminder Policy Engine and clean Telegram message lifecycle.
+- `V2.4.1.md` - policy reconciliation, interval reliability, scheduler health and production legacy repair.
