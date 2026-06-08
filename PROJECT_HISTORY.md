@@ -1812,3 +1812,44 @@ npm run build -> passed
 ```
 
 Production deployment and acceptance are pending the GitHub/Vercel rollout of this working tree.
+
+Production rollout completed:
+
+```text
+active production commit -> 06e111e2268af137afa18fbbfe6475187e4497e8
+production URL -> https://znambo-telegram-assistant.vercel.app
+/api/health -> ok, appVersion 2.4.2, policyEngineVersion 2.4.2
+intervalAlgorithmVersion -> anchor-grid-v2
+reconcilerEnabled -> true
+runnerLockEnabled -> true
+activePolicyCount -> 7 after repair and acceptance records
+policiesMissingNextReminder -> 0
+Telegram webhook -> pending 0, no last error
+OpenAI health -> real call succeeded, structured output valid, tool call accepted
+V2.4.2 repair preview before apply -> 1 orphan Drik task, 1 malformed Drik policy, 2 partial Central Park policies, 3 future reminders
+V2.4.2 repair apply -> archived 1 item, expired 3 policies, cancelled 3 future reminders
+V2.4.2 repair preview after apply -> 0 items, 0 policies, 0 future reminders, 0 shifted reminders
+Central Park exact production execution -> 2 events, 4 daily policies, no validation warnings
+Open-ended Drik exact production execution -> 1 task, 1 nag_until_ack policy, 08:00-22:00, interval 30, requireAck true
+snooze production probe -> snooze one-off, next regular returned to original 10-minute grid, gridPreserved true
+snooze probe cleanup -> no probe policies remain after probe
+concurrent runner requests -> one executed, one skipped with runner_already_active
+dashboard snapshot -> Drik under Скоро; mirror and ЖКХ under Дальние
+```
+
+Final validation for code commits in this rollout:
+
+```text
+npm test -> 34 files passed, 105 tests passed
+npm run lint -> passed
+npm run build -> passed
+secret scan -> no provided secrets found in repository files
+```
+
+Remaining limitations:
+
+```text
+Yandex Calendar remains best-effort; failures must not block planner/reminder writes.
+Vercel CLI/connector auth is still unavailable locally, but GitHub auto-deploy is working.
+Direct local Neon pooler connections are still unreliable; protected server-side diagnostics are the reliable production path.
+```

@@ -551,6 +551,50 @@ protected cleanup action was added.
 A read-only protected dashboard snapshot was added so production acceptance can verify the exact
 `/dashboard` renderer without spoofing a Telegram user update.
 
+### Turn: V2.4.2 production acceptance completed
+
+Production:
+
+```text
+active code commit verified -> 06e111e2268af137afa18fbbfe6475187e4497e8
+health -> ok, appVersion 2.4.2, anchor-grid-v2, reconciler true, runner lock true
+webhook -> pending 0, no last error
+OpenAI health -> aiCalled true, aiSucceeded true, structured output valid
+```
+
+Repair:
+
+```text
+preview selected exactly the incident signatures:
+1 orphan generic Drik task
+1 malformed Drik interval policy stored as recurring
+2 partial Central Park policies
+3 attached future reminders
+
+apply archived 1 item, expired 3 policies and cancelled 3 future reminders
+repeat preview returned zero candidates
+```
+
+Behavior acceptance:
+
+```text
+Central Park exact phrase created exactly 2 events and 4 daily policies
+open-ended Drik exact phrase created exactly 1 task and 1 nag_until_ack 08:00-22:00 policy
+snooze probe created a one-off snooze and returned next regular delivery to the original 10-minute grid
+probe cleanup left zero probe policies
+two concurrent runner requests produced one normal run and one runner_already_active skip
+dashboard snapshot placed Drik under Скоро and mirror/ЖКХ under Дальние
+```
+
+Validation:
+
+```text
+npm test -> 34 files, 105 tests passed
+npm run lint -> passed
+npm run build -> passed
+secret scan -> clean
+```
+
 Next step:
 
 ```text
