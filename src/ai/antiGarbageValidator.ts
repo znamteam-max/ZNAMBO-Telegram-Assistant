@@ -70,7 +70,11 @@ export function validatePlannerItemsBeforeSave(params: {
       warnings.push("tentative source text produced a non-tentative item");
     }
 
-    if (timeWindowPattern.test(originalLower) && hasExactLocalTime(action)) {
+    if (
+      timeWindowPattern.test(originalLower) &&
+      !hasExplicitClock(originalLower) &&
+      hasExactLocalTime(action)
+    ) {
       warnings.push("exact time was assigned even though the user gave only a time window");
     }
 
@@ -149,6 +153,10 @@ function hasMultipleBulletMarkers(text: string) {
 function hasExactLocalTime(action: ActionPlan["actions"][number]) {
   if (action.metadata?.timeUnspecified === true) return false;
   return Boolean(action.startAtLocal || action.dueAtLocal);
+}
+
+function hasExplicitClock(text: string) {
+  return /(?:^|\s)(?:в|с|до)\s*\d{1,2}(?:[.:]\d{2})?(?:\s|,|$)/i.test(text);
 }
 
 function normalize(text: string) {

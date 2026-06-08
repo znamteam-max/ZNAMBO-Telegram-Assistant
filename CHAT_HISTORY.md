@@ -536,6 +536,10 @@ found one malformed Drik interval policy stored as recurring
 repair was not applied until the exact filters covered all three incident signatures
 ```
 
+Production Central Park acceptance initially returned `422` with zero mutations because the
+anti-garbage validator treated `утром с 8 до 12` as a vague window. The fix keeps protection for
+truly vague `утром/днём` input while accepting explicit numeric ranges.
+
 Next step:
 
 ```text

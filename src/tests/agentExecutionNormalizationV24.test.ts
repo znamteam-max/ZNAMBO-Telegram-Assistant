@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { normalizeAgentExecutionProposal } from "@/ai/agentExecutionNormalization";
+import { validatePlannerItemsBeforeSave } from "@/ai/antiGarbageValidator";
 import { agentExecutionSchema, type AgentReminderPolicy } from "@/ai/schemas/agentExecution";
 
 const now = new Date("2026-06-07T08:00:00.000Z");
@@ -142,6 +143,13 @@ describe("V2.4 post-AI reminder policy normalization", () => {
       "daily_at_10:00",
       "daily_at_18:00",
     ]);
+    expect(
+      validatePlannerItemsBeforeSave({
+        plan: execution.actionPlan!,
+        originalMessage:
+          "ВАЖНО! Студия Централ Парк в четверг с 20 до 22, а 16-го утром с 8 до 12. Нужно очень много напоминаний, каждый день по две штуки",
+      }),
+    ).toEqual({ ok: true, warnings: [] });
     expect(execution.clarificationQuestions).toEqual([]);
   });
 

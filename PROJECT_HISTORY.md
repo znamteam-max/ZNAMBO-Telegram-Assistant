@@ -1776,6 +1776,10 @@ The first production preview additionally exposed two partial Central Park polic
 interval stored with the invalid `recurring` type. The repair filter was tightened to include those
 exact known signatures before any mutation was applied.
 
+The first corrected Central Park production attempt was atomically blocked by a validator false
+positive: the word `утром` was treated as an imprecise window despite the explicit `с 8 до 12`
+range. The validator now distinguishes a vague day-part from an explicit numeric clock/range.
+
 Database rollout:
 
 ```text
