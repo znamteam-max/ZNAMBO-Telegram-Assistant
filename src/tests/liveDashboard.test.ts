@@ -36,6 +36,7 @@ vi.mock("@/bot/createBot", () => ({
 }));
 
 import {
+  renderLiveDashboard,
   renderReminderPolicyList,
   sendOrRefreshLiveDashboard,
 } from "@/telegram/liveDashboard";
@@ -118,5 +119,58 @@ describe("live dashboard lifecycle", () => {
     expect(text).toContain("старых записей");
     expect(text).toContain("Регулярное напоминание по ЖКХ");
     expect(text).toContain("без policy");
+  });
+
+  it("shows a tomorrow one-day nag under Soon and weekly reminders under Distant", async () => {
+    mocks.listRecentRangeItems.mockResolvedValue([]);
+    mocks.listActiveReminderPolicies.mockResolvedValue([
+      {
+        id: "tomorrow-nag",
+        title: "Записаться к Дрик",
+        policyType: "nag_until_ack",
+        category: "people",
+        timezone: "Europe/Moscow",
+        startsAt: new Date("2026-06-10T05:00:00.000Z"),
+        endsAt: new Date("2026-06-10T19:00:00.000Z"),
+        nextFireAt: new Date("2026-06-10T05:00:00.000Z"),
+        intervalMinutes: 30,
+      },
+      {
+        id: "mirror",
+        title: "Заменить зеркало",
+        policyType: "long_term",
+        category: "recurring_car",
+        timezone: "Europe/Moscow",
+        startsAt: null,
+        endsAt: null,
+        nextFireAt: new Date("2026-06-16T06:30:00.000Z"),
+        intervalMinutes: null,
+      },
+    ]);
+    mocks.listLongTermReminderPolicies.mockResolvedValue([
+      {
+        id: "mirror",
+        title: "Заменить зеркало",
+        policyType: "long_term",
+        category: "recurring_car",
+        timezone: "Europe/Moscow",
+        startsAt: null,
+        endsAt: null,
+        nextFireAt: new Date("2026-06-16T06:30:00.000Z"),
+        intervalMinutes: null,
+      },
+    ]);
+
+    const result = await renderLiveDashboard({
+      userId: "user-id",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-09T05:00:00.000Z"),
+    });
+
+    expect(result.text).toContain("Скоро:");
+    expect(result.text).toContain("Записаться к Дрик");
+    expect(result.text).toContain("Дальние:");
+    expect(result.text).toContain("Заменить зеркало");
+    expect(result.text.indexOf("Записаться к Дрик")).toBeLessThan(result.text.indexOf("Дальние:"));
   });
 });

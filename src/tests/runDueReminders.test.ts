@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   recordRunnerStarted: vi.fn(),
   recordPolicyReconcile: vi.fn(),
   recordRunnerFinished: vi.fn(),
+  acquireRuntimeLease: vi.fn(),
+  releaseRuntimeLease: vi.fn(),
 }));
 
 vi.mock("@/db/queries/reminders", () => ({
@@ -50,6 +52,10 @@ vi.mock("@/db/queries/schedulerHealth", () => ({
   recordRunnerStarted: mocks.recordRunnerStarted,
   recordPolicyReconcile: mocks.recordPolicyReconcile,
   recordRunnerFinished: mocks.recordRunnerFinished,
+}));
+vi.mock("@/db/queries/runtimeLocks", () => ({
+  acquireRuntimeLease: mocks.acquireRuntimeLease,
+  releaseRuntimeLease: mocks.releaseRuntimeLease,
 }));
 
 vi.mock("@/agent/state/taskViewState", () => ({
@@ -88,6 +94,12 @@ describe("runDueReminders", () => {
     mocks.recordRunnerStarted.mockResolvedValue(undefined);
     mocks.recordPolicyReconcile.mockResolvedValue(undefined);
     mocks.recordRunnerFinished.mockResolvedValue(undefined);
+    mocks.acquireRuntimeLease.mockResolvedValue({
+      key: "reminder_runner",
+      ownerToken: "lease-owner",
+      lockedUntil: new Date("2026-06-01T08:46:00.000Z"),
+    });
+    mocks.releaseRuntimeLease.mockResolvedValue({ key: "reminder_runner" });
   });
 
   it("continues an until-ack reminder chain until the daily cutoff", async () => {
@@ -267,5 +279,37 @@ describe("runDueReminders", () => {
       inline_keyboard: Array<Array<{ text: string }>>;
     };
     expect(keyboard.inline_keyboard.flat().map((button) => button.text)).toContain("📝 Итоги");
+  });
+
+  it("skips a concurrent runner when the distributed lease is already active", async () => {
+    const now = new Date("2026-06-09T08:00:00.000Z");
+    mocks.acquireRuntimeLease
+      .mockResolvedValueOnce({
+        key: "reminder_runner",
+        ownerToken: "first",
+        lockedUntil: new Date("2026-06-09T08:00:55.000Z"),
+      })
+      .mockResolvedValueOnce(null);
+    mocks.claimDueReminders.mockResolvedValue([]);
+    const sender = { sendMessage: vi.fn() };
+
+    const [first, second] = await Promise.all([
+      runDueReminders({ now, sender }),
+      runDueReminders({ now, sender }),
+    ]);
+
+    expect(first).toEqual({ claimed: 0, sent: 0, failed: 0 });
+    expect(second).toEqual({
+      claimed: 0,
+      sent: 0,
+      failed: 0,
+      skipped: true,
+      reason: "runner_already_active",
+    });
+    expect(mocks.claimDueReminders).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseRuntimeLease).toHaveBeenCalledTimes(1);
+    expect(mocks.reconcileActiveReminderPolicies.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.claimDueReminders.mock.invocationCallOrder[0],
+    );
   });
 });

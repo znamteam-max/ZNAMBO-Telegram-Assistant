@@ -5,9 +5,14 @@ import {
 import { handleHardManagementIntent } from "@/agent/hardManagementRouter";
 import { renderScheduleViewTool, renderTaskViewTool } from "@/agent/jarvisTools";
 import { buildActionPlan } from "@/ai/planner";
-import { buildValidationFailureReply, validatePlannerItemsBeforeSave } from "@/ai/antiGarbageValidator";
+import {
+  buildValidationFailureReply,
+  validatePlannerItemsBeforeSave,
+  validateReminderPoliciesBeforeSave,
+} from "@/ai/antiGarbageValidator";
 import { decideUserIntentWithAI } from "@/ai/assistantDecision";
 import type { ActionPlan } from "@/ai/schemas";
+import type { AgentReminderPolicy } from "@/ai/schemas/agentExecution";
 import type { AssistantDecision } from "@/ai/schemas/assistantDecision";
 import { writeAudit } from "@/db/queries/audit";
 import { createIdempotencyKey } from "@/lib/idempotency";
@@ -24,10 +29,7 @@ import { logger } from "@/lib/logger";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
-import {
-  formatActionPlanCard,
-  formatCommittedPlanSummary,
-} from "./formatters";
+import { formatActionPlanCard, formatCommittedPlanSummary } from "./formatters";
 import { actionPlanKeyboard } from "./keyboards";
 import { replyAndRecord } from "./reply";
 
@@ -197,12 +199,29 @@ export async function executeActionPlanForMessage(
     plan: ActionPlan;
     forceCommit: boolean;
     committedIntro?: string;
+    reminderPolicies?: AgentReminderPolicy[];
   },
-): Promise<{ finalAction: string; validatorWarnings: string[]; savedItemIds: string[] }> {
+): Promise<{
+  finalAction: string;
+  validatorWarnings: string[];
+  savedItemIds: string[];
+  createdPolicyIds?: string[];
+  createdReminderIds?: string[];
+  transactionStarted?: boolean;
+  transactionCommitted?: boolean;
+  transactionRolledBack?: boolean;
+  proposedMutationCount?: number;
+  committedMutationCount?: number;
+  partialMutationDetected?: boolean;
+}> {
   const owner = requireOwner(ctx);
   if (params.plan.intent === "answer" || params.plan.intent === "clarify") {
     await replyAndRecord(ctx, formatActionPlanCard(params.plan, params.timezone));
-    return { finalAction: `replied_${params.plan.intent}`, validatorWarnings: [], savedItemIds: [] };
+    return {
+      finalAction: `replied_${params.plan.intent}`,
+      validatorWarnings: [],
+      savedItemIds: [],
+    };
   }
 
   const validation = validatePlannerItemsBeforeSave({
@@ -210,6 +229,13 @@ export async function executeActionPlanForMessage(
     originalMessage: params.text,
     decision: params.decision,
   });
+  const policyValidation = validateReminderPoliciesBeforeSave({
+    plan: params.plan,
+    policies: params.reminderPolicies ?? [],
+    timezone: params.timezone,
+  });
+  validation.warnings.push(...policyValidation.warnings);
+  validation.ok = validation.ok && policyValidation.ok;
   if (!validation.ok) {
     if (validation.warnings.some((warning) => warning.includes("management command"))) {
       await renderTaskManagementView(ctx);
@@ -217,6 +243,12 @@ export async function executeActionPlanForMessage(
         finalAction: "blocked_garbage_and_rendered_management",
         validatorWarnings: validation.warnings,
         savedItemIds: [],
+        transactionStarted: false,
+        transactionCommitted: false,
+        transactionRolledBack: false,
+        proposedMutationCount: params.plan.actions.length + (params.reminderPolicies?.length ?? 0),
+        committedMutationCount: 0,
+        partialMutationDetected: false,
       };
     }
 
@@ -225,6 +257,12 @@ export async function executeActionPlanForMessage(
       finalAction: "blocked_by_anti_garbage_validator",
       validatorWarnings: validation.warnings,
       savedItemIds: [],
+      transactionStarted: false,
+      transactionCommitted: false,
+      transactionRolledBack: false,
+      proposedMutationCount: params.plan.actions.length + (params.reminderPolicies?.length ?? 0),
+      committedMutationCount: 0,
+      partialMutationDetected: false,
     };
   }
 
@@ -232,8 +270,14 @@ export async function executeActionPlanForMessage(
     userId: owner.id,
     sourceMessageId: ctx.dbMessageId,
     plan: params.plan,
-    idempotencyKey: createIdempotencyKey([owner.id, ctx.update.update_id, params.text, "decision-v3"]),
+    idempotencyKey: createIdempotencyKey([
+      owner.id,
+      ctx.update.update_id,
+      params.text,
+      "decision-v3",
+    ]),
     commitMode: owner.smartCommitMode,
+    reminderPolicies: params.reminderPolicies,
   });
 
   if (params.forceCommit || shouldAutoCommitPlan(params.plan, owner.smartCommitMode)) {
@@ -242,6 +286,7 @@ export async function executeActionPlanForMessage(
       userId: owner.id,
       timezone: params.timezone,
       now: params.now,
+      reminderPolicies: params.reminderPolicies,
     });
     if (result.status === "committed") {
       await replyAndRecord(
@@ -258,6 +303,15 @@ export async function executeActionPlanForMessage(
         finalAction: "committed_action_plan",
         validatorWarnings: validation.warnings,
         savedItemIds: result.items.map((item) => item.id),
+        createdPolicyIds: result.policies.map((policy) => policy.id),
+        createdReminderIds: result.policyReminderIds,
+        transactionStarted: true,
+        transactionCommitted: true,
+        transactionRolledBack: false,
+        proposedMutationCount: params.plan.actions.length + (params.reminderPolicies?.length ?? 0),
+        committedMutationCount:
+          result.items.length + result.policies.length + result.policyReminderIds.length,
+        partialMutationDetected: false,
       };
     }
     if (result.status === "already_committed") {
@@ -266,6 +320,12 @@ export async function executeActionPlanForMessage(
         finalAction: "already_committed",
         validatorWarnings: validation.warnings,
         savedItemIds: [],
+        transactionStarted: true,
+        transactionCommitted: true,
+        transactionRolledBack: false,
+        proposedMutationCount: params.plan.actions.length + (params.reminderPolicies?.length ?? 0),
+        committedMutationCount: 0,
+        partialMutationDetected: false,
       };
     }
   }
@@ -277,6 +337,12 @@ export async function executeActionPlanForMessage(
     finalAction: "presented_pending_action_plan",
     validatorWarnings: validation.warnings,
     savedItemIds: [],
+    transactionStarted: false,
+    transactionCommitted: false,
+    transactionRolledBack: false,
+    proposedMutationCount: params.plan.actions.length + (params.reminderPolicies?.length ?? 0),
+    committedMutationCount: 0,
+    partialMutationDetected: false,
   };
 }
 
@@ -309,7 +375,10 @@ async function answerStatusQuery(ctx: BotContext, decision: AssistantDecision) {
 
 async function saveMemoryAndConfirm(ctx: BotContext, decision: AssistantDecision) {
   const owner = requireOwner(ctx);
-  const candidates: ActionPlan["memoryCandidates"] = [...decision.memoryFacts, ...decision.correctionRules].map((fact) => ({
+  const candidates: ActionPlan["memoryCandidates"] = [
+    ...decision.memoryFacts,
+    ...decision.correctionRules,
+  ].map((fact) => ({
     category: fact.category === "meeting_pattern" ? "meeting_pattern" : "preference",
     content: fact.content,
     searchTags: fact.searchTags ?? [],

@@ -491,3 +491,45 @@ npm run build -> passed
 
 The owner acceptance step was completed in production: `Готово` stopped the circle interval chain.
 Only Vercel CLI/connector scope re-authentication remains; GitHub auto-deploy is working.
+
+### Turn: V2.4.2 transactional reminder repair implemented locally
+
+User report:
+
+```text
+Drik snooze shifted the whole interval grid and produced near-window duplicates.
+An expired interval task generated a midnight post-event menu.
+Central Park partially saved records after the bot claimed validation failure.
+Open-ended Drik reminders became an ordinary task.
+Tomorrow reminders appeared under long-term.
+```
+
+Implemented:
+
+```text
+distributed runner lease and reconciler-before-claim order
+policy-start anchor grid with separate one-off snooze
+strict end-window expiration and no interval post-event inheritance
+one-transaction ActionPlan, item, policy, reminder and occurrence commit
+policy validation before mutation plus transaction audit fields
+Central Park and open-ended Drik semantic normalization
+active/soon/distant dashboard classification
+/versiondebug and /admin_repair_v242 preview|apply
+V2.4.2 schema migration and regression tests
+```
+
+Validation:
+
+```text
+npm test -> 34 files, 105 tests passed
+npm run lint -> passed
+npm run build -> passed
+migration DDL applied idempotently to production Neon
+```
+
+Next step:
+
+```text
+Commit and push main, wait for Vercel auto-deploy, then verify health, webhook, AI, scheduler lease,
+repair preview/apply and exact Central Park/Drik production behavior.
+```

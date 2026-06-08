@@ -3,7 +3,11 @@ import { DateTime } from "luxon";
 
 import { renderScheduleViewTool, undoLastActionTool } from "@/agent/jarvisTools";
 import { confirmPendingActionInDb, cancelPendingAction } from "@/db/queries/pendingActions";
-import { cancelPlannerItem, getPlannerItemById, markPlannerItemCompleted } from "@/db/queries/items";
+import {
+  cancelPlannerItem,
+  getPlannerItemById,
+  markPlannerItemCompleted,
+} from "@/db/queries/items";
 import { deleteMemoryForUser } from "@/db/queries/memories";
 import {
   ackReminderForToday,
@@ -15,10 +19,7 @@ import { endOfLocalDay, startOfLocalDay } from "@/domain/dateTime";
 import { syncPlannerItemToCalendar } from "@/integrations/calendar";
 import { cancelStoredActionPlan, commitStoredActionPlan } from "@/services/actionPlanCommit";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
-import {
-  cancelActivePlanReset,
-  executeActivePlanReset,
-} from "@/services/activePlanReset";
+import { cancelActivePlanReset, executeActivePlanReset } from "@/services/activePlanReset";
 import { UserFacingError } from "@/lib/errors";
 import {
   createReminderPolicyIfMissing,
@@ -40,10 +41,7 @@ import {
   cleanupTransientMessages,
   registerBotMessage,
 } from "@/telegram/messageLifecycle";
-import {
-  refreshDashboardAfterMutation,
-  renderReminderPolicyList,
-} from "@/telegram/liveDashboard";
+import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -94,10 +92,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
     if (result.status === "created") {
       const sync = await syncPlannerItemToCalendar(result.item);
-      const syncLine =
-        sync.status === "synced"
-          ? "\nКалендарь: синхронизировано."
-          : "";
+      const syncLine = sync.status === "synced" ? "\nКалендарь: синхронизировано." : "";
 
       await ctx.reply(`${formatCreatedItem(result.item, result.reminders.length)}${syncLine}`, {
         reply_markup: result.item.kind === "event" ? afterEventKeyboard(result.item.id) : undefined,
@@ -162,7 +157,9 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^plan:edit:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Пришли исправленную формулировку одним сообщением. Старый план не меняю автоматически.");
+    await ctx.reply(
+      "Пришли исправленную формулировку одним сообщением. Старый план не меняю автоматически.",
+    );
   });
 
   bot.callbackQuery(/^reset:confirm:(.+)$/, async (ctx) => {
@@ -265,7 +262,9 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^manage:reschedule:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Напиши новое время для этой задачи одним сообщением. Например: перенеси на завтра 11:30.");
+    await ctx.reply(
+      "Напиши новое время для этой задачи одним сообщением. Например: перенеси на завтра 11:30.",
+    );
   });
 
   bot.callbackQuery(/^manage:edit:(.+)$/, async (ctx) => {
@@ -300,12 +299,16 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery("manage:bulk_time", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Напиши, каким задачам поставить время. Например: Зумы РГ в 12:00, созвон НХЛ в 16:30.");
+    await ctx.reply(
+      "Напиши, каким задачам поставить время. Например: Зумы РГ в 12:00, созвон НХЛ в 16:30.",
+    );
   });
 
   bot.callbackQuery("manage:bulk_reminder", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Напиши, по каким задачам и когда напомнить. Например: напомни про рилзы ЧМ через 2 часа.");
+    await ctx.reply(
+      "Напиши, по каким задачам и когда напомнить. Например: напомни про рилзы ЧМ через 2 часа.",
+    );
   });
 
   bot.callbackQuery(/^reminder:ack:(.+)$/, async (ctx) => {
@@ -319,10 +322,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       dayEnd: endOfLocalDay(now, owner.timezone),
     });
     await acknowledgePolicyReminder(ctx.match[1]);
-    if (
-      policyRow?.policy.itemId &&
-      policyRow.policy.metadata?.stopOnItemComplete === true
-    ) {
+    if (policyRow?.policy.itemId && policyRow.policy.metadata?.stopOnItemComplete === true) {
       const item = await markPlannerItemCompleted(owner.id, policyRow.policy.itemId);
       if (item) {
         await cancelItemReminders(owner.id, item.id);
@@ -344,9 +344,17 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery(/^reminder:snooze:([^:]+):(\d+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const minutes = Number(ctx.match[2]);
-    await snoozeReminder({ userId: owner.id, reminderId: ctx.match[1], minutes });
-    await ctx.answerCallbackQuery("Отложил");
-    await ctx.reply(`Ок, напомню через ${minutes} минут.`);
+    const snoozed = await snoozeReminder({
+      userId: owner.id,
+      reminderId: ctx.match[1],
+      minutes,
+    });
+    await ctx.answerCallbackQuery(snoozed ? "Отложил" : "Окно уже закончилось");
+    await ctx.reply(
+      snoozed
+        ? `Ок, напомню через ${minutes} минут. Основная сетка останется прежней.`
+        : "Не откладываю: это вышло бы за пределы окна напоминаний.",
+    );
     await refreshAfterCallback(ctx);
   });
 
@@ -359,10 +367,18 @@ export function registerCallbacks(bot: Bot<BotContext>) {
         : nowLocal.plus({ days: 1 }).set({ hour: 9, minute: 0, second: 0, millisecond: 0 });
     const future = target > nowLocal ? target : target.plus({ days: 1 });
     const minutes = Math.max(1, Math.ceil(future.diff(nowLocal, "minutes").minutes));
-    await snoozeReminder({ userId: owner.id, reminderId: ctx.match[2], minutes });
-    await ctx.answerCallbackQuery("Отложил");
+    const snoozed = await snoozeReminder({
+      userId: owner.id,
+      reminderId: ctx.match[2],
+      minutes,
+    });
+    await ctx.answerCallbackQuery(snoozed ? "Отложил" : "Окно уже закончилось");
     await ctx.reply(
-      ctx.match[1] === "evening" ? "Напомню вечером." : "Перенёс напоминание на завтра утром.",
+      snoozed
+        ? ctx.match[1] === "evening"
+          ? "Напомню вечером."
+          : "Перенёс напоминание на завтра утром."
+        : "Не откладываю: это вышло бы за пределы окна напоминаний.",
     );
     await refreshAfterCallback(ctx);
   });
@@ -439,13 +455,17 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     if (item) await cancelItemReminders(owner.id, item.id);
     if (item) await stopPoliciesForItem(owner.id, item.id);
     await ctx.answerCallbackQuery(item ? "Отмечено" : "Не найдено");
-    await ctx.reply(item ? `Ок, отмечаю как не состоялось: ${item.title}` : "Не нашёл это tentative-событие.");
+    await ctx.reply(
+      item ? `Ок, отмечаю как не состоялось: ${item.title}` : "Не нашёл это tentative-событие.",
+    );
     await refreshAfterCallback(ctx, item?.id);
   });
 
   bot.callbackQuery(/^tentative:reschedule:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("На когда перенести? Напиши новой фразой, например: перенеси этот созвон на завтра 12:30.");
+    await ctx.reply(
+      "На когда перенести? Напиши новой фразой, например: перенеси этот созвон на завтра 12:30.",
+    );
   });
 
   bot.callbackQuery(/^tentative:notes:(.+)$/, async (ctx) => {
@@ -562,46 +582,51 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     });
   });
 
-  bot.callbackQuery(/^policy_menu:(root|once|before|interval|schedule|until|quiet|category|custom):(.+)$/, async (ctx) => {
-    const section = ctx.match[1];
-    const itemId = ctx.match[2];
-    await ctx.answerCallbackQuery();
-    if (section === "root") {
-      await ctx.reply("Как напоминать?", { reply_markup: reminderPolicyMenuKeyboard(itemId) });
-      return;
-    }
-    if (section === "once") {
-      await ctx.reply("Когда напомнить один раз?", {
-        reply_markup: oneTimeReminderMenuKeyboard(itemId),
-      });
-      return;
-    }
-    if (section === "before") {
-      await ctx.reply("За сколько до события?", {
-        reply_markup: beforeEventReminderMenuKeyboard(itemId),
-      });
-      return;
-    }
-    if (section === "interval") {
-      await ctx.reply("Какой интервал?", {
-        reply_markup: intervalReminderMenuKeyboard(itemId),
-      });
-      return;
-    }
-    if (section === "schedule") {
-      await ctx.reply("Какое расписание?", {
-        reply_markup: scheduleReminderMenuKeyboard(itemId),
-      });
-      return;
-    }
-    const prompts = {
-      until: "Напиши интервал и границу: например, каждые 30 минут до 18:00, пока не отмечу.",
-      quiet: "Напиши правило: не пиши ночью / можно ночью / только утром / только в рабочее время.",
-      category: "Напиши категорию: content, meeting, training, health, car, home, finance, documents, people или project.",
-      custom: "Опиши своё правило одним сообщением. OpenAI разберёт его в typed reminder policy.",
-    } as const;
-    await ctx.reply(prompts[section as keyof typeof prompts]);
-  });
+  bot.callbackQuery(
+    /^policy_menu:(root|once|before|interval|schedule|until|quiet|category|custom):(.+)$/,
+    async (ctx) => {
+      const section = ctx.match[1];
+      const itemId = ctx.match[2];
+      await ctx.answerCallbackQuery();
+      if (section === "root") {
+        await ctx.reply("Как напоминать?", { reply_markup: reminderPolicyMenuKeyboard(itemId) });
+        return;
+      }
+      if (section === "once") {
+        await ctx.reply("Когда напомнить один раз?", {
+          reply_markup: oneTimeReminderMenuKeyboard(itemId),
+        });
+        return;
+      }
+      if (section === "before") {
+        await ctx.reply("За сколько до события?", {
+          reply_markup: beforeEventReminderMenuKeyboard(itemId),
+        });
+        return;
+      }
+      if (section === "interval") {
+        await ctx.reply("Какой интервал?", {
+          reply_markup: intervalReminderMenuKeyboard(itemId),
+        });
+        return;
+      }
+      if (section === "schedule") {
+        await ctx.reply("Какое расписание?", {
+          reply_markup: scheduleReminderMenuKeyboard(itemId),
+        });
+        return;
+      }
+      const prompts = {
+        until: "Напиши интервал и границу: например, каждые 30 минут до 18:00, пока не отмечу.",
+        quiet:
+          "Напиши правило: не пиши ночью / можно ночью / только утром / только в рабочее время.",
+        category:
+          "Напиши категорию: content, meeting, training, health, car, home, finance, documents, people или project.",
+        custom: "Опиши своё правило одним сообщением. OpenAI разберёт его в typed reminder policy.",
+      } as const;
+      await ctx.reply(prompts[section as keyof typeof prompts]);
+    },
+  );
 
   bot.callbackQuery(/^policy_once:(.+):(\d+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
@@ -737,7 +762,7 @@ async function createQuickPolicy(params: {
     userId: params.userId,
     itemId: item.id,
     title: item.title,
-    category: params.policyType === "before_event" ? "pre_event" : item.category ?? "today_focus",
+    category: params.policyType === "before_event" ? "pre_event" : (item.category ?? "today_focus"),
     policyType: params.policyType,
     timezone: item.timezone || params.timezone,
     startsAt: params.fireAt,

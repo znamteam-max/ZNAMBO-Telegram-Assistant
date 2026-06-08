@@ -36,6 +36,13 @@
       "when": 1780905600000,
       "tag": "0004_reminder_reliability_repair",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780992000000,
+      "tag": "0005_transactional_reminder_semantics",
+      "breakpoints": true
     }
   ]
 }

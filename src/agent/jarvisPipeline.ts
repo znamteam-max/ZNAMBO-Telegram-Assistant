@@ -6,11 +6,7 @@ import { requireOwner } from "@/bot/context";
 import { executeActionPlanForMessage } from "@/bot/messagePipeline";
 import { replyAndRecord } from "@/bot/reply";
 import { taskManagementKeyboard } from "@/bot/keyboards";
-import {
-  MandatoryAiError,
-  proposeAgentExecution,
-  type AiCallTelemetry,
-} from "@/ai/agentExecution";
+import { MandatoryAiError, proposeAgentExecution, type AiCallTelemetry } from "@/ai/agentExecution";
 import type { AgentExecution } from "@/ai/schemas/agentExecution";
 import { storePlanMemoryFacts } from "@/services/memory";
 import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
@@ -20,10 +16,7 @@ import { bindContextualCompletionTarget } from "@/services/contextualAgentBindin
 import { listManageableItems } from "@/db/queries/items";
 import { listItemsByIds } from "@/db/queries/taskViewStates";
 import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
-import {
-  refreshDashboardAfterMutation,
-  renderReminderPolicyList,
-} from "@/telegram/liveDashboard";
+import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
 import { detectHardManagementIntent } from "./hardManagementIntent";
@@ -68,6 +61,14 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     finalAction: "started",
     createdItemIds: [],
     updatedItemIds: [],
+    createdPolicyIds: [],
+    createdReminderIds: [],
+    transactionStarted: false,
+    transactionCommitted: false,
+    transactionRolledBack: false,
+    proposedMutationCount: 0,
+    committedMutationCount: 0,
+    partialMutationDetected: false,
     errorCode: null,
     safeErrorMessage: null,
   };
@@ -106,6 +107,10 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       text,
       latestFollowupItemId: jarvisContext.latestFollowupItemId,
     });
+    trace.proposedMutationCount =
+      (bound.execution.actionPlan?.actions.length ?? 0) +
+      bound.execution.itemUpdates.length +
+      bound.execution.reminderPolicies.length;
     const executionResult = await executeAgentProposal({
       ctx,
       execution: bound.execution,
@@ -117,10 +122,15 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     trace.toolCallsExecuted = executionResult.toolCallsExecuted;
     trace.createdItemIds = executionResult.createdItemIds;
     trace.updatedItemIds = executionResult.updatedItemIds;
-    trace.validationWarnings = [
-      ...bound.warnings,
-      ...executionResult.validationWarnings,
-    ];
+    trace.createdPolicyIds = executionResult.createdPolicyIds;
+    trace.createdReminderIds = executionResult.createdReminderIds;
+    trace.transactionStarted = executionResult.transactionStarted;
+    trace.transactionCommitted = executionResult.transactionCommitted;
+    trace.transactionRolledBack = executionResult.transactionRolledBack;
+    trace.proposedMutationCount = executionResult.proposedMutationCount;
+    trace.committedMutationCount = executionResult.committedMutationCount;
+    trace.partialMutationDetected = executionResult.partialMutationDetected;
+    trace.validationWarnings = [...bound.warnings, ...executionResult.validationWarnings];
     trace.finalAction = executionResult.finalAction;
     if (executionResult.mutationOccurred) {
       await refreshDashboardBestEffort(ctx, timezone);
@@ -133,6 +143,13 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       return;
     }
     trace.finalAction = "agent_execution_failed_closed";
+    if (Number(trace.proposedMutationCount) > 0) {
+      trace.transactionStarted = true;
+      trace.transactionCommitted = false;
+      trace.transactionRolledBack = true;
+      trace.committedMutationCount = 0;
+      trace.partialMutationDetected = false;
+    }
     trace.errorCode = "execution";
     trace.safeErrorMessage = "Agent tool execution failed safely.";
     logger.warn("Mandatory agent execution failed closed", {
@@ -172,9 +189,17 @@ async function executeAgentProposal(params: {
     toolCallsExecuted: [] as string[],
     createdItemIds: [] as string[],
     updatedItemIds: [] as string[],
+    createdPolicyIds: [] as string[],
+    createdReminderIds: [] as string[],
     validationWarnings: [] as string[],
     finalAction: "agent_replied",
     mutationOccurred: false,
+    transactionStarted: false,
+    transactionCommitted: false,
+    transactionRolledBack: false,
+    proposedMutationCount: 0,
+    committedMutationCount: 0,
+    partialMutationDetected: false,
   };
 
   if (params.execution.actionPlan) {
@@ -193,15 +218,30 @@ async function executeAgentProposal(params: {
         activeContext: params.activeContext,
         plan: deduped.plan,
         forceCommit: false,
+        reminderPolicies: params.execution.reminderPolicies,
       });
       result.createdItemIds = actionResult.savedItemIds;
-      result.mutationOccurred ||= actionResult.savedItemIds.length > 0;
+      result.createdPolicyIds = actionResult.createdPolicyIds ?? [];
+      result.createdReminderIds = actionResult.createdReminderIds ?? [];
+      result.transactionStarted = actionResult.transactionStarted ?? false;
+      result.transactionCommitted = actionResult.transactionCommitted ?? false;
+      result.transactionRolledBack = actionResult.transactionRolledBack ?? false;
+      result.proposedMutationCount = actionResult.proposedMutationCount ?? 0;
+      result.committedMutationCount = actionResult.committedMutationCount ?? 0;
+      result.partialMutationDetected = actionResult.partialMutationDetected ?? false;
+      result.mutationOccurred ||=
+        actionResult.savedItemIds.length > 0 || result.createdPolicyIds.length > 0;
       result.validationWarnings.push(...actionResult.validatorWarnings);
       result.finalAction = actionResult.finalAction;
-    } else {
+      if (result.createdPolicyIds.length) {
+        result.toolCallsExecuted.push(
+          ...new Set(params.execution.reminderPolicies.map((policy) => policy.operation)),
+        );
+      }
+    } else if (!params.execution.reminderPolicies.length) {
       result.finalAction = "all_proposed_actions_already_exist";
     }
-    if (params.execution.reminderPolicies.length) {
+    if (!deduped.plan.actions.length && params.execution.reminderPolicies.length) {
       const policyResult = await executePolicyProposals({
         execution: params.execution,
         userId: owner.id,
@@ -323,10 +363,7 @@ async function executeAgentProposal(params: {
 
   result.toolCallsExecuted.push(params.execution.intent);
   result.finalAction = params.execution.intent;
-  const reply = [
-    params.execution.reply,
-    ...params.execution.clarificationQuestions,
-  ]
+  const reply = [params.execution.reply, ...params.execution.clarificationQuestions]
     .filter(Boolean)
     .join("\n");
   await replyAndRecord(params.ctx, reply || "Уточни, пожалуйста, что именно нужно сделать.");
@@ -356,16 +393,28 @@ async function executeViewOrManagementTool(
   },
 ): Promise<{ name: string; result: JarvisToolResult } | null> {
   if (execution.viewScope === "full") {
-    return { name: "render_full", result: await renderScheduleViewTool({ ...base, scope: "full" }) };
+    return {
+      name: "render_full",
+      result: await renderScheduleViewTool({ ...base, scope: "full" }),
+    };
   }
   if (execution.viewScope === "today") {
-    return { name: "render_today", result: await renderScheduleViewTool({ ...base, scope: "today" }) };
+    return {
+      name: "render_today",
+      result: await renderScheduleViewTool({ ...base, scope: "today" }),
+    };
   }
   if (execution.viewScope === "tomorrow") {
-    return { name: "render_tomorrow", result: await renderScheduleViewTool({ ...base, scope: "tomorrow" }) };
+    return {
+      name: "render_tomorrow",
+      result: await renderScheduleViewTool({ ...base, scope: "tomorrow" }),
+    };
   }
   if (execution.viewScope === "week") {
-    return { name: "render_week", result: await renderScheduleViewTool({ ...base, scope: "week" }) };
+    return {
+      name: "render_week",
+      result: await renderScheduleViewTool({ ...base, scope: "week" }),
+    };
   }
   if (execution.viewScope === "tasks") {
     return { name: "render_tasks", result: await renderTaskViewTool(base) };

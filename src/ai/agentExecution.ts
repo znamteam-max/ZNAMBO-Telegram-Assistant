@@ -145,6 +145,7 @@ export const agentExecutionTool = {
             "minutesBefore",
             "windowEndInclusive",
             "catchUpMode",
+            "onWindowEnd",
             "quietHoursStart",
             "quietHoursEnd",
             "allowDuringQuietHours",
@@ -217,6 +218,10 @@ export const agentExecutionTool = {
             catchUpMode: {
               type: "string",
               enum: ["none", "latest_only", "one_immediate_then_resume"],
+            },
+            onWindowEnd: {
+              type: "string",
+              enum: ["expire_silently", "final_check", "carry_to_next_day"],
             },
             quietHoursStart: { type: ["string", "null"] },
             quietHoursEnd: { type: ["string", "null"] },
@@ -380,7 +385,7 @@ Reminder policy rules:
 - Для "за час до каждого события" используй create_before_event_policy для реальных item IDs, minutesBefore=60. Не создавай generic task.
 - Для меню реакции после события используй create_post_event_reaction_policy, policyType=post_event_menu для каждого item ID.
 - Для "не пиши ночью" используй quietHoursStart=00:00, quietHoursEnd=07:30. Для "можно ночью" ставь allowDuringQuietHours=true.
-- Для interval policy по умолчанию catchUpMode=one_immediate_then_resume и windowEndInclusive=true.
+- Для interval policy по умолчанию catchUpMode=one_immediate_then_resume, windowEndInclusive=true и onWindowEnd=expire_silently.
 - Для запросов показать живой план, напоминания или дальние записи используй viewScope=dashboard/reminders/longterm.
 
 Контекст с реальными item IDs и последним task view:
@@ -468,7 +473,10 @@ export function classifyOpenAiError(error: unknown) {
     return { code: "authentication", safeMessage: "OpenAI authentication failed." };
   }
   if (error instanceof OpenAI.PermissionDeniedError) {
-    return { code: "network", safeMessage: "OpenAI is unavailable from the current region or project." };
+    return {
+      code: "network",
+      safeMessage: "OpenAI is unavailable from the current region or project.",
+    };
   }
   if (error instanceof OpenAI.RateLimitError) {
     return { code: "rate_limit", safeMessage: "OpenAI rate limit was reached." };

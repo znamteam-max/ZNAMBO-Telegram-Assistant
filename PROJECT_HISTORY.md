@@ -1,6 +1,6 @@
 # История проекта ZNAMBO Telegram Assistant
 
-Обновлено: 2026-06-07, Europe/Moscow.
+Обновлено: 2026-06-09, Europe/Moscow.
 
 Этот файл фиксирует историю создания и текущего состояния проекта без значений секретов. Все токены, пароли, ключи API и строки подключения намеренно не записаны.
 
@@ -1740,3 +1740,55 @@ Remaining limitation:
 ```text
 Vercel project scope requires CLI/connector re-authentication; GitHub auto-deploy remains operational
 ```
+
+### 13.32. V2.4.2 Transactional Reminder Semantics
+
+Production incident:
+
+```text
+Snooze shifted the Drik interval grid from :00/:30 to :14/:44.
+Near the end of the window duplicate deliveries appeared.
+An expired interval task produced a post-event menu after midnight.
+The Central Park request partially mutated production despite a validation failure.
+An open-ended Drik request became a generic task without a working policy.
+Tomorrow's one-day reminder was classified as long-term.
+```
+
+Implemented:
+
+```text
+distributed 55-second reminder runner lease in assistant.runtime_locks
+reconciler-before-claim runner order
+anchor-grid-v2 interval calculation based on policy.startsAt
+one-off snooze reminders that do not move the policy grid
+strict inclusive end-window handling with expire_silently default
+atomic ActionPlan, planner item, policy, initial reminder and occurrence commit
+pre-commit semantic validation for reminder policies
+transaction telemetry for proposed and committed mutations
+exact Central Park normalization to two events and four daily policies
+open-ended Drik normalization to one task and one 08:00-22:00 nag_until_ack policy
+dashboard sections for active, soon and distant reminders
+owner-only /admin_repair_v242 preview|apply
+/versiondebug and safe scheduler/version fields in /api/health
+```
+
+Database rollout:
+
+```text
+drizzle/0005_transactional_reminder_semantics.sql applied idempotently
+assistant.reminder_policies.on_window_end exists
+assistant.runtime_locks exists
+reminder occurrence and lock indexes exist
+Neon pooler disconnected during the broad diagnostic read after DDL; the DDL notices confirmed all
+objects were already present on retry, and runtime verification will confirm them through V2.4.2
+```
+
+Local validation:
+
+```text
+npm test -> 34 files passed, 105 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+Production deployment and acceptance are pending the GitHub/Vercel rollout of this working tree.

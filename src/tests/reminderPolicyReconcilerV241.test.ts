@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getPolicySlotState: vi.fn(),
   getPendingReminderForPolicy: vi.fn(),
   updateReminderPolicy: vi.fn(),
+  expirePolicyAndCancelFutureReminders: vi.fn(),
   restorePolicyReminder: vi.fn(),
   materializeNextPolicyReminder: vi.fn(),
 }));
@@ -14,6 +15,7 @@ vi.mock("@/db/queries/reminderPolicies", () => ({
   getPolicySlotState: mocks.getPolicySlotState,
   getPendingReminderForPolicy: mocks.getPendingReminderForPolicy,
   updateReminderPolicy: mocks.updateReminderPolicy,
+  expirePolicyAndCancelFutureReminders: mocks.expirePolicyAndCancelFutureReminders,
 }));
 vi.mock("@/db/queries/reminders", () => ({
   restorePolicyReminder: mocks.restorePolicyReminder,
@@ -34,15 +36,13 @@ describe("V2.4.1 policy reconciler", () => {
   });
 
   it("materializes one missing pending reminder and stays idempotent", async () => {
-    mocks.getPolicySlotState
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        occurrence: {
-          policyId: "policy-id",
-          scheduledFor: new Date("2026-06-08T06:30:00.000Z"),
-        },
-        reminder: { id: "reminder-id", status: "pending" },
-      });
+    mocks.getPolicySlotState.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      occurrence: {
+        policyId: "policy-id",
+        scheduledFor: new Date("2026-06-08T06:30:00.000Z"),
+      },
+      reminder: { id: "reminder-id", status: "pending" },
+    });
 
     const first = await reconcileActiveReminderPolicies({
       now: new Date("2026-06-08T06:20:00.000Z"),
@@ -70,9 +70,32 @@ describe("V2.4.1 policy reconciler", () => {
     expect(result.materialized).toBe(0);
     expect(mocks.materializeNextPolicyReminder).not.toHaveBeenCalled();
   });
+
+  it("expires an ended interval before considering pending reminders", async () => {
+    mocks.listActivePoliciesForReconciliation.mockResolvedValue([
+      policy({
+        endsAt: new Date("2026-06-09T11:00:00.000Z"),
+        onWindowEnd: "expire_silently",
+      }),
+    ]);
+    mocks.getPendingReminderForPolicy.mockResolvedValue({
+      id: "post-window-reminder",
+      status: "pending",
+      scheduledAt: new Date("2026-06-10T00:20:00.000Z"),
+    });
+
+    const result = await reconcileActiveReminderPolicies({
+      now: new Date("2026-06-10T00:20:00.000Z"),
+    });
+
+    expect(result.expired).toBe(1);
+    expect(mocks.expirePolicyAndCancelFutureReminders).toHaveBeenCalledOnce();
+    expect(mocks.getPendingReminderForPolicy).not.toHaveBeenCalled();
+    expect(mocks.materializeNextPolicyReminder).not.toHaveBeenCalled();
+  });
 });
 
-function policy() {
+function policy(overrides: Record<string, unknown> = {}) {
   return {
     id: "policy-id",
     userId: "user-id",
@@ -91,10 +114,12 @@ function policy() {
     maxOccurrences: null,
     windowEndInclusive: true,
     catchUpMode: "one_immediate_then_resume",
+    onWindowEnd: "expire_silently",
     quietHours: null,
     escalationPolicy: null,
     metadata: {},
     createdAt: new Date(),
     updatedAt: new Date(),
+    ...overrides,
   };
 }

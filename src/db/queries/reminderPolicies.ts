@@ -24,6 +24,7 @@ export type CreateReminderPolicyInput = {
   maxOccurrences?: number | null;
   windowEndInclusive?: boolean;
   catchUpMode?: string;
+  onWindowEnd?: string;
   quietHours?: Record<string, unknown> | null;
   metadata?: Record<string, unknown>;
   idempotencyKey: string;
@@ -62,6 +63,7 @@ export async function createReminderPolicyIfMissing(
       maxOccurrences: input.maxOccurrences,
       windowEndInclusive: input.windowEndInclusive ?? true,
       catchUpMode: input.catchUpMode ?? "one_immediate_then_resume",
+      onWindowEnd: input.onWindowEnd ?? "expire_silently",
       quietHours: input.quietHours,
       metadata: { ...(input.metadata ?? {}), idempotencyKey: input.idempotencyKey },
     })
@@ -152,6 +154,7 @@ export async function updateReminderPolicy(params: {
   requireAck?: boolean;
   windowEndInclusive?: boolean;
   catchUpMode?: string;
+  onWindowEnd?: string;
   quietHours?: Record<string, unknown> | null;
   metadata?: Record<string, unknown>;
 }) {
@@ -172,6 +175,7 @@ export async function updateReminderPolicy(params: {
         ? { windowEndInclusive: params.windowEndInclusive }
         : {}),
       ...(params.catchUpMode !== undefined ? { catchUpMode: params.catchUpMode } : {}),
+      ...(params.onWindowEnd !== undefined ? { onWindowEnd: params.onWindowEnd } : {}),
       ...(params.quietHours !== undefined ? { quietHours: params.quietHours } : {}),
       ...(params.metadata
         ? {
@@ -198,6 +202,38 @@ export async function stopPoliciesForItem(userId: string, itemId: string) {
         eq(reminderPolicies.status, "active"),
       ),
     );
+}
+
+export async function expirePolicyAndCancelFutureReminders(params: {
+  policyId: string;
+  userId: string;
+  expiredAt: Date;
+}) {
+  await getDb().transaction(async (tx) => {
+    await tx
+      .update(reminderPolicies)
+      .set({
+        status: "expired",
+        nextFireAt: null,
+        metadata: sql`${reminderPolicies.metadata} || ${JSON.stringify({
+          expiredAt: params.expiredAt.toISOString(),
+          expirationReason: "window_ended",
+        })}::jsonb`,
+        updatedAt: params.expiredAt,
+      })
+      .where(
+        and(eq(reminderPolicies.id, params.policyId), eq(reminderPolicies.userId, params.userId)),
+      );
+    await tx
+      .update(reminders)
+      .set({ status: "cancelled", updatedAt: params.expiredAt })
+      .where(
+        and(
+          eq(reminders.policyId, params.policyId),
+          inArray(reminders.status, ["pending", "claimed"]),
+        ),
+      );
+  });
 }
 
 export async function createPolicyOccurrence(params: {
@@ -243,12 +279,7 @@ export async function getPendingReminderForPolicy(policyId: string) {
   const [row] = await getDb()
     .select()
     .from(reminders)
-    .where(
-      and(
-        eq(reminders.policyId, policyId),
-        inArray(reminders.status, ["pending", "claimed"]),
-      ),
-    )
+    .where(and(eq(reminders.policyId, policyId), inArray(reminders.status, ["pending", "claimed"])))
     .orderBy(asc(reminders.scheduledAt))
     .limit(1);
   return row ?? null;
@@ -281,11 +312,7 @@ export async function markPolicyOccurrenceAcked(reminderId: string, skipped = fa
   const now = new Date();
   await getDb()
     .update(reminderPolicyOccurrences)
-    .set(
-      skipped
-        ? { status: "skipped", skippedAt: now }
-        : { status: "acked", ackedAt: now },
-    )
+    .set(skipped ? { status: "skipped", skippedAt: now } : { status: "acked", ackedAt: now })
     .where(eq(reminderPolicyOccurrences.reminderId, reminderId));
 }
 
@@ -298,10 +325,7 @@ export async function getPolicyForReminder(reminderId: string) {
     })
     .from(reminders)
     .innerJoin(reminderPolicies, eq(reminders.policyId, reminderPolicies.id))
-    .leftJoin(
-      reminderPolicyOccurrences,
-      eq(reminderPolicyOccurrences.reminderId, reminders.id),
-    )
+    .leftJoin(reminderPolicyOccurrences, eq(reminderPolicyOccurrences.reminderId, reminders.id))
     .where(eq(reminders.id, reminderId))
     .limit(1);
   return row ?? null;
@@ -352,9 +376,7 @@ export async function getReminderPolicyHealthStats() {
     from "assistant"."reminder_policies" p
   `);
   return (
-    (rows[0] as
-      | { activePolicyCount: number; policiesMissingNextReminder: number }
-      | undefined) ?? {
+    (rows[0] as { activePolicyCount: number; policiesMissingNextReminder: number } | undefined) ?? {
       activePolicyCount: 0,
       policiesMissingNextReminder: 0,
     }

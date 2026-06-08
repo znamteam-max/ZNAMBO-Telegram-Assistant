@@ -1,4 +1,5 @@
 import { DateTime } from "luxon";
+import { randomUUID } from "node:crypto";
 
 import {
   getPlannerItemByAnyId,
@@ -38,6 +39,7 @@ import {
   recordRunnerFinished,
   recordRunnerStarted,
 } from "@/db/queries/schedulerHealth";
+import { acquireRuntimeLease, releaseRuntimeLease } from "@/db/queries/runtimeLocks";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -55,88 +57,117 @@ export async function runDueReminders(params?: {
   const now = params?.now ?? new Date();
   const limit = params?.limit ?? 50;
   const sender = params?.sender ?? getBot().api;
-  await recordRunnerStarted(now).catch((error) => {
-    logger.warn("Runner start observability failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+  const leaseOwner = randomUUID();
+  const lease = await acquireRuntimeLease({
+    key: "reminder_runner",
+    ownerToken: leaseOwner,
+    now,
+    leaseSeconds: 55,
   });
-  let reconcile = { checked: 0, materialized: 0, advanced: 0, expired: 0 };
+  if (!lease) {
+    return {
+      claimed: 0,
+      sent: 0,
+      failed: 0,
+      skipped: true,
+      reason: "runner_already_active" as const,
+    };
+  }
+
   try {
-    reconcile = await reconcileActiveReminderPolicies({ now, limit: limit * 4 });
-    await recordPolicyReconcile({
-      at: now,
-      checked: reconcile.checked,
-      created: reconcile.materialized,
+    await recordRunnerStarted(now).catch((error) => {
+      logger.warn("Runner start observability failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
-  } catch (error) {
-    logger.warn("Reminder policy reconciliation failed without blocking legacy reminders", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-  const due = await claimDueReminders({ now, limit });
-  const results = { claimed: due.length, sent: 0, failed: 0 };
-
-  for (const reminder of due) {
+    let reconcile = { checked: 0, materialized: 0, advanced: 0, expired: 0 };
     try {
-      const sentMessage = await sendReminder(reminder, sender);
-      await markReminderSent({
-        reminderId: reminder.id,
-        telegramMessageId: sentMessage.message_id,
+      reconcile = await reconcileActiveReminderPolicies({ now, limit: limit * 4 });
+      await recordPolicyReconcile({
+        at: now,
+        checked: reconcile.checked,
+        created: reconcile.materialized,
       });
-      await recordReminderDelivery({
-        reminder,
-        status: "sent",
-        telegramMessageId: sentMessage.message_id,
-      });
-      if (!params?.sender && sentMessage.message_id) {
-        const user = await getUserById(reminder.userId);
-        if (user) {
-          await registerBotMessage({
-            userId: reminder.userId,
-            chatId: user.telegramUserId.toString(),
-            messageId: sentMessage.message_id,
-            purpose: reminder.purpose ?? (isPostEventReminder(reminder) ? "followup" : "reminder"),
-            relatedItemId: reminder.plannerItemId,
-            relatedReminderId: reminder.id,
-          });
-        }
-      }
-      const autoArchivedTest = await archiveTestReminderIfNeeded(reminder);
-      if (!autoArchivedTest) {
-        if (reminder.policyId) {
-          await advancePolicyAfterDelivery(reminder.id, now);
-        } else {
-          await scheduleRepeatUntilAck(reminder, now);
-          await scheduleNextRecurringOccurrence(reminder, now);
-        }
-      }
-      if (!params?.sender) await refreshReminderDashboardBestEffort(reminder, now);
-      results.sent += 1;
     } catch (error) {
-      results.failed += 1;
-      const message = error instanceof Error ? error.message : String(error);
-      await markReminderFailed({
-        reminder,
-        error: message,
-        retryAt: nextRetryAt(reminder, now),
+      logger.warn("Reminder policy reconciliation failed without blocking legacy reminders", {
+        error: error instanceof Error ? error.message : String(error),
       });
-      await recordReminderDelivery({ reminder, status: "failed", error: message });
-      logger.warn("Reminder send failed", { reminderId: reminder.id, error: message });
     }
-  }
+    const due = await claimDueReminders({ now, limit });
+    const results = { claimed: due.length, sent: 0, failed: 0 };
 
-  await scheduleTomorrowDigests(now);
-  await recordRunnerFinished({
-    at: new Date(),
-    claimed: results.claimed,
-    sent: results.sent,
-    failed: results.failed,
-  }).catch((error) => {
-    logger.warn("Runner finish observability failed", {
-      error: error instanceof Error ? error.message : String(error),
+    for (const reminder of due) {
+      try {
+        const sentMessage = await sendReminder(reminder, sender);
+        await markReminderSent({
+          reminderId: reminder.id,
+          telegramMessageId: sentMessage.message_id,
+        });
+        await recordReminderDelivery({
+          reminder,
+          status: "sent",
+          telegramMessageId: sentMessage.message_id,
+        });
+        if (!params?.sender && sentMessage.message_id) {
+          const user = await getUserById(reminder.userId);
+          if (user) {
+            await registerBotMessage({
+              userId: reminder.userId,
+              chatId: user.telegramUserId.toString(),
+              messageId: sentMessage.message_id,
+              purpose:
+                reminder.purpose ?? (isPostEventReminder(reminder) ? "followup" : "reminder"),
+              relatedItemId: reminder.plannerItemId,
+              relatedReminderId: reminder.id,
+            });
+          }
+        }
+        const autoArchivedTest = await archiveTestReminderIfNeeded(reminder);
+        if (!autoArchivedTest) {
+          if (reminder.policyId) {
+            await advancePolicyAfterDelivery(reminder.id, now);
+          } else {
+            await scheduleRepeatUntilAck(reminder, now);
+            await scheduleNextRecurringOccurrence(reminder, now);
+          }
+        }
+        if (!params?.sender) await refreshReminderDashboardBestEffort(reminder, now);
+        results.sent += 1;
+      } catch (error) {
+        results.failed += 1;
+        const message = error instanceof Error ? error.message : String(error);
+        await markReminderFailed({
+          reminder,
+          error: message,
+          retryAt: nextRetryAt(reminder, now),
+        });
+        await recordReminderDelivery({ reminder, status: "failed", error: message });
+        logger.warn("Reminder send failed", { reminderId: reminder.id, error: message });
+      }
+    }
+
+    await scheduleTomorrowDigests(now);
+    await recordRunnerFinished({
+      at: new Date(),
+      claimed: results.claimed,
+      sent: results.sent,
+      failed: results.failed,
+    }).catch((error) => {
+      logger.warn("Runner finish observability failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
-  });
-  return results;
+    return results;
+  } finally {
+    await releaseRuntimeLease({
+      key: "reminder_runner",
+      ownerToken: leaseOwner,
+    }).catch((error) => {
+      logger.warn("Runner lease release failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
 }
 
 async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramSender) {
@@ -144,7 +175,9 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
   if (!user) throw new Error("Reminder user not found");
 
   if (reminder.type === "morning_digest") {
-    const nowLocal = DateTime.fromJSDate(reminder.scheduledAt, { zone: "utc" }).setZone(user.timezone);
+    const nowLocal = DateTime.fromJSDate(reminder.scheduledAt, { zone: "utc" }).setZone(
+      user.timezone,
+    );
     const from = nowLocal.startOf("day").toUTC().toJSDate();
     const to = nowLocal.endOf("day").toUTC().toJSDate();
     const yesterdayFrom = nowLocal.minus({ days: 1 }).startOf("day").toUTC().toJSDate();
@@ -174,7 +207,9 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
   }
 
   if (reminder.type === "evening_checkin") {
-    const nowLocal = DateTime.fromJSDate(reminder.scheduledAt, { zone: "utc" }).setZone(user.timezone);
+    const nowLocal = DateTime.fromJSDate(reminder.scheduledAt, { zone: "utc" }).setZone(
+      user.timezone,
+    );
     const from = nowLocal.startOf("day").toUTC().toJSDate();
     const to = nowLocal.endOf("day").toUTC().toJSDate();
     const tasks = await listEveningReviewItems({ userId: user.id, from, to, limit: 80 });
@@ -203,7 +238,10 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
   });
 }
 
-function buildReminderKeyboard(reminder: ClaimedReminder, item: Awaited<ReturnType<typeof getPlannerItemByAnyId>>) {
+function buildReminderKeyboard(
+  reminder: ClaimedReminder,
+  item: Awaited<ReturnType<typeof getPlannerItemByAnyId>>,
+) {
   if (isPostEventReminder(reminder) && item) {
     return eventReactionKeyboard(item.id, item.kind);
   }

@@ -70,6 +70,7 @@ export async function applyAgentReminderPolicies(params: {
         maxOccurrences: proposal.maxOccurrences,
         windowEndInclusive: proposal.windowEndInclusive,
         catchUpMode: proposal.catchUpMode,
+        onWindowEnd: proposal.onWindowEnd,
         quietHours:
           proposal.quietHoursStart && proposal.quietHoursEnd
             ? {
@@ -109,6 +110,14 @@ export async function materializeNextPolicyReminder(
   const now = options?.now ?? new Date();
   const scheduledAt = fireAt ?? policy.nextFireAt;
   if (!scheduledAt) return null;
+  if (
+    policy.endsAt &&
+    (policy.windowEndInclusive !== false
+      ? scheduledAt > policy.endsAt
+      : scheduledAt >= policy.endsAt)
+  ) {
+    return null;
+  }
   const deliveryAt = await resolveDeliveryAt(policy, options?.deliveryAt ?? scheduledAt);
   if (deliveryAt < now && !options?.catchUp) return null;
   await createPolicyOccurrence({
@@ -155,11 +164,9 @@ export async function advancePolicyAfterDelivery(reminderId: string, deliveredAt
   if (!row) return null;
   await markPolicyOccurrenceDelivered(reminderId, deliveredAt);
   const policy = row.policy;
+  if (row.reminder.purpose === "snooze") return policy;
   const scheduledFor =
-    row.occurrence?.scheduledFor ??
-    row.reminder.scheduledAt ??
-    policy.nextFireAt ??
-    deliveredAt;
+    row.occurrence?.scheduledFor ?? row.reminder.scheduledAt ?? policy.nextFireAt ?? deliveredAt;
   const next = computeNextPolicySlotAfterDelivery({
     policy,
     scheduledFor,
@@ -202,7 +209,9 @@ function resolveTargets(
   items: PlannerItem[],
   byId: Map<string, PlannerItem>,
 ) {
-  const direct = proposal.itemIds.map((id) => byId.get(id)).filter((item): item is PlannerItem => Boolean(item));
+  const direct = proposal.itemIds
+    .map((id) => byId.get(id))
+    .filter((item): item is PlannerItem => Boolean(item));
   if (direct.length) return direct;
   if (!proposal.itemTitle) return [];
   const normalized = normalize(proposal.itemTitle);
@@ -227,10 +236,7 @@ function determineInitialFire(params: {
           .toJSDate()
       : null;
   }
-  if (
-    ["after_event", "post_event_menu"].includes(params.proposal.policyType) &&
-    params.item
-  ) {
+  if (["after_event", "post_event_menu"].includes(params.proposal.policyType) && params.item) {
     return params.item.endAt ?? params.item.startAt ?? params.item.dueAt;
   }
   if (params.startsAt) return params.startsAt;
@@ -239,7 +245,13 @@ function determineInitialFire(params: {
 
 function nextFromRule(rule: string | null, after: Date, timezone: string) {
   const local = DateTime.fromJSDate(after, { zone: "utc" }).setZone(timezone);
-  if (!rule) return local.plus({ days: 1 }).startOf("day").plus({ hours: 9, minutes: 30 }).toUTC().toJSDate();
+  if (!rule)
+    return local
+      .plus({ days: 1 })
+      .startOf("day")
+      .plus({ hours: 9, minutes: 30 })
+      .toUTC()
+      .toJSDate();
   const normalized = rule.toLowerCase();
   if (/every[_ ]?2[_ ]?weeks|biweekly|2 weeks/.test(normalized)) {
     return local.plus({ weeks: 2 }).toUTC().toJSDate();
@@ -264,6 +276,9 @@ async function resolveDeliveryAt(policy: ReminderPolicy, scheduledAt: Date) {
 }
 
 function finalStatusAfterDelivery(policy: ReminderPolicy) {
+  if (["interval_window", "nag_until_ack"].includes(policy.policyType)) {
+    return policy.onWindowEnd === "carry_to_next_day" ? "active" : "expired";
+  }
   return policy.requireAck ? "active" : "completed";
 }
 
@@ -279,7 +294,8 @@ function purposeForPolicy(policy: ReminderPolicy) {
   if (policy.policyType === "before_event") return "pre_event";
   if (["after_event", "post_event_menu"].includes(policy.policyType)) return "post_event_menu";
   if (policy.policyType === "interval_window") return "interval_nag";
-  if (policy.policyType === "recurring" || policy.policyType === "long_term") return "recurring_check";
+  if (policy.policyType === "recurring" || policy.policyType === "long_term")
+    return "recurring_check";
   return "reminder";
 }
 
@@ -304,5 +320,8 @@ function localDate(value: string | null, timezone: string) {
 }
 
 function normalize(value: string) {
-  return value.toLocaleLowerCase("ru").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return value
+    .toLocaleLowerCase("ru")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
 }

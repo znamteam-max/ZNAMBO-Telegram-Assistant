@@ -56,21 +56,52 @@ export async function renderLiveDashboard(params: {
     .filter((item) => item.status === "active" || item.status === "completed")
     .sort((a, b) => itemTime(a) - itemTime(b))
     .slice(0, 7);
+  const todayEnd = local.endOf("day").toUTC().toJSDate();
+  const soonEnd = local.plus({ hours: 48 }).toUTC().toJSDate();
   const nagging = policies
-    .filter((policy) => ["interval_window", "nag_until_ack"].includes(policy.policyType))
+    .filter(
+      (policy) =>
+        ["interval_window", "nag_until_ack"].includes(policy.policyType) &&
+        (policy.startsAt ?? policy.nextFireAt ?? now) <= todayEnd &&
+        (!policy.endsAt || policy.endsAt >= now),
+    )
     .slice(0, 5);
-  const distant = longTerm.slice(0, 4);
+  const naggingIds = new Set(nagging.map((policy) => policy.id));
+  const soon = policies
+    .filter((policy) => {
+      if (naggingIds.has(policy.id)) return false;
+      const next = policy.startsAt ?? policy.nextFireAt;
+      return Boolean(next && next > todayEnd && next <= soonEnd);
+    })
+    .slice(0, 5);
+  const soonIds = new Set(soon.map((policy) => policy.id));
+  const distant = longTerm
+    .filter((policy) => {
+      if (naggingIds.has(policy.id) || soonIds.has(policy.id)) return false;
+      return Boolean(
+        (policy.nextFireAt && policy.nextFireAt > soonEnd) ||
+        policy.category === "long_term" ||
+        policy.category.startsWith("recurring_"),
+      );
+    })
+    .slice(0, 4);
 
   const lines = [`JARVIS · Сегодня, ${local.toFormat("d LLLL")}`];
   lines.push("", "Сейчас / ближайшее:");
   if (todayItems.length) {
-    lines.push(...todayItems.map((item, index) => formatDashboardItem(item, index + 1, params.timezone)));
+    lines.push(
+      ...todayItems.map((item, index) => formatDashboardItem(item, index + 1, params.timezone)),
+    );
   } else {
     lines.push("План на сегодня пока пуст.");
   }
   if (nagging.length) {
     lines.push("", "Активные напоминания:");
     lines.push(...nagging.map((policy) => `• ${formatPolicy(policy, params.timezone)}`));
+  }
+  if (soon.length) {
+    lines.push("", "Скоро:");
+    lines.push(...soon.map((policy) => `• ${formatPolicy(policy, params.timezone)}`));
   }
   if (distant.length) {
     lines.push("", "Дальние:");
@@ -102,7 +133,8 @@ export async function renderReminderPolicyList(params: {
   const legacy = params.longTermOnly
     ? legacyAll.filter(
         (item) =>
-          item.visibility === "long_term" || /(зеркал|жкх|регулярное\s+напоминание)/i.test(item.title),
+          item.visibility === "long_term" ||
+          /(зеркал|жкх|регулярное\s+напоминание)/i.test(item.title),
       )
     : legacyAll;
   const title = params.longTermOnly ? "Дальние и регулярные напоминания" : "Активные напоминания";
@@ -143,9 +175,14 @@ export async function sendOrRefreshLiveDashboard(params: {
       await markDashboardStatus(previous.id, deleted ? "deleted" : "failed_to_delete");
       if (!deleted && api.editMessageText && typeof previous.payload?.text === "string") {
         await api
-          .editMessageText(params.chatId, previous.messageId, `Устарело\n\n${previous.payload.text}`, {
-            reply_markup: { inline_keyboard: [] },
-          })
+          .editMessageText(
+            params.chatId,
+            previous.messageId,
+            `Устарело\n\n${previous.payload.text}`,
+            {
+              reply_markup: { inline_keyboard: [] },
+            },
+          )
           .catch(() => undefined);
       }
     } catch (error) {
@@ -207,7 +244,9 @@ function formatDashboardItem(item: PlannerItem, index: number, timezone: string)
   if (item.status === "completed") return `${index}. ✅ ${item.title} — завершено`;
   const start = item.startAt ?? item.dueAt;
   const time = start
-    ? DateTime.fromJSDate(start, { zone: "utc" }).setZone(item.timezone || timezone).toFormat("HH:mm")
+    ? DateTime.fromJSDate(start, { zone: "utc" })
+        .setZone(item.timezone || timezone)
+        .toFormat("HH:mm")
     : "без времени";
   const end = item.endAt
     ? DateTime.fromJSDate(item.endAt, { zone: "utc" })

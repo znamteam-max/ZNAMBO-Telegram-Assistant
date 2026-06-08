@@ -100,6 +100,9 @@ export const agentReminderPolicySchema = z.object({
   catchUpMode: z
     .enum(["none", "latest_only", "one_immediate_then_resume"])
     .default("one_immediate_then_resume"),
+  onWindowEnd: z
+    .enum(["expire_silently", "final_check", "carry_to_next_day"])
+    .default("expire_silently"),
   quietHoursStart: z.string().nullable().default(null),
   quietHoursEnd: z.string().nullable().default(null),
   allowDuringQuietHours: z.boolean().default(false),

@@ -1,4 +1,5 @@
 import type { ActionPlan } from "./schemas";
+import type { AgentReminderPolicy } from "./schemas/agentExecution";
 import type { AssistantDecision } from "./schemas/assistantDecision";
 import { isHardManagementText } from "@/agent/hardManagementIntent";
 
@@ -10,7 +11,8 @@ export type PlannerValidationResult = {
 const commandTitlePattern =
   /^(дай|покажи|открой|отредактируй|отредактирую|что\s+у\s+меня)(?:\s|$)/i;
 
-const tentativePattern = /(возможно|возможный|возможная|пока\s+не\s+точно|tentative|под\s+вопросом)/i;
+const tentativePattern =
+  /(возможно|возможный|возможная|пока\s+не\s+точно|tentative|под\s+вопросом)/i;
 const timeWindowPattern = /(утром\s*\/\s*дн[её]м|утром|дн[её]м|в\s+течение\s+дня)/i;
 const noTrainingReportPattern = /(сегодня|вчера).{0,80}без\s+(велик|велосипед|трениров)/i;
 
@@ -72,7 +74,10 @@ export function validatePlannerItemsBeforeSave(params: {
       warnings.push("exact time was assigned even though the user gave only a time window");
     }
 
-    if (/(3[:.]30|03[:.]30).{0,30}(моск|moscow)/i.test(originalLower) && /15:30/.test(`${action.startAtLocal ?? ""}${action.dueAtLocal ?? ""}`)) {
+    if (
+      /(3[:.]30|03[:.]30).{0,30}(моск|moscow)/i.test(originalLower) &&
+      /15:30/.test(`${action.startAtLocal ?? ""}${action.dueAtLocal ?? ""}`)
+    ) {
       warnings.push("03:30 Moscow was converted to 15:30");
     }
   }
@@ -96,6 +101,46 @@ export function buildValidationFailureReply(warnings: string[]): string {
   return "Я остановил сохранение: план выглядит неоднозначно. Лучше уточним, чтобы не создать мусорную запись.";
 }
 
+export function validateReminderPoliciesBeforeSave(params: {
+  plan: ActionPlan;
+  policies: AgentReminderPolicy[];
+  timezone: string;
+}): PlannerValidationResult {
+  const warnings: string[] = [];
+  const actionTitles = new Set(params.plan.actions.map((action) => normalize(action.title)));
+
+  for (const policy of params.policies) {
+    if (
+      ["interval_window", "nag_until_ack"].includes(policy.policyType) &&
+      (!policy.startsAtLocal || !policy.endsAtLocal || !policy.intervalMinutes)
+    ) {
+      warnings.push(`interval policy is incomplete: ${policy.title}`);
+    }
+    if (policy.startsAtLocal && policy.endsAtLocal) {
+      const start = Date.parse(`${policy.startsAtLocal}${zoneSuffix(policy.startsAtLocal)}`);
+      const end = Date.parse(`${policy.endsAtLocal}${zoneSuffix(policy.endsAtLocal)}`);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+        warnings.push(`policy window is invalid: ${policy.title}`);
+      }
+    }
+    if (
+      policy.itemIds.length === 0 &&
+      policy.itemTitle &&
+      !actionTitles.has(normalize(policy.itemTitle))
+    ) {
+      warnings.push(`policy target is not present in prepared plan: ${policy.itemTitle}`);
+    }
+    if (
+      ["after_event", "post_event_menu"].includes(policy.policyType) &&
+      params.plan.actions.some((action) => action.metadata?.intervalPolicyExpected === true)
+    ) {
+      warnings.push(`interval task cannot create a post-event menu: ${policy.title}`);
+    }
+  }
+
+  return { ok: warnings.length === 0, warnings: [...new Set(warnings)] };
+}
+
 function hasMultipleBulletMarkers(text: string) {
   const matches = text.match(/(^|\n)\s*(?:[-*•]|\d+[.)])\s+/g);
   return (matches?.length ?? 0) >= 2;
@@ -108,4 +153,8 @@ function hasExactLocalTime(action: ActionPlan["actions"][number]) {
 
 function normalize(text: string) {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function zoneSuffix(value: string) {
+  return /(?:z|[+-]\d{2}:\d{2})$/i.test(value) ? "" : "Z";
 }

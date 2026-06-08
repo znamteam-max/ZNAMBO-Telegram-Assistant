@@ -1,7 +1,16 @@
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 
+import { planPolicySnooze } from "@/domain/reminderPolicySchedule";
+
 import { getDb } from "../client";
-import { plannerItems, reminderDeliveries, reminders, type Reminder } from "../schema";
+import {
+  plannerItems,
+  reminderDeliveries,
+  reminderPolicies,
+  reminderPolicyOccurrences,
+  reminders,
+  type Reminder,
+} from "../schema";
 
 export type ClaimedReminder = Reminder;
 
@@ -77,15 +86,17 @@ export async function recordReminderDelivery(params: {
   error?: string | null;
   metadata?: Record<string, unknown>;
 }) {
-  await getDb().insert(reminderDeliveries).values({
-    reminderId: params.reminder.id,
-    userId: params.reminder.userId,
-    status: params.status,
-    telegramMessageId: params.telegramMessageId ? BigInt(params.telegramMessageId) : null,
-    error: params.error,
-    deliveredAt: params.status === "sent" ? new Date() : null,
-    metadata: params.metadata ?? {},
-  });
+  await getDb()
+    .insert(reminderDeliveries)
+    .values({
+      reminderId: params.reminder.id,
+      userId: params.reminder.userId,
+      status: params.status,
+      telegramMessageId: params.telegramMessageId ? BigInt(params.telegramMessageId) : null,
+      error: params.error,
+      deliveredAt: params.status === "sent" ? new Date() : null,
+      metadata: params.metadata ?? {},
+    });
 }
 
 export async function markReminderFailed(params: {
@@ -106,10 +117,7 @@ export async function markReminderFailed(params: {
     .where(and(eq(reminders.id, params.reminder.id), eq(reminders.status, "claimed")));
 }
 
-export async function restorePolicyReminder(params: {
-  reminderId: string;
-  scheduledAt: Date;
-}) {
+export async function restorePolicyReminder(params: { reminderId: string; scheduledAt: Date }) {
   const [row] = await getDb()
     .update(reminders)
     .set({
@@ -121,10 +129,7 @@ export async function restorePolicyReminder(params: {
       updatedAt: new Date(),
     })
     .where(
-      and(
-        eq(reminders.id, params.reminderId),
-        inArray(reminders.status, ["failed", "cancelled"]),
-      ),
+      and(eq(reminders.id, params.reminderId), inArray(reminders.status, ["failed", "cancelled"])),
     )
     .returning();
   return row ?? null;
@@ -165,10 +170,7 @@ export async function cancelItemReminderChains(userId: string, plannerItemIds: s
     );
 }
 
-export async function cancelLegacyRemindersWithoutPolicy(
-  userId: string,
-  plannerItemIds: string[],
-) {
+export async function cancelLegacyRemindersWithoutPolicy(userId: string, plannerItemIds: string[]) {
   if (!plannerItemIds.length) return;
   await getDb()
     .update(reminders)
@@ -233,10 +235,7 @@ export async function getLatestReminderDelivery(reminderId: string) {
   return row ?? null;
 }
 
-export async function getLatestDeliveredReminderContext(params: {
-  userId: string;
-  since: Date;
-}) {
+export async function getLatestDeliveredReminderContext(params: { userId: string; since: Date }) {
   const [row] = await getDb()
     .select({
       reminderId: reminders.id,
@@ -341,20 +340,175 @@ export async function snoozeReminder(params: {
     .limit(1);
   if (!source) return null;
 
+  if (source.policyId) {
+    return snoozePolicyReminder({
+      source,
+      userId: params.userId,
+      minutes: params.minutes,
+      now: new Date(),
+    });
+  }
+
   return createReminderIfMissing({
     userId: params.userId,
     plannerItemId: source.plannerItemId,
     type: source.type,
-    idempotencyKey: `${source.id}:snooze:${params.minutes}:${Date.now()}`,
+    idempotencyKey: `${source.id}:snooze:${params.minutes}`,
     scheduledAt: new Date(Date.now() + params.minutes * 60 * 1000),
     repeatUntilAck: source.repeatUntilAck,
     parentReminderId: source.parentReminderId ?? source.id,
     recurrenceKey: source.recurrenceKey,
     policyId: source.policyId,
-    purpose: source.purpose,
+    purpose: "snooze",
     menuType: source.menuType,
     autoDeleteAfterResponse: source.autoDeleteAfterResponse,
     payload: { ...source.payload, snoozedFrom: source.id },
+  });
+}
+
+async function snoozePolicyReminder(params: {
+  source: Reminder;
+  userId: string;
+  minutes: number;
+  now: Date;
+}) {
+  return getDb().transaction(async (tx) => {
+    const [policy] = await tx
+      .select()
+      .from(reminderPolicies)
+      .where(
+        and(
+          eq(reminderPolicies.id, params.source.policyId!),
+          eq(reminderPolicies.userId, params.userId),
+          eq(reminderPolicies.status, "active"),
+        ),
+      )
+      .limit(1);
+    if (!policy) return null;
+
+    if (!policy.startsAt || !policy.intervalMinutes) return null;
+    const snoozePlan = planPolicySnooze({
+      anchor: policy.startsAt,
+      intervalMinutes: policy.intervalMinutes,
+      now: params.now,
+      snoozeMinutes: params.minutes,
+      endsAt: policy.endsAt,
+      inclusiveEnd: policy.windowEndInclusive,
+    });
+    if (!snoozePlan.snoozeAt) return null;
+    const snoozeAt = snoozePlan.snoozeAt;
+    const nextRegular = snoozePlan.nextRegularAt;
+
+    await tx
+      .update(reminders)
+      .set({ status: "cancelled", updatedAt: params.now })
+      .where(
+        and(
+          eq(reminders.policyId, policy.id),
+          eq(reminders.status, "pending"),
+          sql`${reminders.scheduledAt} <= ${snoozeAt.toISOString()}::timestamptz`,
+        ),
+      );
+
+    const [snoozed] = await tx
+      .insert(reminders)
+      .values({
+        userId: params.userId,
+        plannerItemId: params.source.plannerItemId,
+        type: params.source.type,
+        idempotencyKey: `${params.source.id}:snooze:${params.minutes}`,
+        scheduledAt: snoozeAt,
+        repeatUntilAck: false,
+        parentReminderId: params.source.parentReminderId ?? params.source.id,
+        recurrenceKey: params.source.recurrenceKey,
+        policyId: null,
+        purpose: "snooze",
+        menuType: params.source.menuType,
+        autoDeleteAfterResponse: params.source.autoDeleteAfterResponse,
+        payload: {
+          ...params.source.payload,
+          snoozedFrom: params.source.id,
+          sourcePolicyId: policy.id,
+        },
+      })
+      .onConflictDoNothing({ target: reminders.idempotencyKey })
+      .returning();
+
+    await tx
+      .update(reminderPolicies)
+      .set({
+        nextFireAt: nextRegular,
+        status: nextRegular ? "active" : "expired",
+        metadata: sql`${reminderPolicies.metadata} || ${JSON.stringify({
+          lastSnoozedAt: params.now.toISOString(),
+          snoozedUntil: snoozeAt.toISOString(),
+          nextGridAfterSnooze: nextRegular?.toISOString() ?? null,
+        })}::jsonb`,
+        updatedAt: params.now,
+      })
+      .where(eq(reminderPolicies.id, policy.id));
+
+    if (nextRegular) {
+      const [insertedOccurrence] = await tx
+        .insert(reminderPolicyOccurrences)
+        .values({
+          policyId: policy.id,
+          scheduledFor: nextRegular,
+          metadata: { resumedAfterSnooze: true },
+        })
+        .onConflictDoNothing({
+          target: [reminderPolicyOccurrences.policyId, reminderPolicyOccurrences.scheduledFor],
+        })
+        .returning();
+      const occurrence =
+        insertedOccurrence ??
+        (
+          await tx
+            .select()
+            .from(reminderPolicyOccurrences)
+            .where(
+              and(
+                eq(reminderPolicyOccurrences.policyId, policy.id),
+                eq(reminderPolicyOccurrences.scheduledFor, nextRegular),
+              ),
+            )
+            .limit(1)
+        )[0];
+      if (occurrence && !occurrence.reminderId) {
+        const [regularReminder] = await tx
+          .insert(reminders)
+          .values({
+            userId: policy.userId,
+            plannerItemId: policy.itemId,
+            type: policy.policyType === "nag_until_ack" ? "until_ack" : "custom",
+            idempotencyKey: `policy:${policy.id}:${nextRegular.toISOString()}`,
+            scheduledAt: nextRegular,
+            repeatUntilAck: policy.requireAck,
+            recurrenceKey: policy.recurrenceRule,
+            policyId: policy.id,
+            purpose: policy.policyType === "interval_window" ? "interval_nag" : "reminder",
+            menuType: "reminder",
+            payload: {
+              title: policy.title,
+              policyType: policy.policyType,
+              category: policy.category,
+              requireAck: policy.requireAck,
+              scheduledFor: nextRegular.toISOString(),
+              resumedAfterSnooze: true,
+            },
+          })
+          .onConflictDoNothing({ target: reminders.idempotencyKey })
+          .returning();
+        if (regularReminder) {
+          await tx
+            .update(reminderPolicyOccurrences)
+            .set({ reminderId: regularReminder.id })
+            .where(eq(reminderPolicyOccurrences.id, occurrence.id));
+        }
+      }
+    }
+
+    return snoozed ?? null;
   });
 }
 

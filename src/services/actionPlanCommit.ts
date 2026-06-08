@@ -1,7 +1,8 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { DateTime } from "luxon";
 
 import { actionPlanSchema, type ActionPlan, type ActionPlanItem } from "@/ai/schemas";
+import type { AgentReminderPolicy } from "@/ai/schemas/agentExecution";
 import { getDb } from "@/db/client";
 import {
   actionPlanItems,
@@ -27,7 +28,8 @@ export function shouldAutoCommitPlan(
 ): boolean {
   if (plan.intent !== "plan" || !plan.actions.length) return false;
   if (smartCommitMode === "confirm_all") return false;
-  if (smartCommitMode === "auto_all_with_undo") return !plan.actions.some((item) => item.risk === "high");
+  if (smartCommitMode === "auto_all_with_undo")
+    return !plan.actions.some((item) => item.risk === "high");
   return (
     !plan.requiresConfirmation &&
     plan.confidence >= 0.75 &&
@@ -44,6 +46,7 @@ export async function createStoredActionPlan(params: {
   idempotencyKey: string;
   commitMode: string;
   ttlMinutes?: number;
+  reminderPolicies?: AgentReminderPolicy[];
 }) {
   assertPlanDoesNotContainManagementCommands(params.plan);
   const now = new Date();
@@ -57,7 +60,10 @@ export async function createStoredActionPlan(params: {
       summary: params.plan.summary,
       commitMode: params.commitMode,
       confidencePercent: Math.round(params.plan.confidence * 100),
-      payload: params.plan,
+      payload: {
+        ...params.plan,
+        reminderPolicies: params.reminderPolicies ?? [],
+      },
       idempotencyKey: params.idempotencyKey,
       expiresAt,
     })
@@ -90,159 +96,364 @@ export async function commitStoredActionPlan(params: {
   userId: string;
   timezone: string;
   now?: Date;
+  reminderPolicies?: AgentReminderPolicy[];
 }) {
   const now = params.now ?? new Date();
-  return getDb().transaction(async (tx) => {
-    const [planRecord] = await tx
-      .update(actionPlans)
-      .set({
-        status: "committed",
-        confirmedAt: now,
-        committedAt: now,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(actionPlans.id, params.actionPlanId),
-          eq(actionPlans.userId, params.userId),
-          eq(actionPlans.status, "pending"),
-          gt(actionPlans.expiresAt, now),
-        ),
-      )
-      .returning();
-
-    if (!planRecord) {
-      const [existing] = await tx
-        .select()
-        .from(actionPlans)
-        .where(and(eq(actionPlans.id, params.actionPlanId), eq(actionPlans.userId, params.userId)))
-        .limit(1);
-      if (!existing) return { status: "not_found" as const };
-      if (existing.status === "cancelled") return { status: "cancelled" as const };
-      if (existing.status === "committed") return { status: "already_committed" as const };
-      return { status: "expired" as const };
-    }
-
-    const plan = actionPlanSchema.parse(planRecord.payload);
-    assertPlanDoesNotContainManagementCommands(plan);
-    const createdItems = [];
-    const createdReminders: MaterializedReminder[] = [];
-
-    for (const [index, action] of plan.actions.entries()) {
-      const materialized = materializeAction({
-        action,
-        timezone: params.timezone,
-        now,
-        actionPlanId: planRecord.id,
-        sequence: index,
-      });
-
-      const [item] = await tx
-        .insert(plannerItems)
-        .values({
-          userId: params.userId,
-          kind: materialized.item.kind,
-          title: materialized.item.title,
-          description: materialized.item.description,
-          location: materialized.item.location,
-          timezone: materialized.item.timezone,
-          startAt: materialized.item.startAt,
-          endAt: materialized.item.endAt,
-          dueAt: materialized.item.dueAt,
-          category: categoryForItem(materialized.item.kind),
-          visibility: materialized.item.kind === "recurring_task" ? "long_term" : "active",
-          priority: materialized.item.priority,
-          metadata: materialized.item.metadata,
+  return getDb()
+    .transaction(async (tx) => {
+      const [planRecord] = await tx
+        .update(actionPlans)
+        .set({
+          status: "committed",
+          confirmedAt: now,
+          committedAt: now,
+          updatedAt: now,
         })
+        .where(
+          and(
+            eq(actionPlans.id, params.actionPlanId),
+            eq(actionPlans.userId, params.userId),
+            eq(actionPlans.status, "pending"),
+            gt(actionPlans.expiresAt, now),
+          ),
+        )
         .returning();
 
-      if (!item) throw new UserFacingError("Не получилось создать запись плана.");
-      createdItems.push(item);
+      if (!planRecord) {
+        const [existing] = await tx
+          .select()
+          .from(actionPlans)
+          .where(
+            and(eq(actionPlans.id, params.actionPlanId), eq(actionPlans.userId, params.userId)),
+          )
+          .limit(1);
+        if (!existing) return { status: "not_found" as const };
+        if (existing.status === "cancelled") return { status: "cancelled" as const };
+        if (existing.status === "committed") return { status: "already_committed" as const };
+        return { status: "expired" as const };
+      }
 
-      await tx
-        .update(actionPlanItems)
-        .set({ status: "committed", committedItemId: item.id, updatedAt: now })
-        .where(
-          and(eq(actionPlanItems.actionPlanId, planRecord.id), eq(actionPlanItems.sequence, index)),
-        );
+      const payload = planRecord.payload as Record<string, unknown>;
+      const plan = actionPlanSchema.parse(payload);
+      const reminderPolicyProposals =
+        params.reminderPolicies ??
+        (Array.isArray(payload.reminderPolicies)
+          ? (payload.reminderPolicies as AgentReminderPolicy[])
+          : []);
+      assertPlanDoesNotContainManagementCommands(plan);
+      const createdItems = [];
+      const createdReminders: MaterializedReminder[] = [];
+      const createdPolicies: Array<typeof reminderPolicies.$inferSelect> = [];
+      const createdPolicyReminderIds: string[] = [];
 
-      if (materialized.reminders.length) {
-        createdReminders.push(...materialized.reminders);
-        for (const reminder of materialized.reminders) {
+      for (const [index, action] of plan.actions.entries()) {
+        const materialized = materializeAction({
+          action,
+          timezone: params.timezone,
+          now,
+          actionPlanId: planRecord.id,
+          sequence: index,
+        });
+
+        const [item] = await tx
+          .insert(plannerItems)
+          .values({
+            userId: params.userId,
+            kind: materialized.item.kind,
+            title: materialized.item.title,
+            description: materialized.item.description,
+            location: materialized.item.location,
+            timezone: materialized.item.timezone,
+            startAt: materialized.item.startAt,
+            endAt: materialized.item.endAt,
+            dueAt: materialized.item.dueAt,
+            category: categoryForItem(materialized.item.kind),
+            visibility: materialized.item.kind === "recurring_task" ? "long_term" : "active",
+            priority: materialized.item.priority,
+            metadata: materialized.item.metadata,
+          })
+          .returning();
+
+        if (!item) throw new UserFacingError("Не получилось создать запись плана.");
+        createdItems.push(item);
+
+        await tx
+          .update(actionPlanItems)
+          .set({ status: "committed", committedItemId: item.id, updatedAt: now })
+          .where(
+            and(
+              eq(actionPlanItems.actionPlanId, planRecord.id),
+              eq(actionPlanItems.sequence, index),
+            ),
+          );
+
+        if (materialized.reminders.length) {
+          createdReminders.push(...materialized.reminders);
+          for (const reminder of materialized.reminders) {
+            const [policy] = await tx
+              .insert(reminderPolicies)
+              .values({
+                userId: params.userId,
+                itemId: item.id,
+                title: item.title,
+                category: policyCategoryForReminder(reminder.type, item.kind),
+                policyType: policyTypeForReminder(reminder.type),
+                timezone: item.timezone,
+                startsAt: reminder.scheduledAt,
+                nextFireAt: reminder.scheduledAt,
+                recurrenceRule: reminder.recurrenceKey,
+                requireAck: reminder.repeatUntilAck ?? false,
+                metadata: {
+                  actionPlanId: planRecord.id,
+                  actionPlanSequence: index,
+                  reminderType: reminder.type,
+                },
+              })
+              .returning();
+            const [createdReminder] = await tx
+              .insert(reminders)
+              .values({
+                userId: params.userId,
+                plannerItemId: item.id,
+                type: reminder.type,
+                idempotencyKey: `${planRecord.id}:${index}:${reminder.type}:${reminder.scheduledAt.toISOString()}`,
+                scheduledAt: reminder.scheduledAt,
+                repeatUntilAck: reminder.repeatUntilAck ?? false,
+                recurrenceKey: reminder.recurrenceKey,
+                policyId: policy?.id,
+                purpose: purposeForReminder(reminder.type),
+                menuType: menuTypeForReminder(reminder.type),
+                payload: reminder.payload,
+              })
+              .onConflictDoNothing()
+              .returning();
+            if (policy && createdReminder) {
+              await tx.insert(reminderPolicyOccurrences).values({
+                policyId: policy.id,
+                reminderId: createdReminder.id,
+                scheduledFor: reminder.scheduledAt,
+                metadata: { actionPlanId: planRecord.id },
+              });
+            }
+          }
+        }
+
+        await tx.insert(auditLog).values({
+          userId: params.userId,
+          action: "action_plan.item_created",
+          entityType: "planner_item",
+          entityId: item.id,
+          details: { actionPlanId: planRecord.id, sequence: index, kind: item.kind },
+        });
+      }
+
+      for (const [policyIndex, proposal] of reminderPolicyProposals.entries()) {
+        const targets = await resolvePolicyTargetsInTransaction({
+          tx,
+          proposal,
+          createdItems,
+          userId: params.userId,
+          timezone: params.timezone,
+        });
+        const targetList = targets.length ? targets : [null];
+        for (const target of targetList) {
+          const timezone = target?.timezone || params.timezone;
+          const startsAt = localDate(proposal.startsAtLocal, timezone);
+          const endsAt = localDate(proposal.endsAtLocal, timezone);
+          const nextFireAt = determinePolicyInitialFire({
+            proposal,
+            item: target,
+            timezone,
+            startsAt,
+            now,
+          });
+          if (!nextFireAt || (endsAt && nextFireAt > endsAt)) {
+            throw new UserFacingError(`Не удалось безопасно определить запуск: ${proposal.title}`);
+          }
           const [policy] = await tx
             .insert(reminderPolicies)
             .values({
               userId: params.userId,
-              itemId: item.id,
-              title: item.title,
-              category: policyCategoryForReminder(reminder.type, item.kind),
-              policyType: policyTypeForReminder(reminder.type),
-              timezone: item.timezone,
-              startsAt: reminder.scheduledAt,
-              nextFireAt: reminder.scheduledAt,
-              recurrenceRule: reminder.recurrenceKey,
-              requireAck: reminder.repeatUntilAck ?? false,
+              itemId: target?.id,
+              title: proposal.title || target?.title || "Напоминание",
+              category: proposal.category,
+              policyType: proposal.policyType,
+              timezone,
+              startsAt,
+              endsAt,
+              nextFireAt,
+              recurrenceRule: proposal.recurrenceRule,
+              intervalMinutes: proposal.intervalMinutes,
+              requireAck: proposal.requireAck,
+              maxOccurrences: proposal.maxOccurrences,
+              windowEndInclusive: proposal.windowEndInclusive,
+              catchUpMode: proposal.catchUpMode,
+              onWindowEnd: proposal.onWindowEnd,
+              quietHours:
+                proposal.quietHoursStart && proposal.quietHoursEnd
+                  ? {
+                      start: proposal.quietHoursStart,
+                      end: proposal.quietHoursEnd,
+                      allowDuringQuietHours: proposal.allowDuringQuietHours,
+                    }
+                  : proposal.allowDuringQuietHours
+                    ? { allowDuringQuietHours: true }
+                    : null,
               metadata: {
+                idempotencyKey: `${planRecord.id}:policy:${policyIndex}:${target?.id ?? "unattached"}`,
                 actionPlanId: planRecord.id,
-                actionPlanSequence: index,
-                reminderType: reminder.type,
+                policyIndex,
+                stopOnItemComplete:
+                  proposal.requireAck &&
+                  ["interval_window", "nag_until_ack"].includes(proposal.policyType),
               },
             })
             .returning();
-          const [createdReminder] = await tx
+          if (!policy) throw new UserFacingError("Не получилось создать reminder policy.");
+          createdPolicies.push(policy);
+
+          const [reminder] = await tx
             .insert(reminders)
             .values({
               userId: params.userId,
-              plannerItemId: item.id,
-              type: reminder.type,
-              idempotencyKey: `${planRecord.id}:${index}:${reminder.type}:${reminder.scheduledAt.toISOString()}`,
-              scheduledAt: reminder.scheduledAt,
-              repeatUntilAck: reminder.repeatUntilAck ?? false,
-              recurrenceKey: reminder.recurrenceKey,
-              policyId: policy?.id,
-              purpose: purposeForReminder(reminder.type),
-              menuType: menuTypeForReminder(reminder.type),
-              payload: reminder.payload,
-            })
-            .onConflictDoNothing()
-            .returning();
-          if (policy && createdReminder) {
-            await tx.insert(reminderPolicyOccurrences).values({
+              plannerItemId: target?.id,
+              type: reminderTypeForPolicyProposal(proposal.policyType),
+              idempotencyKey: `policy:${policy.id}:${nextFireAt.toISOString()}`,
+              scheduledAt: nextFireAt,
+              repeatUntilAck: proposal.requireAck,
+              recurrenceKey: proposal.recurrenceRule,
               policyId: policy.id,
-              reminderId: createdReminder.id,
-              scheduledFor: reminder.scheduledAt,
-              metadata: { actionPlanId: planRecord.id },
-            });
-          }
+              purpose: purposeForPolicyProposal(proposal.policyType),
+              menuType: ["after_event", "post_event_menu"].includes(proposal.policyType)
+                ? "event_reaction"
+                : "reminder",
+              payload: {
+                title: policy.title,
+                policyType: policy.policyType,
+                category: policy.category,
+                requireAck: policy.requireAck,
+                scheduledFor: nextFireAt.toISOString(),
+              },
+            })
+            .onConflictDoNothing({ target: reminders.idempotencyKey })
+            .returning();
+          if (!reminder) throw new UserFacingError("Не получилось создать initial reminder.");
+          createdPolicyReminderIds.push(reminder.id);
+          await tx.insert(reminderPolicyOccurrences).values({
+            policyId: policy.id,
+            reminderId: reminder.id,
+            scheduledFor: nextFireAt,
+            metadata: { actionPlanId: planRecord.id, policyIndex },
+          });
         }
       }
 
-      await tx.insert(auditLog).values({
-        userId: params.userId,
-        action: "action_plan.item_created",
-        entityType: "planner_item",
-        entityId: item.id,
-        details: { actionPlanId: planRecord.id, sequence: index, kind: item.kind },
-      });
-    }
+      return {
+        status: "committed" as const,
+        plan: planRecord,
+        items: createdItems,
+        reminders: createdReminders,
+        policies: createdPolicies,
+        policyReminderIds: createdPolicyReminderIds,
+        parsedPlan: plan,
+      };
+    })
+    .then(async (result) => {
+      if (result.status === "committed") {
+        await storePlanMemoryFacts({
+          userId: params.userId,
+          sourceMessageId: result.plan.sourceMessageId,
+          plan: result.parsedPlan,
+        });
+      }
+      return result;
+    });
+}
 
-    return {
-      status: "committed" as const,
-      plan: planRecord,
-      items: createdItems,
-      reminders: createdReminders,
-      parsedPlan: plan,
-    };
-  }).then(async (result) => {
-    if (result.status === "committed") {
-      await storePlanMemoryFacts({
-        userId: params.userId,
-        sourceMessageId: result.plan.sourceMessageId,
-        plan: result.parsedPlan,
-      });
-    }
-    return result;
-  });
+type ActionPlanTransaction = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
+
+async function resolvePolicyTargetsInTransaction(params: {
+  tx: ActionPlanTransaction;
+  proposal: AgentReminderPolicy;
+  createdItems: Array<typeof plannerItems.$inferSelect>;
+  userId: string;
+  timezone: string;
+}) {
+  if (params.proposal.itemIds.length) {
+    return params.tx
+      .select()
+      .from(plannerItems)
+      .where(
+        and(
+          eq(plannerItems.userId, params.userId),
+          inArray(plannerItems.id, params.proposal.itemIds),
+        ),
+      );
+  }
+  if (!params.proposal.itemTitle) return [];
+  const candidates = params.createdItems.filter(
+    (item) => normalizeTitle(item.title) === normalizeTitle(params.proposal.itemTitle!),
+  );
+  if (candidates.length <= 1) return candidates;
+  const end = localDate(params.proposal.endsAtLocal, params.timezone);
+  if (!end) return [candidates[0]];
+  return [
+    [...candidates]
+      .filter((item) => item.startAt && item.startAt > end)
+      .sort((left, right) => left.startAt!.getTime() - right.startAt!.getTime())[0] ??
+      candidates[0],
+  ];
+}
+
+function determinePolicyInitialFire(params: {
+  proposal: AgentReminderPolicy;
+  item: typeof plannerItems.$inferSelect | null;
+  timezone: string;
+  startsAt: Date | null;
+  now: Date;
+}) {
+  if (params.proposal.nextFireAtLocal) {
+    return localIsoToUtcDate(params.proposal.nextFireAtLocal, params.timezone);
+  }
+  if (params.proposal.policyType === "before_event" && params.item) {
+    const anchor = params.item.startAt ?? params.item.dueAt;
+    return anchor
+      ? DateTime.fromJSDate(anchor, { zone: "utc" })
+          .minus({ minutes: params.proposal.minutesBefore ?? 60 })
+          .toJSDate()
+      : null;
+  }
+  if (params.startsAt) return params.startsAt;
+  return null;
+}
+
+function localDate(value: string | null, timezone: string) {
+  return value ? localIsoToUtcDate(value, timezone) : null;
+}
+
+function reminderTypeForPolicyProposal(policyType: string) {
+  if (policyType === "before_event") return "event_before";
+  if (["after_event", "post_event_menu"].includes(policyType)) return "after_event";
+  if (["recurring", "long_term"].includes(policyType)) return "recurring";
+  if (policyType === "nag_until_ack") return "until_ack";
+  return "custom";
+}
+
+function purposeForPolicyProposal(policyType: string) {
+  if (policyType === "before_event") return "pre_event";
+  if (["after_event", "post_event_menu"].includes(policyType)) return "post_event_menu";
+  if (policyType === "interval_window") return "interval_nag";
+  if (["recurring", "long_term"].includes(policyType)) return "recurring_check";
+  return "reminder";
+}
+
+function normalizeTitle(value: string) {
+  return value
+    .trim()
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
 }
 
 function assertPlanDoesNotContainManagementCommands(plan: ActionPlan) {
@@ -252,14 +463,13 @@ function assertPlanDoesNotContainManagementCommands(plan: ActionPlan) {
       (action.description ? isHardManagementText(action.description) : false),
   );
   if (blocked) {
-    throw new UserFacingError("Понял, это команда управления, а не новая задача. Ничего не создаю.");
+    throw new UserFacingError(
+      "Понял, это команда управления, а не новая задача. Ничего не создаю.",
+    );
   }
 }
 
-export async function cancelStoredActionPlan(params: {
-  actionPlanId: string;
-  userId: string;
-}) {
+export async function cancelStoredActionPlan(params: { actionPlanId: string; userId: string }) {
   const [cancelled] = await getDb()
     .update(actionPlans)
     .set({ status: "cancelled", cancelledAt: new Date(), updatedAt: new Date() })
@@ -294,7 +504,9 @@ function materializeAction(params: {
   const startAt = params.action.startAtLocal
     ? localIsoToUtcDate(params.action.startAtLocal, timezone)
     : null;
-  const dueAt = params.action.dueAtLocal ? localIsoToUtcDate(params.action.dueAtLocal, timezone) : null;
+  const dueAt = params.action.dueAtLocal
+    ? localIsoToUtcDate(params.action.dueAtLocal, timezone)
+    : null;
   const endAt = buildEndAt(params.action, timezone, startAt);
   const item: MaterializedItem = {
     kind: params.action.kind,
@@ -346,7 +558,9 @@ function materializeAction(params: {
 function buildEndAt(action: ActionPlanItem, timezone: string, startAt: Date | null) {
   if (action.endAtLocal) return localIsoToUtcDate(action.endAtLocal, timezone);
   if (!startAt || !action.durationMinutes) return null;
-  return DateTime.fromJSDate(startAt, { zone: "utc" }).plus({ minutes: action.durationMinutes }).toJSDate();
+  return DateTime.fromJSDate(startAt, { zone: "utc" })
+    .plus({ minutes: action.durationMinutes })
+    .toJSDate();
 }
 
 function policyTypeForReminder(type: string) {

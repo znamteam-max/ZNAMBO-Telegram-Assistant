@@ -7,7 +7,13 @@ import {
   isYandexCalendarConfigured,
 } from "@/lib/env";
 import { getLatestAiAuditStatus } from "@/db/queries/audit";
-import { APP_VERSION } from "@/lib/version";
+import {
+  APP_VERSION,
+  INTERVAL_ALGORITHM_VERSION,
+  POLICY_ENGINE_VERSION,
+  RECONCILER_ENABLED,
+  RUNNER_LOCK_ENABLED,
+} from "@/lib/version";
 import { getSchedulerRuntimeHealth } from "@/db/queries/schedulerHealth";
 import { getReminderPolicyHealthStats } from "@/db/queries/reminderPolicies";
 
@@ -36,8 +42,8 @@ export async function GET() {
   const lastRunnerSucceeded = scheduler
     ? Boolean(
         runnerFinishedAt &&
-          (!runnerStartedAt || runnerFinishedAt >= runnerStartedAt) &&
-          scheduler.lastRunnerFailed === 0,
+        (!runnerStartedAt || runnerFinishedAt >= runnerStartedAt) &&
+        scheduler.lastRunnerFailed === 0,
       )
     : null;
   return NextResponse.json({
@@ -50,6 +56,10 @@ export async function GET() {
     jarvisModeEnabled: env.JARVIS_MODE_ENABLED,
     liveDashboardEnabled: true,
     reminderPolicyEngineEnabled: true,
+    policyEngineVersion: POLICY_ENGINE_VERSION,
+    intervalAlgorithmVersion: INTERVAL_ALGORITHM_VERSION,
+    reconcilerEnabled: RECONCILER_ENABLED,
+    runnerLockEnabled: RUNNER_LOCK_ENABLED,
     schedulerConfigured: Boolean(env.CRON_SECRET),
     lastRunnerRunAt: lastRunnerRunAt?.toISOString() ?? null,
     lastRunnerSucceeded,
@@ -60,7 +70,9 @@ export async function GET() {
     lastSuccessfulAiCallAt: lastSuccessfulAi?.createdAt?.toISOString() ?? null,
     lastAiModel: String(lastSuccessfulDetails?.aiModel ?? lastCallDetails?.aiModel ?? "") || null,
     lastAiErrorType:
-      lastCallDetails?.aiSucceeded === true ? null : String(lastCallDetails?.errorCode ?? "") || null,
+      lastCallDetails?.aiSucceeded === true
+        ? null
+        : String(lastCallDetails?.errorCode ?? "") || null,
     calendarProvider: getCalendarProvider(),
     googleCalendarConfigured: isGoogleCalendarConfigured(),
     yandexCalendarConfigured: isYandexCalendarConfigured(),

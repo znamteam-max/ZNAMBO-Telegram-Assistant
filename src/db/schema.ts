@@ -224,7 +224,10 @@ export const taskViewStates = assistantTable(
     scope: text("scope").notNull().default("current"),
     title: text("title").notNull(),
     itemIds: jsonb("item_ids").$type<string[]>().notNull().default(emptyArrayJson),
-    itemsSnapshot: jsonb("items_snapshot").$type<Record<string, unknown>[]>().notNull().default(emptyArrayJson),
+    itemsSnapshot: jsonb("items_snapshot")
+      .$type<Record<string, unknown>[]>()
+      .notNull()
+      .default(emptyArrayJson),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     ...timestamps,
@@ -321,6 +324,7 @@ export const reminderPolicies = assistantTable(
     maxOccurrences: integer("max_occurrences"),
     windowEndInclusive: boolean("window_end_inclusive").notNull().default(true),
     catchUpMode: text("catch_up_mode").notNull().default("one_immediate_then_resume"),
+    onWindowEnd: text("on_window_end").notNull().default("expire_silently"),
     quietHours: jsonb("quiet_hours").$type<Record<string, unknown> | null>(),
     escalationPolicy: jsonb("escalation_policy").$type<Record<string, unknown> | null>(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
@@ -371,6 +375,18 @@ export const schedulerRuntimeHealth = assistantTable("scheduler_runtime_health",
   lastError: text("last_error"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const runtimeLocks = assistantTable(
+  "runtime_locks",
+  {
+    key: text("key").primaryKey(),
+    ownerToken: text("owner_token").notNull(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }).notNull(),
+    acquiredAt: timestamp("acquired_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("runtime_locks_expiry_idx").on(table.lockedUntil)],
+);
 
 export const liveDashboards = assistantTable(
   "live_dashboards",
@@ -496,7 +512,10 @@ export const conversationSummaries = assistantTable(
     periodStart: timestamp("period_start", { withTimezone: true }),
     periodEnd: timestamp("period_end", { withTimezone: true }),
     summary: text("summary").notNull(),
-    sourceMessageIds: jsonb("source_message_ids").$type<string[]>().notNull().default(emptyArrayJson),
+    sourceMessageIds: jsonb("source_message_ids")
+      .$type<string[]>()
+      .notNull()
+      .default(emptyArrayJson),
     ...timestamps,
   },
   (table) => [index("conversation_summaries_user_updated_idx").on(table.userId, table.updatedAt)],
@@ -566,7 +585,10 @@ export const agentActions = assistantTable(
     status: text("status").notNull().default("completed"),
     input: jsonb("input").$type<Record<string, unknown>>().notNull().default(emptyJson),
     output: jsonb("output").$type<Record<string, unknown>>().notNull().default(emptyJson),
-    undoPayload: jsonb("undo_payload").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    undoPayload: jsonb("undo_payload")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(emptyJson),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

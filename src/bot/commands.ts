@@ -18,16 +18,24 @@ import { markUserOnboarded, updateUserTimezone } from "@/db/queries/users";
 import { assertValidZone } from "@/domain/dateTime";
 import { getCalendarProvider, getEnv, isGoogleCalendarConfigured } from "@/lib/env";
 import { createGoogleCalendarAuthUrl } from "@/integrations/googleCalendar";
-import {
-  refreshDashboardAfterMutation,
-  renderReminderPolicyList,
-} from "@/telegram/liveDashboard";
+import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
 import { cleanupTransientMessages } from "@/telegram/messageLifecycle";
 import { renderCronHealth, renderPolicyDebug } from "@/services/reminderDiagnostics";
 import {
   applyReminderPolicyRepair,
   previewReminderPolicyRepair,
 } from "@/services/reminderPolicyRepair";
+import {
+  APP_VERSION,
+  INTERVAL_ALGORITHM_VERSION,
+  POLICY_ENGINE_VERSION,
+  RECONCILER_ENABLED,
+  RUNNER_LOCK_ENABLED,
+} from "@/lib/version";
+import {
+  applyV242ProductionRepair,
+  previewV242ProductionRepair,
+} from "@/services/v242ProductionRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -82,6 +90,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/cleanup_chat — убрать старые bot-карточки",
         "/cronhealth — статус scheduler и policy reconciler",
         "/policydebug — диагностика последней reminder policy",
+        "/versiondebug — версии policy engine, interval algorithm и runner lock",
         "/calendar — статус календаря",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -108,7 +117,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
 
   bot.command("calendar", async (ctx) => {
-    const requested = String(ctx.match ?? "").trim().toLowerCase();
+    const requested = String(ctx.match ?? "")
+      .trim()
+      .toLowerCase();
     if (requested === "status") {
       await ctx.reply(
         getCalendarProvider() === "yandex"
@@ -118,12 +129,16 @@ export function registerCommands(bot: Bot<BotContext>) {
       return;
     }
     if (requested === "retry") {
-      await ctx.reply("Поставил календарь в best-effort режим. Повторная очередь будет обработана отдельно; записи в боте уже являются источником правды.");
+      await ctx.reply(
+        "Поставил календарь в best-effort режим. Повторная очередь будет обработана отдельно; записи в боте уже являются источником правды.",
+      );
       return;
     }
 
     if (getCalendarProvider() === "yandex") {
-      await ctx.reply("Яндекс Календарь подключён через CalDAV. Новые встречи буду синхронизировать туда.");
+      await ctx.reply(
+        "Яндекс Календарь подключён через CalDAV. Новые встречи буду синхронизировать туда.",
+      );
       return;
     }
 
@@ -139,9 +154,15 @@ export function registerCommands(bot: Bot<BotContext>) {
     });
   });
 
-  bot.command("today", async (ctx) => replyJarvisTool(ctx, await renderCommandSchedule(ctx, "today")));
-  bot.command("tomorrow", async (ctx) => replyJarvisTool(ctx, await renderCommandSchedule(ctx, "tomorrow")));
-  bot.command("week", async (ctx) => replyJarvisTool(ctx, await renderCommandSchedule(ctx, "week")));
+  bot.command("today", async (ctx) =>
+    replyJarvisTool(ctx, await renderCommandSchedule(ctx, "today")),
+  );
+  bot.command("tomorrow", async (ctx) =>
+    replyJarvisTool(ctx, await renderCommandSchedule(ctx, "tomorrow")),
+  );
+  bot.command("week", async (ctx) =>
+    replyJarvisTool(ctx, await renderCommandSchedule(ctx, "week")),
+  );
   bot.command("tasks", async (ctx) => replyJarvisTool(ctx, await renderCommandTasks(ctx)));
   bot.command("dashboard", async (ctx) => {
     const owner = requireOwner(ctx);
@@ -154,7 +175,10 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("reminders", async (ctx) => {
     const owner = requireOwner(ctx);
-    const category = String(ctx.match ?? "").trim().toLowerCase() || null;
+    const category =
+      String(ctx.match ?? "")
+        .trim()
+        .toLowerCase() || null;
     const text = await renderReminderPolicyList({
       userId: owner.id,
       timezone: owner.timezone,
@@ -163,9 +187,7 @@ export function registerCommands(bot: Bot<BotContext>) {
     await replyAndRecord(
       ctx,
       text,
-      text.includes("без policy")
-        ? { reply_markup: reminderPolicyRepairKeyboard() }
-        : undefined,
+      text.includes("без policy") ? { reply_markup: reminderPolicyRepairKeyboard() } : undefined,
     );
   });
   bot.command("longterm", async (ctx) => {
@@ -205,9 +227,25 @@ export function registerCommands(bot: Bot<BotContext>) {
       }),
     );
   });
+  bot.command("versiondebug", async (ctx) => {
+    requireOwner(ctx);
+    await replyAndRecord(
+      ctx,
+      [
+        `App version: ${APP_VERSION}`,
+        `Deployment commit: ${process.env.VERCEL_GIT_COMMIT_SHA ?? "local"}`,
+        `Policy engine: ${POLICY_ENGINE_VERSION}`,
+        `Interval algorithm: ${INTERVAL_ALGORITHM_VERSION}`,
+        `Reconciler enabled: ${RECONCILER_ENABLED ? "yes" : "no"}`,
+        `Runner lock enabled: ${RUNNER_LOCK_ENABLED ? "yes" : "no"}`,
+      ].join("\n"),
+    );
+  });
   bot.command("admin_repair_reminder_policies", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     if (mode === "apply") {
       const result = await applyReminderPolicyRepair({
         userId: owner.id,
@@ -253,7 +291,52 @@ export function registerCommands(bot: Bot<BotContext>) {
       preview.groups.length ? { reply_markup: reminderPolicyRepairKeyboard() } : undefined,
     );
   });
-  bot.command("review_yesterday", async (ctx) => replyJarvisTool(ctx, await renderCommandYesterday(ctx)));
+  bot.command("admin_repair_v242", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
+    if (mode === "apply") {
+      const result = await applyV242ProductionRepair({
+        userId: owner.id,
+        sourceMessageId: ctx.dbMessageId,
+      });
+      await replyAndRecord(
+        ctx,
+        [
+          "V2.4.2 production repair применён.",
+          `Архивировано partial/generic items: ${result.archivedItemIds.length}`,
+          `Истёкших Drik policies: ${result.expiredPolicyIds.length}`,
+          `Отменено будущих reminders: ${result.cancelledReminderIds.length}`,
+        ].join("\n"),
+      );
+      if (ctx.chat?.id) {
+        await refreshDashboardAfterMutation({
+          userId: owner.id,
+          chatId: ctx.chat.id,
+          timezone: owner.timezone,
+        });
+      }
+      return;
+    }
+    const preview = await previewV242ProductionRepair({ userId: owner.id });
+    await replyAndRecord(
+      ctx,
+      [
+        "V2.4.2 production repair preview:",
+        `Items: ${preview.items.length}`,
+        ...preview.items.map((item) => `• ${item.title}`),
+        `Expired Drik policies: ${preview.policies.length}`,
+        `Future reminders to cancel: ${preview.futureReminderIds.length}`,
+        `Shifted/duplicate reminder records found: ${preview.shiftedReminderIds.length}`,
+        "",
+        "Для применения: /admin_repair_v242 apply",
+      ].join("\n"),
+    );
+  });
+  bot.command("review_yesterday", async (ctx) =>
+    replyJarvisTool(ctx, await renderCommandYesterday(ctx)),
+  );
   bot.command("cleanup_garbage", async (ctx) => replyJarvisTool(ctx, await runCommandCleanup(ctx)));
   bot.command("admin_reset_active_plan", async (ctx) =>
     replyJarvisTool(ctx, await runCommandResetActivePlan(ctx)),
@@ -406,10 +489,7 @@ function formatList(value: unknown) {
   return Array.isArray(value) && value.length ? value.map(String).join(", ") : "none";
 }
 
-async function renderCommandSchedule(
-  ctx: BotContext,
-  scope: "today" | "tomorrow" | "week",
-) {
+async function renderCommandSchedule(ctx: BotContext, scope: "today" | "tomorrow" | "week") {
   const owner = requireOwner(ctx);
   return renderScheduleViewTool({
     userId: owner.id,

@@ -8,6 +8,51 @@ export type ReconcileTarget = {
   catchUp: boolean;
 };
 
+export function nextGridSlot(params: {
+  anchor: Date;
+  intervalMinutes: number;
+  after: Date;
+  endsAt?: Date | null;
+  inclusiveEnd?: boolean;
+}) {
+  const intervalMs = params.intervalMinutes * 60 * 1000;
+  const elapsed = params.after.getTime() - params.anchor.getTime();
+  const steps = elapsed < 0 ? 0 : Math.floor(elapsed / intervalMs) + 1;
+  const candidate = new Date(params.anchor.getTime() + steps * intervalMs);
+  if (!params.endsAt) return candidate;
+  if (params.inclusiveEnd !== false) {
+    return candidate <= params.endsAt ? candidate : null;
+  }
+  return candidate < params.endsAt ? candidate : null;
+}
+
+export function planPolicySnooze(params: {
+  anchor: Date;
+  intervalMinutes: number;
+  now: Date;
+  snoozeMinutes: number;
+  endsAt?: Date | null;
+  inclusiveEnd?: boolean;
+}) {
+  const snoozeAt = new Date(params.now.getTime() + params.snoozeMinutes * 60 * 1000);
+  if (
+    params.endsAt &&
+    (params.inclusiveEnd !== false ? snoozeAt > params.endsAt : snoozeAt >= params.endsAt)
+  ) {
+    return { snoozeAt: null, nextRegularAt: null };
+  }
+  return {
+    snoozeAt,
+    nextRegularAt: nextGridSlot({
+      anchor: params.anchor,
+      intervalMinutes: params.intervalMinutes,
+      after: snoozeAt,
+      endsAt: params.endsAt,
+      inclusiveEnd: params.inclusiveEnd,
+    }),
+  };
+}
+
 export function resolvePolicyReconcileTarget(
   policy: ReminderPolicy,
   now: Date,
@@ -33,19 +78,18 @@ export function computeNextPolicySlotAfterDelivery(params: {
 }) {
   if (isIntervalPolicy(params.policy)) {
     const intervalMinutes = params.policy.intervalMinutes ?? 30;
-    let candidate = DateTime.fromJSDate(params.scheduledFor, { zone: "utc" })
-      .plus({ minutes: intervalMinutes })
-      .toJSDate();
-    while (candidate <= params.now) {
-      candidate = DateTime.fromJSDate(candidate, { zone: "utc" })
-        .plus({ minutes: intervalMinutes })
-        .toJSDate();
-    }
-    return isInsideWindow(params.policy, candidate) ? candidate : null;
+    return nextGridSlot({
+      anchor: params.policy.startsAt ?? params.scheduledFor,
+      intervalMinutes,
+      after: params.now,
+      endsAt: params.policy.endsAt,
+      inclusiveEnd: params.policy.windowEndInclusive,
+    });
   }
 
   if (["recurring", "long_term"].includes(params.policy.policyType)) {
-    return nextRecurringSlot(params.policy, params.scheduledFor, params.now);
+    const next = nextRecurringSlot(params.policy, params.scheduledFor, params.now);
+    return isInsideWindow(params.policy, next) ? next : null;
   }
   return null;
 }
@@ -87,7 +131,11 @@ function resolveIntervalTarget(policy: ReminderPolicy, now: Date): ReconcileTarg
   }
 
   const configured = policy.nextFireAt;
-  if (configured && configured > now) {
+  if (
+    configured &&
+    configured > now &&
+    isGridSlot(start, configured, policy.intervalMinutes ?? 30)
+  ) {
     return { scheduledFor: configured, deliveryAt: configured, catchUp: false };
   }
 
@@ -105,6 +153,12 @@ function resolveIntervalTarget(policy: ReminderPolicy, now: Date): ReconcileTarg
   return isInsideWindow(policy, next)
     ? { scheduledFor: next, deliveryAt: next, catchUp: false }
     : null;
+}
+
+function isGridSlot(anchor: Date, candidate: Date, intervalMinutes: number) {
+  const intervalMs = intervalMinutes * 60 * 1000;
+  const delta = candidate.getTime() - anchor.getTime();
+  return delta >= 0 && delta % intervalMs === 0;
 }
 
 function nextRecurringSlot(policy: ReminderPolicy, after: Date, now: Date) {
@@ -139,7 +193,9 @@ function isIntervalPolicy(policy: ReminderPolicy) {
 function isInsideWindow(policy: ReminderPolicy, candidate: Date) {
   if (policy.startsAt && candidate < policy.startsAt) return false;
   if (!policy.endsAt) return true;
-  return policy.windowEndInclusive !== false ? candidate <= policy.endsAt : candidate < policy.endsAt;
+  return policy.windowEndInclusive !== false
+    ? candidate <= policy.endsAt
+    : candidate < policy.endsAt;
 }
 
 function parseClock(value: string, fallbackHour: number, fallbackMinute: number) {

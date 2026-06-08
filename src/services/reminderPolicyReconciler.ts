@@ -1,4 +1,5 @@
 import {
+  expirePolicyAndCancelFutureReminders,
   getPolicySlotState,
   getPendingReminderForPolicy,
   listActivePoliciesForReconciliation,
@@ -12,10 +13,7 @@ import {
 
 import { materializeNextPolicyReminder } from "./reminderPolicyEngine";
 
-export async function reconcileActiveReminderPolicies(params?: {
-  now?: Date;
-  limit?: number;
-}) {
+export async function reconcileActiveReminderPolicies(params?: { now?: Date; limit?: number }) {
   const now = params?.now ?? new Date();
   const policies = await listActivePoliciesForReconciliation(params?.limit ?? 200);
   let materialized = 0;
@@ -23,24 +21,24 @@ export async function reconcileActiveReminderPolicies(params?: {
   let expired = 0;
 
   for (const policy of policies) {
+    if (
+      ["interval_window", "nag_until_ack"].includes(policy.policyType) &&
+      policy.endsAt &&
+      now > policy.endsAt &&
+      policy.onWindowEnd !== "carry_to_next_day"
+    ) {
+      await expirePolicyAndCancelFutureReminders({
+        policyId: policy.id,
+        userId: policy.userId,
+        expiredAt: now,
+      });
+      expired += 1;
+      continue;
+    }
     const existingPending = await getPendingReminderForPolicy(policy.id);
     if (existingPending) continue;
     const target = resolvePolicyReconcileTarget(policy, now);
     if (!target) {
-      if (
-        ["interval_window", "nag_until_ack"].includes(policy.policyType) &&
-        policy.endsAt &&
-        now > policy.endsAt
-      ) {
-        await updateReminderPolicy({
-          policyId: policy.id,
-          userId: policy.userId,
-          status: "completed",
-          nextFireAt: null,
-          metadata: { reconciledExpiredAt: now.toISOString() },
-        });
-        expired += 1;
-      }
       continue;
     }
 
@@ -85,7 +83,10 @@ export async function reconcileActiveReminderPolicies(params?: {
       userId: policy.userId,
       nextFireAt: target.scheduledFor,
       metadata: target.catchUp
-        ? { lastCatchUpAt: now.toISOString(), catchUpScheduledFor: target.scheduledFor.toISOString() }
+        ? {
+            lastCatchUpAt: now.toISOString(),
+            catchUpScheduledFor: target.scheduledFor.toISOString(),
+          }
         : undefined,
     });
     const reminder = await materializeNextPolicyReminder(

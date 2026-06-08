@@ -17,24 +17,17 @@ import {
   getLatestReminderDelivery,
   getLatestReminderForItem,
 } from "@/db/queries/reminders";
-import {
-  executeActivePlanReset,
-  previewActivePlanReset,
-} from "@/services/activePlanReset";
+import { executeActivePlanReset, previewActivePlanReset } from "@/services/activePlanReset";
 import { runOpenAiHealthCheck } from "@/ai/aiHealth";
+import { MandatoryAiError, proposeAgentExecution, type AiCallTelemetry } from "@/ai/agentExecution";
 import {
-  MandatoryAiError,
-  proposeAgentExecution,
-  type AiCallTelemetry,
-} from "@/ai/agentExecution";
-import { validatePlannerItemsBeforeSave } from "@/ai/antiGarbageValidator";
+  validatePlannerItemsBeforeSave,
+  validateReminderPoliciesBeforeSave,
+} from "@/ai/antiGarbageValidator";
 import { buildJarvisContext } from "@/agent/context/buildJarvisContext";
 import { writeAudit } from "@/db/queries/audit";
 import { createIdempotencyKey } from "@/lib/idempotency";
-import {
-  commitStoredActionPlan,
-  createStoredActionPlan,
-} from "@/services/actionPlanCommit";
+import { commitStoredActionPlan, createStoredActionPlan } from "@/services/actionPlanCommit";
 import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
 import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 import { filterDuplicateActionPlan } from "@/services/actionPlanDedup";
@@ -44,11 +37,12 @@ import {
   applyReminderPolicyRepair,
   previewReminderPolicyRepair,
 } from "@/services/reminderPolicyRepair";
-import {
-  getLatestPolicyDebug,
-  listActiveReminderPolicies,
-} from "@/db/queries/reminderPolicies";
+import { getLatestPolicyDebug, listActiveReminderPolicies } from "@/db/queries/reminderPolicies";
 import { getSchedulerRuntimeHealth } from "@/db/queries/schedulerHealth";
+import {
+  applyV242ProductionRepair,
+  previewV242ProductionRepair,
+} from "@/services/v242ProductionRepair";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,6 +76,14 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, preview });
   }
+  if (body.action === "v242_repair_preview") {
+    const preview = await previewV242ProductionRepair({ userId: owner.id });
+    return NextResponse.json({ ok: true, preview });
+  }
+  if (body.action === "v242_repair_apply" && body.confirm === true) {
+    const result = await applyV242ProductionRepair({ userId: owner.id });
+    return NextResponse.json({ ok: true, result });
+  }
   if (body.action === "policy_repair_apply" && body.confirm === true) {
     const result = await applyReminderPolicyRepair({
       userId: owner.id,
@@ -111,6 +113,7 @@ export async function POST(request: Request) {
         intervalMinutes: policy.intervalMinutes,
         requireAck: policy.requireAck,
         catchUpMode: policy.catchUpMode,
+        onWindowEnd: policy.onWindowEnd,
       })),
       latest: latest
         ? {
@@ -141,11 +144,7 @@ export async function POST(request: Request) {
       })),
     });
   }
-  if (
-    body.action === "archive_items" &&
-    body.confirm === true &&
-    Array.isArray(body.itemIds)
-  ) {
+  if (body.action === "archive_items" && body.confirm === true && Array.isArray(body.itemIds)) {
     const itemIds = [...new Set(body.itemIds)].slice(0, 25);
     const archived = [];
     for (const itemId of itemIds) {
@@ -307,13 +306,13 @@ export async function POST(request: Request) {
         intent: proposed.execution.intent,
         viewScope: proposed.execution.viewScope,
         resetMode: proposed.execution.resetMode,
-        actionTypes: proposed.execution.actionPlan?.actions.map((action) => action.actionType) ?? [],
+        actionTypes:
+          proposed.execution.actionPlan?.actions.map((action) => action.actionType) ?? [],
         kinds: proposed.execution.actionPlan?.actions.map((action) => action.kind) ?? [],
         titles: proposed.execution.actionPlan?.actions.map((action) => action.title) ?? [],
         startAtLocal:
           proposed.execution.actionPlan?.actions.map((action) => action.startAtLocal) ?? [],
-        dueAtLocal:
-          proposed.execution.actionPlan?.actions.map((action) => action.dueAtLocal) ?? [],
+        dueAtLocal: proposed.execution.actionPlan?.actions.map((action) => action.dueAtLocal) ?? [],
         updateItemIds: proposed.execution.itemUpdates.flatMap((update) => update.itemIds),
         updateOperations: proposed.execution.itemUpdates.map((update) => update.operation),
         updateStartAtLocal: proposed.execution.itemUpdates.map((update) => update.startAtLocal),
@@ -330,12 +329,8 @@ export async function POST(request: Request) {
         reminderPolicyOperations: proposed.execution.reminderPolicies.map(
           (policy) => policy.operation,
         ),
-        reminderPolicyTypes: proposed.execution.reminderPolicies.map(
-          (policy) => policy.policyType,
-        ),
-        reminderPolicyTitles: proposed.execution.reminderPolicies.map(
-          (policy) => policy.title,
-        ),
+        reminderPolicyTypes: proposed.execution.reminderPolicies.map((policy) => policy.policyType),
+        reminderPolicyTitles: proposed.execution.reminderPolicies.map((policy) => policy.title),
         reminderPolicyCategories: proposed.execution.reminderPolicies.map(
           (policy) => policy.category,
         ),
@@ -357,11 +352,7 @@ export async function POST(request: Request) {
       },
     });
   }
-  if (
-    body.action === "agent_execute" &&
-    typeof body.text === "string" &&
-    body.confirm === true
-  ) {
+  if (body.action === "agent_execute" && typeof body.text === "string" && body.confirm === true) {
     const now = new Date();
     const context = await buildJarvisContext({
       userId: owner.id,
@@ -412,9 +403,15 @@ export async function POST(request: Request) {
         plan: deduped.plan,
         originalMessage: body.text,
       });
+      const policyValidation = validateReminderPoliciesBeforeSave({
+        plan: deduped.plan,
+        policies: bound.execution.reminderPolicies,
+        timezone: owner.timezone,
+      });
       validationWarnings.push(...deduped.warnings);
       validationWarnings.push(...validation.warnings);
-      if (!validation.ok) {
+      validationWarnings.push(...policyValidation.warnings);
+      if (!validation.ok || !policyValidation.ok) {
         await writeAgentExecutionAudit({
           userId: owner.id,
           telemetry: proposed.telemetry,
@@ -434,22 +431,22 @@ export async function POST(request: Request) {
         const storedPlan = await createStoredActionPlan({
           userId: owner.id,
           plan: deduped.plan,
-          idempotencyKey: createIdempotencyKey([
-            owner.id,
-            body.text,
-            "protected-agent-execute-v1",
-          ]),
+          idempotencyKey: createIdempotencyKey([owner.id, body.text, "protected-agent-execute-v1"]),
           commitMode: owner.smartCommitMode,
+          reminderPolicies: bound.execution.reminderPolicies,
         });
         const committed = await commitStoredActionPlan({
           actionPlanId: storedPlan.id,
           userId: owner.id,
           timezone: owner.timezone,
           now,
+          reminderPolicies: bound.execution.reminderPolicies,
         });
         if (committed.status === "committed") {
           createdItemIds.push(...committed.items.map((item) => item.id));
           createdReminderCount = committed.reminders.length;
+          policyIds.push(...committed.policies.map((policy) => policy.id));
+          reminderIds.push(...committed.policyReminderIds);
           await syncItemsToCalendarBestEffort(committed.items);
           finalAction = "agent_execute_committed_action_plan";
         } else {
@@ -472,7 +469,7 @@ export async function POST(request: Request) {
       finalAction = "agent_execute_updated_existing_items";
     }
 
-    if (bound.execution.reminderPolicies.length) {
+    if (bound.execution.reminderPolicies.length && !bound.execution.actionPlan) {
       const [createdItems, manageableItems] = await Promise.all([
         listItemsByIds(owner.id, createdItemIds),
         listManageableItems(owner.id, 100),
@@ -504,6 +501,18 @@ export async function POST(request: Request) {
       createdItemIds,
       updatedItemIds,
       validationWarnings,
+      createdPolicyIds: policyIds,
+      createdReminderIds: reminderIds,
+      transactionStarted: Boolean(bound.execution.actionPlan && createdItemIds.length),
+      transactionCommitted: Boolean(bound.execution.actionPlan && createdItemIds.length),
+      transactionRolledBack: false,
+      proposedMutationCount:
+        (bound.execution.actionPlan?.actions.length ?? 0) +
+        bound.execution.itemUpdates.length +
+        bound.execution.reminderPolicies.length,
+      committedMutationCount:
+        createdItemIds.length + updatedItemIds.length + policyIds.length + reminderIds.length,
+      partialMutationDetected: false,
     });
     return NextResponse.json({
       ok: toolCallsExecuted.length > 0,
@@ -532,6 +541,14 @@ async function writeAgentExecutionAudit(params: {
   createdItemIds?: string[];
   updatedItemIds?: string[];
   validationWarnings?: string[];
+  createdPolicyIds?: string[];
+  createdReminderIds?: string[];
+  transactionStarted?: boolean;
+  transactionCommitted?: boolean;
+  transactionRolledBack?: boolean;
+  proposedMutationCount?: number;
+  committedMutationCount?: number;
+  partialMutationDetected?: boolean;
 }) {
   await writeAudit({
     userId: params.userId,
@@ -547,6 +564,14 @@ async function writeAgentExecutionAudit(params: {
       finalAction: params.finalAction,
       createdItemIds: params.createdItemIds ?? [],
       updatedItemIds: params.updatedItemIds ?? [],
+      createdPolicyIds: params.createdPolicyIds ?? [],
+      createdReminderIds: params.createdReminderIds ?? [],
+      transactionStarted: params.transactionStarted ?? false,
+      transactionCommitted: params.transactionCommitted ?? false,
+      transactionRolledBack: params.transactionRolledBack ?? false,
+      proposedMutationCount: params.proposedMutationCount ?? 0,
+      committedMutationCount: params.committedMutationCount ?? 0,
+      partialMutationDetected: params.partialMutationDetected ?? false,
     },
   });
 }

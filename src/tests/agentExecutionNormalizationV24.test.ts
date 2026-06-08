@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { normalizeAgentExecutionProposal } from "@/ai/agentExecutionNormalization";
-import {
-  agentExecutionSchema,
-  type AgentReminderPolicy,
-} from "@/ai/schemas/agentExecution";
+import { agentExecutionSchema, type AgentReminderPolicy } from "@/ai/schemas/agentExecution";
 
 const now = new Date("2026-06-07T08:00:00.000Z");
 
@@ -20,9 +17,7 @@ describe("V2.4 post-AI reminder policy normalization", () => {
           reply: null,
           confidence: 0.9,
           requiresConfirmation: false,
-          actions: [
-            action("note", "note", "Кружок с анонсом винбокса", "2026-06-08T08:00:00"),
-          ],
+          actions: [action("note", "note", "Кружок с анонсом винбокса", "2026-06-08T08:00:00")],
           memoryCandidates: [],
           clarificationQuestions: [],
         },
@@ -123,6 +118,106 @@ describe("V2.4 post-AI reminder policy normalization", () => {
       }),
     ]);
   });
+
+  it("normalizes the Central Park production phrase into two events and four daily policies", () => {
+    const execution = normalizeAgentExecutionProposal({
+      execution: emptyExecution(),
+      text: "ВАЖНО! Студия Централ Парк в четверг с 20 до 22, а 16-го утром с 8 до 12. Нужно очень много напоминаний, каждый день по две штуки",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-09T05:00:00.000Z"),
+      activeContext: "none",
+    });
+
+    expect(execution.actionPlan?.actions).toHaveLength(2);
+    expect(
+      execution.actionPlan?.actions.map((item) => [item.startAtLocal, item.endAtLocal]),
+    ).toEqual([
+      ["2026-06-11T20:00:00", "2026-06-11T22:00:00"],
+      ["2026-06-16T08:00:00", "2026-06-16T12:00:00"],
+    ]);
+    expect(execution.reminderPolicies).toHaveLength(4);
+    expect(execution.reminderPolicies.map((policy) => policy.recurrenceRule)).toEqual([
+      "daily_at_10:00",
+      "daily_at_18:00",
+      "daily_at_10:00",
+      "daily_at_18:00",
+    ]);
+    expect(execution.clarificationQuestions).toEqual([]);
+  });
+
+  it("normalizes an open-ended tomorrow Drik request into one 08:00-22:00 nag", () => {
+    const execution = normalizeAgentExecutionProposal({
+      execution: agentExecutionSchema.parse({
+        ...emptyExecution(),
+        intent: "create_plan",
+        actionPlan: {
+          intent: "plan",
+          summary: "Напоминания о записи к Дрик",
+          reply: null,
+          confidence: 0.95,
+          requiresConfirmation: false,
+          actions: [action("note", "note", "Напоминания о записи к Дрик", "2026-06-10T08:00:00")],
+          memoryCandidates: [],
+          clarificationQuestions: [],
+        },
+      }),
+      text: "Завтра каждые полчаса, начиная с 8.00, напоминай мне о необходимости записи к Дрик",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-09T05:00:00.000Z"),
+      activeContext: "none",
+    });
+
+    expect(execution.actionPlan?.actions).toEqual([
+      expect.objectContaining({
+        kind: "task",
+        title: "Записаться к Дрик",
+        dueAtLocal: "2026-06-10T22:00:00",
+        reminders: [],
+      }),
+    ]);
+    expect(execution.reminderPolicies).toEqual([
+      expect.objectContaining({
+        policyType: "nag_until_ack",
+        startsAtLocal: "2026-06-10T08:00:00",
+        endsAtLocal: "2026-06-10T22:00:00",
+        intervalMinutes: 30,
+        requireAck: true,
+        onWindowEnd: "expire_silently",
+      }),
+    ]);
+  });
+
+  it("synthesizes the Drik task when OpenAI proposes only a reminder intent", () => {
+    const execution = normalizeAgentExecutionProposal({
+      execution: agentExecutionSchema.parse({
+        ...emptyExecution(),
+        intent: "manage_reminder_policies",
+        actionPlan: null,
+      }),
+      text: "Завтра каждые полчаса начиная с 8 напомняй записаться к Дрик",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-09T05:00:00.000Z"),
+      activeContext: "none",
+    });
+
+    expect(execution.actionPlan?.actions).toEqual([
+      expect.objectContaining({
+        kind: "task",
+        title: "Записаться к Дрик",
+        dueAtLocal: "2026-06-10T22:00:00",
+        reminders: [],
+      }),
+    ]);
+    expect(execution.reminderPolicies).toEqual([
+      expect.objectContaining({
+        policyType: "nag_until_ack",
+        startsAtLocal: "2026-06-10T08:00:00",
+        endsAtLocal: "2026-06-10T22:00:00",
+        intervalMinutes: 30,
+        requireAck: true,
+      }),
+    ]);
+  });
 });
 
 function emptyExecution() {
@@ -155,16 +250,17 @@ function policy(overrides: Partial<AgentReminderPolicy> = {}): AgentReminderPoli
     requireAck: false,
     maxOccurrences: null,
     minutesBefore: null,
+    windowEndInclusive: true,
+    catchUpMode: "one_immediate_then_resume",
+    onWindowEnd: "expire_silently",
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    allowDuringQuietHours: false,
     ...overrides,
   };
 }
 
-function action(
-  actionType: "note",
-  kind: "note",
-  title: string,
-  startAtLocal: string,
-) {
+function action(actionType: "note", kind: "note", title: string, startAtLocal: string) {
   return {
     actionType,
     kind,
