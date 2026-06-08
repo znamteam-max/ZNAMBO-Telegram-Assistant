@@ -1780,6 +1780,10 @@ The first corrected Central Park production attempt was atomically blocked by a 
 positive: the word `утром` was treated as an imprecise window despite the explicit `с 8 до 12`
 range. The validator now distinguishes a vague day-part from an explicit numeric clock/range.
 
+A protected self-cleaning snooze probe was added because direct local Neon pooler connections are
+unstable. It creates a temporary 10-minute interval policy, snoozes by 13 minutes, reports the
+resulting timestamps and deletes the entire probe chain in `finally`.
+
 Database rollout:
 
 ```text

@@ -540,6 +540,10 @@ Production Central Park acceptance initially returned `422` with zero mutations 
 anti-garbage validator treated `утром с 8 до 12` as a vague window. The fix keeps protection for
 truly vague `утром/днём` input while accepting explicit numeric ranges.
 
+The direct local snooze acceptance probe hit the known Neon pooler `ECONNRESET` before creating
+data. A protected server-side probe was added instead; it is self-cleaning and uses the same
+production services as Telegram callbacks.
+
 Next step:
 
 ```text

@@ -43,6 +43,7 @@ import {
   applyV242ProductionRepair,
   previewV242ProductionRepair,
 } from "@/services/v242ProductionRepair";
+import { runV242SnoozeProductionProbe } from "@/services/v242ProductionProbe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,6 +83,13 @@ export async function POST(request: Request) {
   }
   if (body.action === "v242_repair_apply" && body.confirm === true) {
     const result = await applyV242ProductionRepair({ userId: owner.id });
+    return NextResponse.json({ ok: true, result });
+  }
+  if (body.action === "v242_snooze_probe" && body.confirm === true) {
+    const result = await runV242SnoozeProductionProbe({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
     return NextResponse.json({ ok: true, result });
   }
   if (body.action === "policy_repair_apply" && body.confirm === true) {
