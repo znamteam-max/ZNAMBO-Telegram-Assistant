@@ -527,6 +527,15 @@ npm run build -> passed
 migration DDL applied idempotently to production Neon
 ```
 
+Production preview before apply:
+
+```text
+found one orphan generic Drik task
+found two partial Central Park policies
+found one malformed Drik interval policy stored as recurring
+repair was not applied until the exact filters covered all three incident signatures
+```
+
 Next step:
 
 ```text

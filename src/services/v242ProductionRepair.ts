@@ -27,9 +27,23 @@ export async function previewV242ProductionRepair(params: { userId: string; now?
         and(
           eq(reminderPolicies.userId, params.userId),
           eq(reminderPolicies.status, "active"),
-          sql`${reminderPolicies.title} ~* 'Дрик'`,
-          inArray(reminderPolicies.policyType, ["interval_window", "nag_until_ack"]),
-          sql`${reminderPolicies.endsAt} is not null and ${reminderPolicies.endsAt} < ${now.toISOString()}::timestamptz`,
+          sql`(
+            (
+              ${reminderPolicies.title} ~* 'Дрик'
+              and (
+                (
+                  ${reminderPolicies.endsAt} is not null
+                  and ${reminderPolicies.endsAt} < ${now.toISOString()}::timestamptz
+                )
+                or (
+                  ${reminderPolicies.intervalMinutes} is not null
+                  and ${reminderPolicies.policyType} not in ('interval_window', 'nag_until_ack')
+                )
+              )
+            )
+            or
+            ${reminderPolicies.title} ~* '^Напоминания? о занятии.*(Central|Централ).*Парк'
+          )`,
         ),
       ),
   ]);

@@ -1772,6 +1772,10 @@ owner-only /admin_repair_v242 preview|apply
 /versiondebug and safe scheduler/version fields in /api/health
 ```
 
+The first production preview additionally exposed two partial Central Park policies and one Drik
+interval stored with the invalid `recurring` type. The repair filter was tightened to include those
+exact known signatures before any mutation was applied.
+
 Database rollout:
 
 ```text
