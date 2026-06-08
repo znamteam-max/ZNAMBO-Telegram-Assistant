@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => ({
   listDailyDigestItems: vi.fn(),
   listEveningReviewItems: vi.fn(),
   listYesterdayCarryCandidates: vi.fn(),
+  reconcileActiveReminderPolicies: vi.fn(),
+  recordRunnerStarted: vi.fn(),
+  recordPolicyReconcile: vi.fn(),
+  recordRunnerFinished: vi.fn(),
 }));
 
 vi.mock("@/db/queries/reminders", () => ({
@@ -38,6 +42,14 @@ vi.mock("@/db/queries/items", () => ({
 
 vi.mock("@/bot/createBot", () => ({
   getBot: () => ({ api: { sendMessage: vi.fn() } }),
+}));
+vi.mock("@/services/reminderPolicyReconciler", () => ({
+  reconcileActiveReminderPolicies: mocks.reconcileActiveReminderPolicies,
+}));
+vi.mock("@/db/queries/schedulerHealth", () => ({
+  recordRunnerStarted: mocks.recordRunnerStarted,
+  recordPolicyReconcile: mocks.recordPolicyReconcile,
+  recordRunnerFinished: mocks.recordRunnerFinished,
 }));
 
 vi.mock("@/agent/state/taskViewState", () => ({
@@ -67,6 +79,15 @@ describe("runDueReminders", () => {
       endAt: null,
       dueAt: new Date("2026-06-01T06:30:00.000Z"),
     });
+    mocks.reconcileActiveReminderPolicies.mockResolvedValue({
+      checked: 0,
+      materialized: 0,
+      advanced: 0,
+      expired: 0,
+    });
+    mocks.recordRunnerStarted.mockResolvedValue(undefined);
+    mocks.recordPolicyReconcile.mockResolvedValue(undefined);
+    mocks.recordRunnerFinished.mockResolvedValue(undefined);
   });
 
   it("continues an until-ack reminder chain until the daily cutoff", async () => {

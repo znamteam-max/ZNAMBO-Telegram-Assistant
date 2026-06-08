@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   listActiveMessages: vi.fn(),
   markTelegramMessageStatus: vi.fn(),
   registerTelegramBotMessage: vi.fn(),
+  writeAudit: vi.fn(),
 }));
 
 vi.mock("@/db/queries/telegramMessageRegistry", () => ({
@@ -13,6 +14,9 @@ vi.mock("@/db/queries/telegramMessageRegistry", () => ({
 }));
 vi.mock("@/bot/createBot", () => ({
   getBot: () => ({ api: {} }),
+}));
+vi.mock("@/db/queries/audit", () => ({
+  writeAudit: mocks.writeAudit,
 }));
 
 import { deleteMessageSafe } from "@/telegram/messageLifecycle";

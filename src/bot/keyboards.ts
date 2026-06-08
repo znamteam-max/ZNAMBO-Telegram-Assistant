@@ -96,12 +96,105 @@ export function eventReactionKeyboard(itemId: string, kind = "event") {
 export function reminderMenuKeyboard(reminderId: string, plannerItemId?: string | null) {
   const keyboard = new InlineKeyboard()
     .text("✅ Сделал", `reminder:ack:${reminderId}`)
-    .text("⏰ Отложить", `reminder:snooze:${reminderId}:60`)
+    .text("10 мин", `reminder:snooze:${reminderId}:10`)
+    .text("30 мин", `reminder:snooze:${reminderId}:30`)
     .row()
-    .text("🔕 Пауза", `reminder:pause:${reminderId}`)
-    .text("🗑 Удалить", `reminder:delete:${reminderId}`);
+    .text("1 час", `reminder:snooze:${reminderId}:60`)
+    .text("До вечера", `reminder:snooze_evening:${reminderId}`)
+    .text("На завтра", `reminder:snooze_tomorrow:${reminderId}`)
+    .row()
+    .text("🛠 Изменить", `reminder:edit:${reminderId}`)
+    .text("🔕 Остановить", `reminder:delete:${reminderId}`);
   if (plannerItemId) keyboard.row().text("🔙 К плану", "dashboard:refresh");
   return keyboard;
+}
+
+export function reminderPolicyMenuKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("⏰ Один раз", `policy_menu:once:${itemId}`)
+    .text("⏪ До события", `policy_menu:before:${itemId}`)
+    .row()
+    .text("🔁 Через интервалы", `policy_menu:interval:${itemId}`)
+    .text("📆 По расписанию", `policy_menu:schedule:${itemId}`)
+    .row()
+    .text("✅ Пока не выполню", `policy_menu:until:${itemId}`)
+    .text("🌙 Тихие часы", `policy_menu:quiet:${itemId}`)
+    .row()
+    .text("📂 Категория", `policy_menu:category:${itemId}`)
+    .text("🛠 Свои настройки", `policy_menu:custom:${itemId}`)
+    .row()
+    .text("🔙 К плану", "dashboard:refresh");
+}
+
+export function oneTimeReminderMenuKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("Через 10 минут", `policy_once:${itemId}:10`)
+    .text("Через 30 минут", `policy_once:${itemId}:30`)
+    .row()
+    .text("Через час", `policy_once:${itemId}:60`)
+    .text("Сегодня вечером", `policy_once_evening:${itemId}`)
+    .row()
+    .text("Завтра утром", `policy_once_tomorrow:${itemId}`)
+    .text("Дата и время", `policy_menu:custom:${itemId}`)
+    .row()
+    .text("🔙 Назад", `policy_menu:root:${itemId}`);
+}
+
+export function beforeEventReminderMenuKeyboard(itemId: string) {
+  const keyboard = new InlineKeyboard();
+  for (const minutes of [5, 15, 30, 60, 120, 1440]) {
+    const label =
+      minutes === 60
+        ? "За час"
+        : minutes === 120
+          ? "За 2 часа"
+          : minutes === 1440
+            ? "За день"
+            : `За ${minutes} мин`;
+    keyboard.text(label, `policy_before:${itemId}:${minutes}`);
+    if (minutes === 15 || minutes === 60 || minutes === 1440) keyboard.row();
+  }
+  return keyboard
+    .text("За день + за час", `policy_before_multi:${itemId}`)
+    .row()
+    .text("🔙 Назад", `policy_menu:root:${itemId}`);
+}
+
+export function intervalReminderMenuKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("Каждые 10 мин", `policy_interval:${itemId}:10`)
+    .text("Каждые 15 мин", `policy_interval:${itemId}:15`)
+    .row()
+    .text("Каждые 30 мин", `policy_interval:${itemId}:30`)
+    .text("Каждый час", `policy_interval:${itemId}:60`)
+    .row()
+    .text("Свой интервал", `policy_menu:custom:${itemId}`)
+    .row()
+    .text("🔙 Назад", `policy_menu:root:${itemId}`);
+}
+
+export function scheduleReminderMenuKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("Каждый день", `policy_schedule:${itemId}:daily`)
+    .text("По будням", `policy_schedule:${itemId}:weekdays`)
+    .row()
+    .text("Раз в неделю", `policy_schedule:${itemId}:weekly`)
+    .text("Раз в 2 недели", `policy_schedule:${itemId}:every_2_weeks`)
+    .row()
+    .text("Раз в месяц", `policy_schedule:${itemId}:monthly`)
+    .text("Раз в год", `policy_schedule:${itemId}:yearly`)
+    .row()
+    .text("Своё правило", `policy_menu:custom:${itemId}`)
+    .row()
+    .text("🔙 Назад", `policy_menu:root:${itemId}`);
+}
+
+export function reminderPolicyRepairKeyboard() {
+  return new InlineKeyboard()
+    .text("Конвертировать", "repair_policies:apply")
+    .text("Показать детали", "repair_policies:preview")
+    .row()
+    .text("Архивировать вручную", "repair_policies:manual");
 }
 
 export function tentativeEventFollowupKeyboard(itemId: string) {

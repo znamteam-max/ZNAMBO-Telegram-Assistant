@@ -5,9 +5,10 @@ import {
   getActiveDashboard,
   markDashboardStatus,
 } from "@/db/queries/liveDashboards";
-import { listRecentRangeItems } from "@/db/queries/items";
+import { listLegacyReminderLikeItems, listRecentRangeItems } from "@/db/queries/items";
 import {
   listActiveReminderPolicies,
+  listActiveReminderPoliciesByCategory,
   listLongTermReminderPolicies,
 } from "@/db/queries/reminderPolicies";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
@@ -88,17 +89,38 @@ export async function renderReminderPolicyList(params: {
   userId: string;
   timezone: string;
   longTermOnly?: boolean;
+  category?: string | null;
 }) {
-  const policies = params.longTermOnly
-    ? await listLongTermReminderPolicies(params.userId, 100)
-    : await listActiveReminderPolicies(params.userId, 100);
+  const [policies, legacyAll] = await Promise.all([
+    params.category
+      ? listActiveReminderPoliciesByCategory(params.userId, params.category, 100)
+      : params.longTermOnly
+        ? listLongTermReminderPolicies(params.userId, 100)
+        : listActiveReminderPolicies(params.userId, 100),
+    listLegacyReminderLikeItems(params.userId, 50),
+  ]);
+  const legacy = params.longTermOnly
+    ? legacyAll.filter(
+        (item) =>
+          item.visibility === "long_term" || /(зеркал|жкх|регулярное\s+напоминание)/i.test(item.title),
+      )
+    : legacyAll;
   const title = params.longTermOnly ? "Дальние и регулярные напоминания" : "Активные напоминания";
   return [
     title,
     "",
     ...(policies.length
       ? policies.map((policy, index) => `${index + 1}. ${formatPolicy(policy, params.timezone)}`)
-      : ["Пока пусто."]),
+      : ["Активные политики: 0"]),
+    ...(legacy.length
+      ? [
+          "",
+          `Нашёл ${legacy.length} старых записей, похожих на напоминания, но без policy:`,
+          ...legacy.map((item, index) => `${index + 1}. ${item.title}`),
+          "",
+          "Они не считаются работающими регулярными напоминаниями до конвертации.",
+        ]
+      : []),
   ].join("\n");
 }
 

@@ -29,6 +29,13 @@
       "when": 1780819200000,
       "tag": "0003_live_dashboard_reminder_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780905600000,
+      "tag": "0004_reminder_reliability_repair",
+      "breakpoints": true
     }
   ]
 }

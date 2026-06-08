@@ -23,10 +23,20 @@ import {
   renderReminderPolicyList,
 } from "@/telegram/liveDashboard";
 import { cleanupTransientMessages } from "@/telegram/messageLifecycle";
+import { renderCronHealth, renderPolicyDebug } from "@/services/reminderDiagnostics";
+import {
+  applyReminderPolicyRepair,
+  previewReminderPolicyRepair,
+} from "@/services/reminderPolicyRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
-import { calendarConnectKeyboard, memoryDeleteKeyboard, startKeyboard } from "./keyboards";
+import {
+  calendarConnectKeyboard,
+  memoryDeleteKeyboard,
+  reminderPolicyRepairKeyboard,
+  startKeyboard,
+} from "./keyboards";
 import { replyAndRecord } from "./reply";
 
 export function registerCommands(bot: Bot<BotContext>) {
@@ -66,6 +76,12 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/undo — откатить последнее удаление или cleanup",
         "/remindertest 2 — тестовое напоминание через N минут",
         "/aihealth — реальная проверка OpenAI Responses API и tool calling",
+        "/dashboard — живой план",
+        "/reminders — активные reminder policies",
+        "/longterm — дальние и регулярные policies",
+        "/cleanup_chat — убрать старые bot-карточки",
+        "/cronhealth — статус scheduler и policy reconciler",
+        "/policydebug — диагностика последней reminder policy",
         "/calendar — статус календаря",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -138,9 +154,18 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("reminders", async (ctx) => {
     const owner = requireOwner(ctx);
+    const category = String(ctx.match ?? "").trim().toLowerCase() || null;
+    const text = await renderReminderPolicyList({
+      userId: owner.id,
+      timezone: owner.timezone,
+      category,
+    });
     await replyAndRecord(
       ctx,
-      await renderReminderPolicyList({ userId: owner.id, timezone: owner.timezone }),
+      text,
+      text.includes("без policy")
+        ? { reply_markup: reminderPolicyRepairKeyboard() }
+        : undefined,
     );
   });
   bot.command("longterm", async (ctx) => {
@@ -163,6 +188,70 @@ export function registerCommands(bot: Bot<BotContext>) {
       chatId: ctx.chat.id,
       timezone: owner.timezone,
     });
+  });
+  bot.command("cronhealth", async (ctx) => {
+    const owner = requireOwner(ctx);
+    await replyAndRecord(ctx, await renderCronHealth(owner.timezone));
+  });
+  bot.command("policydebug", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const policyId = String(ctx.match ?? "").trim() || null;
+    await replyAndRecord(
+      ctx,
+      await renderPolicyDebug({
+        userId: owner.id,
+        timezone: owner.timezone,
+        policyId,
+      }),
+    );
+  });
+  bot.command("admin_repair_reminder_policies", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    if (mode === "apply") {
+      const result = await applyReminderPolicyRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      });
+      await replyAndRecord(
+        ctx,
+        [
+          "Reminder Policy Repair применён.",
+          `Исправлено items: ${result.repairedItems.length}`,
+          `Архивировано дублей: ${result.archivedItems.length}`,
+          `Policies: ${result.policyIds.length}`,
+          `Reconcile: ${result.reconcile.checked} проверено, ${result.reconcile.materialized} материализовано`,
+        ].join("\n"),
+      );
+      if (ctx.chat?.id) {
+        await refreshDashboardAfterMutation({
+          userId: owner.id,
+          chatId: ctx.chat.id,
+          timezone: owner.timezone,
+        });
+      }
+      return;
+    }
+    const preview = await previewReminderPolicyRepair({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    await replyAndRecord(
+      ctx,
+      [
+        "Reminder Policy Repair preview:",
+        ...(preview.groups.length
+          ? preview.groups.flatMap((group) => [
+              "",
+              `${group.group}: ${group.action}`,
+              ...group.titles.map((title) => `• ${title}`),
+            ])
+          : ["Подходящих legacy-записей не найдено."]),
+        "",
+        "Для применения: /admin_repair_reminder_policies apply",
+      ].join("\n"),
+      preview.groups.length ? { reply_markup: reminderPolicyRepairKeyboard() } : undefined,
+    );
   });
   bot.command("review_yesterday", async (ctx) => replyJarvisTool(ctx, await renderCommandYesterday(ctx)));
   bot.command("cleanup_garbage", async (ctx) => replyJarvisTool(ctx, await runCommandCleanup(ctx)));

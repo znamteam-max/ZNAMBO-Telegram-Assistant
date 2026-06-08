@@ -106,6 +106,30 @@ export async function markReminderFailed(params: {
     .where(and(eq(reminders.id, params.reminder.id), eq(reminders.status, "claimed")));
 }
 
+export async function restorePolicyReminder(params: {
+  reminderId: string;
+  scheduledAt: Date;
+}) {
+  const [row] = await getDb()
+    .update(reminders)
+    .set({
+      status: "pending",
+      scheduledAt: params.scheduledAt,
+      claimedAt: null,
+      sentAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(reminders.id, params.reminderId),
+        inArray(reminders.status, ["failed", "cancelled"]),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
 export async function cancelItemReminders(userId: string, plannerItemId: string) {
   await getDb()
     .update(reminders)
@@ -137,6 +161,24 @@ export async function cancelItemReminderChains(userId: string, plannerItemIds: s
         eq(reminders.userId, userId),
         inArray(reminders.plannerItemId, plannerItemIds),
         inArray(reminders.status, ["pending", "claimed"]),
+      ),
+    );
+}
+
+export async function cancelLegacyRemindersWithoutPolicy(
+  userId: string,
+  plannerItemIds: string[],
+) {
+  if (!plannerItemIds.length) return;
+  await getDb()
+    .update(reminders)
+    .set({ status: "cancelled", updatedAt: new Date() })
+    .where(
+      and(
+        eq(reminders.userId, userId),
+        inArray(reminders.plannerItemId, plannerItemIds),
+        inArray(reminders.status, ["pending", "claimed"]),
+        sql`${reminders.policyId} is null`,
       ),
     );
 }

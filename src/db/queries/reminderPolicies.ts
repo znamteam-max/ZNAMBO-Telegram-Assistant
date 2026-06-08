@@ -22,6 +22,9 @@ export type CreateReminderPolicyInput = {
   intervalMinutes?: number | null;
   requireAck?: boolean;
   maxOccurrences?: number | null;
+  windowEndInclusive?: boolean;
+  catchUpMode?: string;
+  quietHours?: Record<string, unknown> | null;
   metadata?: Record<string, unknown>;
   idempotencyKey: string;
 };
@@ -57,6 +60,9 @@ export async function createReminderPolicyIfMissing(
       intervalMinutes: input.intervalMinutes,
       requireAck: input.requireAck ?? false,
       maxOccurrences: input.maxOccurrences,
+      windowEndInclusive: input.windowEndInclusive ?? true,
+      catchUpMode: input.catchUpMode ?? "one_immediate_then_resume",
+      quietHours: input.quietHours,
       metadata: { ...(input.metadata ?? {}), idempotencyKey: input.idempotencyKey },
     })
     .returning();
@@ -97,11 +103,56 @@ export async function listLongTermReminderPolicies(userId: string, limit = 100) 
     .limit(limit);
 }
 
+export async function listActiveReminderPoliciesByCategory(
+  userId: string,
+  category: string,
+  limit = 100,
+) {
+  const categories =
+    category === "car"
+      ? ["car", "recurring_car"]
+      : category === "finance"
+        ? ["finance", "recurring_finance"]
+        : [category];
+  return getDb()
+    .select()
+    .from(reminderPolicies)
+    .where(
+      and(
+        eq(reminderPolicies.userId, userId),
+        eq(reminderPolicies.status, "active"),
+        inArray(reminderPolicies.category, categories),
+      ),
+    )
+    .orderBy(sql`${reminderPolicies.nextFireAt} asc nulls last`, asc(reminderPolicies.title))
+    .limit(limit);
+}
+
+export async function listActivePoliciesForReconciliation(limit = 200) {
+  return getDb()
+    .select()
+    .from(reminderPolicies)
+    .where(eq(reminderPolicies.status, "active"))
+    .orderBy(sql`${reminderPolicies.nextFireAt} asc nulls first`, asc(reminderPolicies.createdAt))
+    .limit(limit);
+}
+
 export async function updateReminderPolicy(params: {
   policyId: string;
   userId: string;
   status?: string;
   nextFireAt?: Date | null;
+  startsAt?: Date | null;
+  endsAt?: Date | null;
+  title?: string;
+  category?: string;
+  policyType?: string;
+  recurrenceRule?: string | null;
+  intervalMinutes?: number | null;
+  requireAck?: boolean;
+  windowEndInclusive?: boolean;
+  catchUpMode?: string;
+  quietHours?: Record<string, unknown> | null;
   metadata?: Record<string, unknown>;
 }) {
   const [row] = await getDb()
@@ -109,6 +160,19 @@ export async function updateReminderPolicy(params: {
     .set({
       ...(params.status ? { status: params.status } : {}),
       ...(params.nextFireAt !== undefined ? { nextFireAt: params.nextFireAt } : {}),
+      ...(params.startsAt !== undefined ? { startsAt: params.startsAt } : {}),
+      ...(params.endsAt !== undefined ? { endsAt: params.endsAt } : {}),
+      ...(params.title !== undefined ? { title: params.title } : {}),
+      ...(params.category !== undefined ? { category: params.category } : {}),
+      ...(params.policyType !== undefined ? { policyType: params.policyType } : {}),
+      ...(params.recurrenceRule !== undefined ? { recurrenceRule: params.recurrenceRule } : {}),
+      ...(params.intervalMinutes !== undefined ? { intervalMinutes: params.intervalMinutes } : {}),
+      ...(params.requireAck !== undefined ? { requireAck: params.requireAck } : {}),
+      ...(params.windowEndInclusive !== undefined
+        ? { windowEndInclusive: params.windowEndInclusive }
+        : {}),
+      ...(params.catchUpMode !== undefined ? { catchUpMode: params.catchUpMode } : {}),
+      ...(params.quietHours !== undefined ? { quietHours: params.quietHours } : {}),
       ...(params.metadata
         ? {
             metadata: sql`${reminderPolicies.metadata} || ${JSON.stringify(params.metadata)}::jsonb`,
@@ -157,6 +221,39 @@ export async function createPolicyOccurrence(params: {
   return row ?? null;
 }
 
+export async function getPolicySlotState(policyId: string, scheduledFor: Date) {
+  const [row] = await getDb()
+    .select({
+      occurrence: reminderPolicyOccurrences,
+      reminder: reminders,
+    })
+    .from(reminderPolicyOccurrences)
+    .leftJoin(reminders, eq(reminderPolicyOccurrences.reminderId, reminders.id))
+    .where(
+      and(
+        eq(reminderPolicyOccurrences.policyId, policyId),
+        eq(reminderPolicyOccurrences.scheduledFor, scheduledFor),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+export async function getPendingReminderForPolicy(policyId: string) {
+  const [row] = await getDb()
+    .select()
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.policyId, policyId),
+        inArray(reminders.status, ["pending", "claimed"]),
+      ),
+    )
+    .orderBy(asc(reminders.scheduledAt))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function attachOccurrenceReminder(params: {
   policyId: string;
   scheduledFor: Date;
@@ -194,10 +291,72 @@ export async function markPolicyOccurrenceAcked(reminderId: string, skipped = fa
 
 export async function getPolicyForReminder(reminderId: string) {
   const [row] = await getDb()
-    .select({ policy: reminderPolicies, reminder: reminders })
+    .select({
+      policy: reminderPolicies,
+      reminder: reminders,
+      occurrence: reminderPolicyOccurrences,
+    })
     .from(reminders)
     .innerJoin(reminderPolicies, eq(reminders.policyId, reminderPolicies.id))
+    .leftJoin(
+      reminderPolicyOccurrences,
+      eq(reminderPolicyOccurrences.reminderId, reminders.id),
+    )
     .where(eq(reminders.id, reminderId))
     .limit(1);
   return row ?? null;
+}
+
+export async function getLatestPolicyDebug(userId: string, policyId?: string | null) {
+  const conditions = [
+    eq(reminderPolicies.userId, userId),
+    ...(policyId ? [eq(reminderPolicies.id, policyId)] : []),
+  ];
+  const [policy] = await getDb()
+    .select()
+    .from(reminderPolicies)
+    .where(and(...conditions))
+    .orderBy(desc(reminderPolicies.updatedAt))
+    .limit(1);
+  if (!policy) return null;
+
+  const [occurrence] = await getDb()
+    .select({
+      occurrence: reminderPolicyOccurrences,
+      reminder: reminders,
+    })
+    .from(reminderPolicyOccurrences)
+    .leftJoin(reminders, eq(reminderPolicyOccurrences.reminderId, reminders.id))
+    .where(eq(reminderPolicyOccurrences.policyId, policy.id))
+    .orderBy(desc(reminderPolicyOccurrences.scheduledFor))
+    .limit(1);
+  return { policy, occurrence: occurrence ?? null };
+}
+
+export async function getReminderPolicyHealthStats() {
+  const rows = await getDb().execute(sql`
+    select
+      count(*) filter (where p.status = 'active')::int as "activePolicyCount",
+      count(*) filter (
+        where p.status = 'active'
+          and (
+            p.next_fire_at is null
+            or not exists (
+              select 1
+              from "assistant"."reminders" r
+              where r.policy_id = p.id
+                and r.status in ('pending', 'claimed')
+            )
+          )
+      )::int as "policiesMissingNextReminder"
+    from "assistant"."reminder_policies" p
+  `);
+  return (
+    (rows[0] as
+      | { activePolicyCount: number; policiesMissingNextReminder: number }
+      | undefined) ?? {
+      activePolicyCount: 0,
+      policiesMissingNextReminder: 0,
+    }
+  );
 }

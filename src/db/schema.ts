@@ -34,6 +34,8 @@ export const users = assistantTable(
     locale: text("locale").notNull().default("ru"),
     smartCommitMode: text("smart_commit_mode").notNull().default("auto_low_risk"),
     isOnboarded: boolean("is_onboarded").notNull().default(false),
+    quietHoursStart: text("quiet_hours_start").notNull().default("00:00"),
+    quietHoursEnd: text("quiet_hours_end").notNull().default("07:30"),
     ...timestamps,
   },
   (table) => [uniqueIndex("users_telegram_user_id_uq").on(table.telegramUserId)],
@@ -317,6 +319,8 @@ export const reminderPolicies = assistantTable(
     intervalMinutes: integer("interval_minutes"),
     requireAck: boolean("require_ack").notNull().default(false),
     maxOccurrences: integer("max_occurrences"),
+    windowEndInclusive: boolean("window_end_inclusive").notNull().default(true),
+    catchUpMode: text("catch_up_mode").notNull().default("one_immediate_then_resume"),
     quietHours: jsonb("quiet_hours").$type<Record<string, unknown> | null>(),
     escalationPolicy: jsonb("escalation_policy").$type<Record<string, unknown> | null>(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
@@ -352,6 +356,21 @@ export const reminderPolicyOccurrences = assistantTable(
     index("reminder_policy_occurrences_status_idx").on(table.status, table.scheduledFor),
   ],
 );
+
+export const schedulerRuntimeHealth = assistantTable("scheduler_runtime_health", {
+  key: text("key").primaryKey(),
+  lastRunnerStartedAt: timestamp("last_runner_started_at", { withTimezone: true }),
+  lastRunnerFinishedAt: timestamp("last_runner_finished_at", { withTimezone: true }),
+  lastRunnerClaimed: integer("last_runner_claimed").notNull().default(0),
+  lastRunnerSent: integer("last_runner_sent").notNull().default(0),
+  lastRunnerFailed: integer("last_runner_failed").notNull().default(0),
+  lastPolicyReconcileAt: timestamp("last_policy_reconcile_at", { withTimezone: true }),
+  lastPolicyReconcileChecked: integer("last_policy_reconcile_checked").notNull().default(0),
+  lastPolicyReconcileCreated: integer("last_policy_reconcile_created").notNull().default(0),
+  lastSchedulerHitAt: timestamp("last_scheduler_hit_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const liveDashboards = assistantTable(
   "live_dashboards",
@@ -561,6 +580,7 @@ export type PlannerItem = typeof plannerItems.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type ReminderPolicy = typeof reminderPolicies.$inferSelect;
 export type ReminderPolicyOccurrence = typeof reminderPolicyOccurrences.$inferSelect;
+export type SchedulerRuntimeHealth = typeof schedulerRuntimeHealth.$inferSelect;
 export type LiveDashboard = typeof liveDashboards.$inferSelect;
 export type TelegramMessageRegistryEntry = typeof telegramMessageRegistry.$inferSelect;
 export type PendingAction = typeof pendingActions.$inferSelect;

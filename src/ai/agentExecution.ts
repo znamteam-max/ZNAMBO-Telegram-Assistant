@@ -143,6 +143,11 @@ export const agentExecutionTool = {
             "requireAck",
             "maxOccurrences",
             "minutesBefore",
+            "windowEndInclusive",
+            "catchUpMode",
+            "quietHoursStart",
+            "quietHoursEnd",
+            "allowDuringQuietHours",
           ],
           properties: {
             operation: {
@@ -178,6 +183,13 @@ export const agentExecutionTool = {
                 "admin",
                 "project",
                 "someday",
+                "urgent",
+                "meeting",
+                "car",
+                "home",
+                "finance",
+                "documents",
+                "people",
               ],
             },
             policyType: {
@@ -201,6 +213,14 @@ export const agentExecutionTool = {
             requireAck: { type: "boolean" },
             maxOccurrences: { type: ["integer", "null"], minimum: 1 },
             minutesBefore: { type: ["integer", "null"], minimum: 1 },
+            windowEndInclusive: { type: "boolean" },
+            catchUpMode: {
+              type: "string",
+              enum: ["none", "latest_only", "one_immediate_then_resume"],
+            },
+            quietHoursStart: { type: ["string", "null"] },
+            quietHoursEnd: { type: ["string", "null"] },
+            allowDuringQuietHours: { type: "boolean" },
           },
         },
       },
@@ -359,6 +379,8 @@ Reminder policy rules:
 - Для еженедельных и двухнедельных напоминаний используй create_recurring_policy, policyType=recurring или long_term и recurrenceRule=weekly/every_2_weeks.
 - Для "за час до каждого события" используй create_before_event_policy для реальных item IDs, minutesBefore=60. Не создавай generic task.
 - Для меню реакции после события используй create_post_event_reaction_policy, policyType=post_event_menu для каждого item ID.
+- Для "не пиши ночью" используй quietHoursStart=00:00, quietHoursEnd=07:30. Для "можно ночью" ставь allowDuringQuietHours=true.
+- Для interval policy по умолчанию catchUpMode=one_immediate_then_resume и windowEndInclusive=true.
 - Для запросов показать живой план, напоминания или дальние записи используй viewScope=dashboard/reminders/longterm.
 
 Контекст с реальными item IDs и последним task view:

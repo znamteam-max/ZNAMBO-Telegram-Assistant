@@ -40,6 +40,15 @@ import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
 import { filterDuplicateActionPlan } from "@/services/actionPlanDedup";
 import { bindContextualCompletionTarget } from "@/services/contextualAgentBinding";
 import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
+import {
+  applyReminderPolicyRepair,
+  previewReminderPolicyRepair,
+} from "@/services/reminderPolicyRepair";
+import {
+  getLatestPolicyDebug,
+  listActiveReminderPolicies,
+} from "@/db/queries/reminderPolicies";
+import { getSchedulerRuntimeHealth } from "@/db/queries/schedulerHealth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +75,56 @@ export async function POST(request: Request) {
     text?: string;
     confirm?: boolean;
   };
+  if (body.action === "policy_repair_preview") {
+    const preview = await previewReminderPolicyRepair({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: true, preview });
+  }
+  if (body.action === "policy_repair_apply" && body.confirm === true) {
+    const result = await applyReminderPolicyRepair({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: true, result });
+  }
+  if (body.action === "policy_snapshot") {
+    const [policies, latest, scheduler] = await Promise.all([
+      listActiveReminderPolicies(owner.id, 100),
+      getLatestPolicyDebug(owner.id),
+      getSchedulerRuntimeHealth(),
+    ]);
+    return NextResponse.json({
+      ok: true,
+      policies: policies.map((policy) => ({
+        id: policy.id,
+        itemId: policy.itemId,
+        title: policy.title,
+        category: policy.category,
+        policyType: policy.policyType,
+        status: policy.status,
+        startsAt: policy.startsAt,
+        endsAt: policy.endsAt,
+        nextFireAt: policy.nextFireAt,
+        recurrenceRule: policy.recurrenceRule,
+        intervalMinutes: policy.intervalMinutes,
+        requireAck: policy.requireAck,
+        catchUpMode: policy.catchUpMode,
+      })),
+      latest: latest
+        ? {
+            policyId: latest.policy.id,
+            title: latest.policy.title,
+            nextFireAt: latest.policy.nextFireAt,
+            lastScheduledFor: latest.occurrence?.occurrence.scheduledFor ?? null,
+            lastDeliveredAt: latest.occurrence?.occurrence.deliveredAt ?? null,
+            reminderStatus: latest.occurrence?.reminder?.status ?? null,
+          }
+        : null,
+      scheduler,
+    });
+  }
   if (body.action === "planner_snapshot") {
     const items = await listVisibleActivePlanItems(owner.id, 100);
     return NextResponse.json({

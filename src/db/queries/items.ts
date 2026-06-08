@@ -279,6 +279,68 @@ export async function cancelPlannerItemWithMetadata(params: {
   return item ?? null;
 }
 
+export async function updatePlannerItemForReminderRepair(params: {
+  userId: string;
+  itemId: string;
+  kind: string;
+  title: string;
+  timezone: string;
+  startAt?: Date | null;
+  endAt?: Date | null;
+  dueAt?: Date | null;
+  category?: string | null;
+  visibility?: string | null;
+  sourcePolicyId?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({
+      kind: params.kind,
+      title: params.title,
+      timezone: params.timezone,
+      startAt: params.startAt ?? null,
+      endAt: params.endAt ?? null,
+      dueAt: params.dueAt ?? null,
+      category: params.category,
+      visibility: params.visibility ?? "active",
+      sourcePolicyId: params.sourcePolicyId,
+      metadata: params.metadata
+        ? sql`${plannerItems.metadata} || ${JSON.stringify(params.metadata)}::jsonb`
+        : plannerItems.metadata,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.id, params.itemId)))
+    .returning();
+  return item ?? null;
+}
+
+export async function listLegacyReminderLikeItems(userId: string, limit = 50) {
+  return getDb()
+    .select()
+    .from(plannerItems)
+    .where(
+      and(
+        eq(plannerItems.userId, userId),
+        eq(plannerItems.status, "active"),
+        sql`(
+          ${plannerItems.title} ilike '%напоминан%'
+          or ${plannerItems.title} ilike '%позвонить дрик%'
+          or ${plannerItems.title} ilike '%винбокс%'
+        )`,
+        sql`not exists (
+          select 1
+          from "assistant"."reminder_policies" p
+          where p.user_id = ${plannerItems.userId}
+            and p.item_id = ${plannerItems.id}
+            and p.status = 'active'
+        )`,
+      ),
+    )
+    .orderBy(desc(plannerItems.createdAt))
+    .limit(limit);
+}
+
 export async function mergePlannerItemMetadata(params: {
   userId: string;
   itemId: string;

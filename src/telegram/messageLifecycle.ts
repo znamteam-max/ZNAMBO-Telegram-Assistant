@@ -4,6 +4,7 @@ import {
   registerTelegramBotMessage,
 } from "@/db/queries/telegramMessageRegistry";
 import { logger } from "@/lib/logger";
+import { writeAudit } from "@/db/queries/audit";
 
 import { getBot } from "@/bot/createBot";
 
@@ -95,11 +96,18 @@ export async function cleanupMessagesForItem(params: {
     chatId: params.chatId,
     relatedItemId: params.itemId,
   });
-  return deleteMessagesSafe({
+  const result = await deleteMessagesSafe({
     chatId: params.chatId,
     messageIds: messages.map((message) => message.messageId),
     api: params.api,
   });
+  await writeCleanupAudit({
+    userId: params.userId,
+    itemId: params.itemId,
+    operation: "cleanup_messages_for_item",
+    messageCount: messages.length,
+  });
+  return result;
 }
 
 export async function cleanupTransientMessages(params: {
@@ -112,11 +120,17 @@ export async function cleanupTransientMessages(params: {
     chatId: params.chatId,
     purposes: ["item_menu", "reminder", "followup", "confirmation", "transient_status"],
   });
-  return deleteMessagesSafe({
+  const result = await deleteMessagesSafe({
     chatId: params.chatId,
     messageIds: messages.map((message) => message.messageId),
     api: params.api,
   });
+  await writeCleanupAudit({
+    userId: params.userId,
+    operation: "cleanup_transient_messages",
+    messageCount: messages.length,
+  });
+  return result;
 }
 
 export async function cleanupOldDashboards(params: {
@@ -159,4 +173,34 @@ export async function cleanupAfterCallback(params: {
       api: params.api,
     });
   }
+  await writeCleanupAudit({
+    userId: params.userId,
+    itemId: params.relatedItemId,
+    operation: "cleanup_after_callback",
+    messageCount: params.messageId ? 1 : 0,
+  });
+}
+
+async function writeCleanupAudit(params: {
+  userId: string;
+  itemId?: string | null;
+  operation: string;
+  messageCount: number;
+}) {
+  await writeAudit({
+    userId: params.userId,
+    action: "assistant.telegram_message_cleanup",
+    entityType: params.itemId ? "planner_item" : "telegram_message",
+    entityId: params.itemId,
+    details: {
+      mutationSource: "telegram_message_cleanup",
+      plannerMutationAllowed: false,
+      operation: params.operation,
+      messageCount: params.messageCount,
+    },
+  }).catch((error) => {
+    logger.warn("Telegram cleanup audit failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }

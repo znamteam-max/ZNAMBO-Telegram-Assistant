@@ -13,6 +13,11 @@ import {
 import { createReminderIfMissing } from "@/db/queries/reminders";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { localIsoToUtcDate } from "@/domain/dateTime";
+import {
+  applyQuietHours,
+  computeNextPolicySlotAfterDelivery,
+} from "@/domain/reminderPolicySchedule";
+import { getUserById } from "@/db/queries/users";
 
 export async function applyAgentReminderPolicies(params: {
   userId: string;
@@ -63,15 +68,28 @@ export async function applyAgentReminderPolicies(params: {
         intervalMinutes: proposal.intervalMinutes,
         requireAck: proposal.requireAck,
         maxOccurrences: proposal.maxOccurrences,
+        windowEndInclusive: proposal.windowEndInclusive,
+        catchUpMode: proposal.catchUpMode,
+        quietHours:
+          proposal.quietHoursStart && proposal.quietHoursEnd
+            ? {
+                start: proposal.quietHoursStart,
+                end: proposal.quietHoursEnd,
+                allowDuringQuietHours: proposal.allowDuringQuietHours,
+              }
+            : proposal.allowDuringQuietHours
+              ? { allowDuringQuietHours: true }
+              : null,
         idempotencyKey: policyKey(proposal, target, nextFireAt),
         metadata: {
           operation: proposal.operation,
           minutesBefore: proposal.minutesBefore,
           stopOnItemComplete: proposal.requireAck,
+          allowDuringQuietHours: proposal.allowDuringQuietHours,
         },
       });
       createdPolicies.push(policy);
-      const reminder = await materializeNextPolicyReminder(policy, nextFireAt);
+      const reminder = await materializeNextPolicyReminder(policy, nextFireAt, { now });
       if (reminder) reminderIds.push(reminder.id);
     }
   }
@@ -83,20 +101,31 @@ export async function applyAgentReminderPolicies(params: {
   };
 }
 
-export async function materializeNextPolicyReminder(policy: ReminderPolicy, fireAt?: Date | null) {
+export async function materializeNextPolicyReminder(
+  policy: ReminderPolicy,
+  fireAt?: Date | null,
+  options?: { now?: Date; deliveryAt?: Date; catchUp?: boolean },
+) {
+  const now = options?.now ?? new Date();
   const scheduledAt = fireAt ?? policy.nextFireAt;
-  if (!scheduledAt || scheduledAt <= new Date()) return null;
+  if (!scheduledAt) return null;
+  const deliveryAt = await resolveDeliveryAt(policy, options?.deliveryAt ?? scheduledAt);
+  if (deliveryAt < now && !options?.catchUp) return null;
   await createPolicyOccurrence({
     policyId: policy.id,
     scheduledFor: scheduledAt,
-    metadata: { policyType: policy.policyType },
+    metadata: {
+      policyType: policy.policyType,
+      catchUp: options?.catchUp === true,
+      deliveryAt: deliveryAt.toISOString(),
+    },
   });
   const reminder = await createReminderIfMissing({
     userId: policy.userId,
     plannerItemId: policy.itemId,
     type: reminderTypeForPolicy(policy),
     idempotencyKey: `policy:${policy.id}:${scheduledAt.toISOString()}`,
-    scheduledAt,
+    scheduledAt: deliveryAt,
     repeatUntilAck: policy.requireAck,
     recurrenceKey: policy.recurrenceRule,
     policyId: policy.id,
@@ -107,6 +136,8 @@ export async function materializeNextPolicyReminder(policy: ReminderPolicy, fire
       policyType: policy.policyType,
       category: policy.category,
       requireAck: policy.requireAck,
+      scheduledFor: scheduledAt.toISOString(),
+      catchUp: options?.catchUp === true,
     },
   });
   if (reminder) {
@@ -124,7 +155,16 @@ export async function advancePolicyAfterDelivery(reminderId: string, deliveredAt
   if (!row) return null;
   await markPolicyOccurrenceDelivered(reminderId, deliveredAt);
   const policy = row.policy;
-  const next = computeNextFire(policy, deliveredAt);
+  const scheduledFor =
+    row.occurrence?.scheduledFor ??
+    row.reminder.scheduledAt ??
+    policy.nextFireAt ??
+    deliveredAt;
+  const next = computeNextPolicySlotAfterDelivery({
+    policy,
+    scheduledFor,
+    now: deliveredAt,
+  });
   if (!next) {
     await updateReminderPolicy({
       policyId: policy.id,
@@ -139,7 +179,7 @@ export async function advancePolicyAfterDelivery(reminderId: string, deliveredAt
     userId: policy.userId,
     nextFireAt: next,
   });
-  return updated ? materializeNextPolicyReminder(updated, next) : null;
+  return updated ? materializeNextPolicyReminder(updated, next, { now: deliveredAt }) : null;
 }
 
 export async function acknowledgePolicyReminder(reminderId: string, skipped = false) {
@@ -197,20 +237,6 @@ function determineInitialFire(params: {
   return nextFromRule(params.proposal.recurrenceRule, params.now, params.timezone);
 }
 
-function computeNextFire(policy: ReminderPolicy, after: Date) {
-  if (policy.policyType === "interval_window" || policy.policyType === "nag_until_ack") {
-    const next = DateTime.fromJSDate(after, { zone: "utc" })
-      .plus({ minutes: policy.intervalMinutes ?? 30 })
-      .toJSDate();
-    if (policy.endsAt && next > policy.endsAt) return null;
-    return next;
-  }
-  if (policy.policyType === "recurring" || policy.policyType === "long_term") {
-    return nextFromRule(policy.recurrenceRule, after, policy.timezone);
-  }
-  return null;
-}
-
 function nextFromRule(rule: string | null, after: Date, timezone: string) {
   const local = DateTime.fromJSDate(after, { zone: "utc" }).setZone(timezone);
   if (!rule) return local.plus({ days: 1 }).startOf("day").plus({ hours: 9, minutes: 30 }).toUTC().toJSDate();
@@ -222,6 +248,19 @@ function nextFromRule(rule: string | null, after: Date, timezone: string) {
   if (/monthly|month/.test(normalized)) return local.plus({ months: 1 }).toUTC().toJSDate();
   if (/daily|day/.test(normalized)) return local.plus({ days: 1 }).toUTC().toJSDate();
   return local.plus({ days: 1 }).toUTC().toJSDate();
+}
+
+async function resolveDeliveryAt(policy: ReminderPolicy, scheduledAt: Date) {
+  const user = await getUserById(policy.userId).catch(() => null);
+  const quiet = policy.quietHours ?? {};
+  return applyQuietHours({
+    scheduledAt,
+    timezone: policy.timezone,
+    start: String(quiet.start ?? user?.quietHoursStart ?? "00:00"),
+    end: String(quiet.end ?? user?.quietHoursEnd ?? "07:30"),
+    allowDuringQuietHours:
+      quiet.allowDuringQuietHours === true || policy.metadata?.allowDuringQuietHours === true,
+  });
 }
 
 function finalStatusAfterDelivery(policy: ReminderPolicy) {

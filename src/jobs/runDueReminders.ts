@@ -32,6 +32,12 @@ import { getBot } from "@/bot/createBot";
 import { advancePolicyAfterDelivery } from "@/services/reminderPolicyEngine";
 import { registerBotMessage } from "@/telegram/messageLifecycle";
 import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
+import { reconcileActiveReminderPolicies } from "@/services/reminderPolicyReconciler";
+import {
+  recordPolicyReconcile,
+  recordRunnerFinished,
+  recordRunnerStarted,
+} from "@/db/queries/schedulerHealth";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -49,6 +55,24 @@ export async function runDueReminders(params?: {
   const now = params?.now ?? new Date();
   const limit = params?.limit ?? 50;
   const sender = params?.sender ?? getBot().api;
+  await recordRunnerStarted(now).catch((error) => {
+    logger.warn("Runner start observability failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+  let reconcile = { checked: 0, materialized: 0, advanced: 0, expired: 0 };
+  try {
+    reconcile = await reconcileActiveReminderPolicies({ now, limit: limit * 4 });
+    await recordPolicyReconcile({
+      at: now,
+      checked: reconcile.checked,
+      created: reconcile.materialized,
+    });
+  } catch (error) {
+    logger.warn("Reminder policy reconciliation failed without blocking legacy reminders", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   const due = await claimDueReminders({ now, limit });
   const results = { claimed: due.length, sent: 0, failed: 0 };
 
@@ -102,6 +126,16 @@ export async function runDueReminders(params?: {
   }
 
   await scheduleTomorrowDigests(now);
+  await recordRunnerFinished({
+    at: new Date(),
+    claimed: results.claimed,
+    sent: results.sent,
+    failed: results.failed,
+  }).catch((error) => {
+    logger.warn("Runner finish observability failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
   return results;
 }
 

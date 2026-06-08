@@ -75,6 +75,11 @@ function normalizeIntervalWindow(params: {
     requireAck,
     maxOccurrences: null,
     minutesBefore: null,
+    windowEndInclusive: true,
+    catchUpMode: "one_immediate_then_resume",
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    allowDuringQuietHours: false,
   };
 
   return {
@@ -192,6 +197,11 @@ function buildRecurringPolicy(segment: string): AgentReminderPolicy | null {
     requireAck: true,
     maxOccurrences: null,
     minutesBefore: null,
+    windowEndInclusive: true,
+    catchUpMode: "one_immediate_then_resume",
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    allowDuringQuietHours: false,
   };
 }
 

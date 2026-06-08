@@ -70,6 +70,13 @@ export const agentReminderPolicySchema = z.object({
     "admin",
     "project",
     "someday",
+    "urgent",
+    "meeting",
+    "car",
+    "home",
+    "finance",
+    "documents",
+    "people",
   ]),
   policyType: z.enum([
     "one_time",
@@ -89,6 +96,13 @@ export const agentReminderPolicySchema = z.object({
   requireAck: z.boolean(),
   maxOccurrences: z.number().int().positive().nullable(),
   minutesBefore: z.number().int().positive().nullable(),
+  windowEndInclusive: z.boolean().default(true),
+  catchUpMode: z
+    .enum(["none", "latest_only", "one_immediate_then_resume"])
+    .default("one_immediate_then_resume"),
+  quietHoursStart: z.string().nullable().default(null),
+  quietHoursEnd: z.string().nullable().default(null),
+  allowDuringQuietHours: z.boolean().default(false),
 });
 
 export const agentExecutionSchema = z.object({

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   listRecentRangeItems: vi.fn(),
   listActiveReminderPolicies: vi.fn(),
   listLongTermReminderPolicies: vi.fn(),
+  listLegacyReminderLikeItems: vi.fn(),
   registerBotMessage: vi.fn(),
   deleteMessageSafe: vi.fn(),
   removeKeyboardSafe: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("@/db/queries/liveDashboards", () => ({
 }));
 vi.mock("@/db/queries/items", () => ({
   listRecentRangeItems: mocks.listRecentRangeItems,
+  listLegacyReminderLikeItems: mocks.listLegacyReminderLikeItems,
 }));
 vi.mock("@/db/queries/reminderPolicies", () => ({
   listActiveReminderPolicies: mocks.listActiveReminderPolicies,
@@ -33,7 +35,10 @@ vi.mock("@/bot/createBot", () => ({
   getBot: () => ({ api: {} }),
 }));
 
-import { sendOrRefreshLiveDashboard } from "@/telegram/liveDashboard";
+import {
+  renderReminderPolicyList,
+  sendOrRefreshLiveDashboard,
+} from "@/telegram/liveDashboard";
 
 describe("live dashboard lifecycle", () => {
   beforeEach(() => {
@@ -58,6 +63,7 @@ describe("live dashboard lifecycle", () => {
     ]);
     mocks.listActiveReminderPolicies.mockResolvedValue([]);
     mocks.listLongTermReminderPolicies.mockResolvedValue([]);
+    mocks.listLegacyReminderLikeItems.mockResolvedValue([]);
   });
 
   it("retires the previous dashboard and leaves exactly one new active dashboard", async () => {
@@ -91,5 +97,26 @@ describe("live dashboard lifecycle", () => {
       expect.objectContaining({ purpose: "dashboard", messageId: 11 }),
     );
     expect(result.items).toHaveLength(1);
+  });
+
+  it("reports legacy reminder-like notes instead of claiming reminders are empty", async () => {
+    mocks.listActiveReminderPolicies.mockResolvedValue([]);
+    mocks.listLegacyReminderLikeItems.mockResolvedValue([
+      {
+        id: "legacy-id",
+        title: "Регулярное напоминание по ЖКХ",
+        visibility: "active",
+      },
+    ]);
+
+    const text = await renderReminderPolicyList({
+      userId: "user-id",
+      timezone: "Europe/Moscow",
+    });
+
+    expect(text).toContain("Активные политики: 0");
+    expect(text).toContain("старых записей");
+    expect(text).toContain("Регулярное напоминание по ЖКХ");
+    expect(text).toContain("без policy");
   });
 });
