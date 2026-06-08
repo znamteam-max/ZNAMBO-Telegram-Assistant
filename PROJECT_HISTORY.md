@@ -1709,6 +1709,7 @@ Production rollout:
 
 ```text
 implementation commit -> 9f80c4ab8a2697cc8fcac1955c3902c0131e8bc2
+verified production commit -> 81188bb3d74745514836c6103eebef49ea456437
 production health -> appVersion 2.4.1
 new scheduler and policy schema objects -> read successfully by production
 Telegram webhook -> pending 0, no last error
@@ -1718,6 +1719,9 @@ repair apply -> 4 items repaired, 4 policies created, no unrelated records chang
 active policies -> 4
 policies missing next reminder -> 0
 circle and Drik catch-up slots -> advanced automatically from 10:00 to 10:30 Moscow
+circle 10:30 reminder -> delivered automatically by cron-job.org
+circle Done callback -> item completed, policy completed, future reminder cancelled
+Drik catch-up snooze -> pending reminder rescheduled to 10:44 Moscow
 mirror -> weekly long-term recurring_car policy
 ЖКХ -> every_2_weeks long-term recurring_finance policy
 OpenAI health -> real call succeeded with valid structured output and accepted tool definition
@@ -1731,9 +1735,8 @@ npm run lint -> passed
 npm run build -> passed
 ```
 
-Remaining manual acceptance:
+Remaining limitation:
 
 ```text
-press Готово on one interval reminder and confirm that the item and future policy chain stop
 Vercel project scope requires CLI/connector re-authentication; GitHub auto-deploy remains operational
 ```

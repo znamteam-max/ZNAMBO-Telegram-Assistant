@@ -465,6 +465,7 @@ Production result:
 
 ```text
 implementation commit -> 9f80c4ab8a2697cc8fcac1955c3902c0131e8bc2
+verified production commit -> 81188bb3d74745514836c6103eebef49ea456437
 health -> appVersion 2.4.1
 webhook -> pending 0, no last error
 automatic scheduler -> observed successfully
@@ -473,6 +474,8 @@ repair apply -> 4 items and 4 policies
 active policies -> 4
 missing next reminders -> 0
 circle and Drik -> catch-up delivered and next grid slot set to 10:30 Moscow
+circle -> next grid reminder delivered at 10:30; Done completed the item/policy and cancelled future delivery
+Drik -> user snooze moved the pending delivery to 10:44 without creating a burst
 mirror -> weekly long-term policy
 ЖКХ -> biweekly long-term policy
 OpenAI health -> connected with valid structured output and tool support
@@ -486,5 +489,5 @@ npm run lint -> passed
 npm run build -> passed
 ```
 
-The remaining owner-only acceptance step is pressing `Готово` on an interval reminder and checking
-that future reminders stop.
+The owner acceptance step was completed in production: `Готово` stopped the circle interval chain.
+Only Vercel CLI/connector scope re-authentication remains; GitHub auto-deploy is working.
