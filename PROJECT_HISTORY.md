@@ -556,6 +556,7 @@ https://znambo-telegram-assistant.vercel.app/api/health -> ok
 ```
 
 Для завершения rollout нужен доступ Vercel CLI к team/project, где живет `znambo-telegram-assistant`, или подтверждение, что GitHub auto-deploy в этом проекте сработал после push `2ac48aa`.
+
 ### 13.4. Vercel auth wait
 
 Rollout resumed from `PROJECT_HISTORY.md`. Production DB migration is already applied and V2 code is pushed to GitHub commit `2ac48aa`.
@@ -1783,6 +1784,10 @@ range. The validator now distinguishes a vague day-part from an explicit numeric
 A protected self-cleaning snooze probe was added because direct local Neon pooler connections are
 unstable. It creates a temporary 10-minute interval policy, snoozes by 13 minutes, reports the
 resulting timestamps and deletes the entire probe chain in `finally`.
+
+The first production run of the probe proved the grid behavior but revealed that the existing
+production schema does not cascade planner item deletion to reminder policies. Probe cleanup was
+therefore changed to explicitly delete probe reminders, policies and items.
 
 Database rollout:
 

@@ -544,6 +544,10 @@ The direct local snooze acceptance probe hit the known Neon pooler `ECONNRESET` 
 data. A protected server-side probe was added instead; it is self-cleaning and uses the same
 production services as Telegram callbacks.
 
+The first server-side snooze probe proved the grid behavior but left a probe policy because the
+production FK did not cascade. Cleanup was made explicit for reminders, policies and items, and a
+protected cleanup action was added.
+
 Next step:
 
 ```text

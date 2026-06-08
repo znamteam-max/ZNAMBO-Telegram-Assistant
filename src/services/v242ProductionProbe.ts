@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
 import { createManualPlannerItem } from "@/db/queries/items";
@@ -8,10 +8,7 @@ import { plannerItems, reminderPolicies, reminders } from "@/db/schema";
 
 import { materializeNextPolicyReminder } from "./reminderPolicyEngine";
 
-export async function runV242SnoozeProductionProbe(params: {
-  userId: string;
-  timezone: string;
-}) {
+export async function runV242SnoozeProductionProbe(params: { userId: string; timezone: string }) {
   const now = new Date();
   const anchor = new Date(now);
   anchor.setUTCSeconds(0, 0);
@@ -95,8 +92,70 @@ export async function runV242SnoozeProductionProbe(params: {
       })),
     };
   } finally {
-    if (itemId) {
-      await getDb().delete(plannerItems).where(eq(plannerItems.id, itemId));
-    }
+    await cleanupV242SnoozeProbe({ userId: params.userId, itemIds: itemId ? [itemId] : [] });
   }
+}
+
+export async function cleanupV242SnoozeProbe(params: { userId: string; itemIds?: string[] }) {
+  const explicitItemIds = params.itemIds ?? [];
+  return getDb().transaction(async (tx) => {
+    const probeItems = await tx
+      .select()
+      .from(plannerItems)
+      .where(
+        and(
+          eq(plannerItems.userId, params.userId),
+          sql`(
+            ${plannerItems.title} = 'V2.4.2 production snooze grid probe'
+            or ${plannerItems.metadata}->>'source' = 'v242_snooze_probe'
+            or ${explicitItemIds.length ? inArray(plannerItems.id, explicitItemIds) : sql`false`}
+          )`,
+        ),
+      );
+    const itemIds = [...new Set([...explicitItemIds, ...probeItems.map((item) => item.id)])];
+    const probePolicies = await tx
+      .select()
+      .from(reminderPolicies)
+      .where(
+        and(
+          eq(reminderPolicies.userId, params.userId),
+          sql`(
+            ${reminderPolicies.title} = 'V2.4.2 production snooze grid probe'
+            or ${reminderPolicies.metadata}->>'source' = 'v242_snooze_probe'
+            or ${itemIds.length ? inArray(reminderPolicies.itemId, itemIds) : sql`false`}
+          )`,
+        ),
+      );
+    const policyIds = probePolicies.map((policy) => policy.id);
+
+    if (policyIds.length || itemIds.length) {
+      await tx.delete(reminders).where(
+        and(
+          eq(reminders.userId, params.userId),
+          sql`(
+              ${policyIds.length ? inArray(reminders.policyId, policyIds) : sql`false`}
+              or ${itemIds.length ? inArray(reminders.plannerItemId, itemIds) : sql`false`}
+              or ${reminders.payload}->>'source' = 'v242_snooze_probe'
+            )`,
+        ),
+      );
+    }
+    if (policyIds.length) {
+      await tx
+        .delete(reminderPolicies)
+        .where(
+          and(eq(reminderPolicies.userId, params.userId), inArray(reminderPolicies.id, policyIds)),
+        );
+    }
+    if (itemIds.length) {
+      await tx
+        .delete(plannerItems)
+        .where(and(eq(plannerItems.userId, params.userId), inArray(plannerItems.id, itemIds)));
+    }
+
+    return {
+      deletedItemIds: itemIds,
+      deletedPolicyIds: policyIds,
+    };
+  });
 }
