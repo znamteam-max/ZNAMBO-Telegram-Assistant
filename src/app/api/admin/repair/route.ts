@@ -47,6 +47,7 @@ import {
   cleanupV242SnoozeProbe,
   runV242SnoozeProductionProbe,
 } from "@/services/v242ProductionProbe";
+import { renderLiveDashboard } from "@/telegram/liveDashboard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -141,6 +142,18 @@ export async function POST(request: Request) {
           }
         : null,
       scheduler,
+    });
+  }
+  if (body.action === "dashboard_snapshot") {
+    const dashboard = await renderLiveDashboard({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({
+      ok: true,
+      text: dashboard.text,
+      itemIds: dashboard.items.map((item) => item.id),
+      policyIds: dashboard.policies.map((policy) => policy.id),
     });
   }
   if (body.action === "planner_snapshot") {

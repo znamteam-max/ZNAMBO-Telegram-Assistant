@@ -1789,6 +1789,9 @@ The first production run of the probe proved the grid behavior but revealed that
 production schema does not cascade planner item deletion to reminder policies. Probe cleanup was
 therefore changed to explicitly delete probe reminders, policies and items.
 
+A protected read-only dashboard snapshot was added for production acceptance of the same renderer
+used by `/dashboard`.
+
 Database rollout:
 
 ```text

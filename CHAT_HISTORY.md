@@ -548,6 +548,9 @@ The first server-side snooze probe proved the grid behavior but left a probe pol
 production FK did not cascade. Cleanup was made explicit for reminders, policies and items, and a
 protected cleanup action was added.
 
+A read-only protected dashboard snapshot was added so production acceptance can verify the exact
+`/dashboard` renderer without spoofing a Telegram user update.
+
 Next step:
 
 ```text
