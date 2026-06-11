@@ -105,6 +105,7 @@ export const agentExecutionTool = {
             "endAtLocal",
             "reminderMinutesBefore",
             "followupMinutesAfter",
+            "priority",
             "exposeManagementButtons",
             "note",
           ],
@@ -118,6 +119,7 @@ export const agentExecutionTool = {
             endAtLocal: { type: ["string", "null"] },
             reminderMinutesBefore: { type: ["integer", "null"], minimum: 1 },
             followupMinutesAfter: { type: ["integer", "null"], minimum: 0 },
+            priority: { type: ["integer", "null"], minimum: 1, maximum: 5 },
             exposeManagementButtons: { type: "boolean" },
             note: { type: ["string", "null"] },
           },
@@ -347,6 +349,7 @@ function buildAgentInstructions(params: {
 - Для "за час до каждого события" ставь reminderMinutesBefore=60 для всех подходящих item IDs.
 - Для "после спроси как прошло" ставь followupMinutesAfter=15.
 - Для кнопок удаления/переноса/редактирования ставь exposeManagementButtons=true.
+- Для изменения приоритета существующего item используй operation=configure и priority=1..5.
 - Новые независимые дела возвращай как actionPlan. Сохраняй каждое действие отдельно.
 - В гибридном запросе "дай план на сегодня, добавь вечером подготовку к ЧМ дома" actionPlan должен содержать только новую "Подготовку к ЧМ"; существующие события из контекста нельзя повторять. Поставь viewScope=today, чтобы приложение показало итоговый план после сохранения.
 - Просьбы показать план/задачи возвращай как render_view.

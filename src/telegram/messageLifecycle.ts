@@ -151,6 +151,23 @@ export async function cleanupOldDashboards(params: {
   });
 }
 
+export async function cleanupPolicyEditorMessages(params: {
+  userId: string;
+  chatId: string;
+  api?: TelegramLifecycleApi;
+}) {
+  const messages = await listActiveMessages({
+    userId: params.userId,
+    chatId: params.chatId,
+    purposes: ["policy_editor"],
+  });
+  return deleteMessagesSafe({
+    chatId: params.chatId,
+    messageIds: messages.map((message) => message.messageId),
+    api: params.api,
+  });
+}
+
 export async function cleanupAfterCallback(params: {
   userId: string;
   chatId: string;

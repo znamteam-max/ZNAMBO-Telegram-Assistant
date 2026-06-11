@@ -90,6 +90,15 @@ export async function listActiveReminderPolicies(userId: string, limit = 100) {
     .limit(limit);
 }
 
+export async function listReminderPoliciesByStatus(userId: string, status: string, limit = 100) {
+  return getDb()
+    .select()
+    .from(reminderPolicies)
+    .where(and(eq(reminderPolicies.userId, userId), eq(reminderPolicies.status, status)))
+    .orderBy(sql`${reminderPolicies.nextFireAt} asc nulls last`, desc(reminderPolicies.createdAt))
+    .limit(limit);
+}
+
 export async function listLongTermReminderPolicies(userId: string, limit = 100) {
   return getDb()
     .select()
@@ -201,6 +210,24 @@ export async function stopPoliciesForItem(userId: string, itemId: string) {
         eq(reminderPolicies.itemId, itemId),
         eq(reminderPolicies.status, "active"),
       ),
+    );
+}
+
+export async function updatePoliciesPriorityForItem(params: {
+  userId: string;
+  itemId: string;
+  priority: number;
+}) {
+  await getDb()
+    .update(reminderPolicies)
+    .set({
+      metadata: sql`${reminderPolicies.metadata} || ${JSON.stringify({
+        basePriority: Math.max(1, Math.min(5, params.priority)),
+      })}::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(reminderPolicies.userId, params.userId), eq(reminderPolicies.itemId, params.itemId)),
     );
 }
 

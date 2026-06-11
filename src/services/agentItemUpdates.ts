@@ -4,6 +4,7 @@ import type { AgentItemUpdate } from "@/ai/schemas/agentExecution";
 import {
   markPlannerItemCompleted,
   mergePlannerItemMetadata,
+  updatePlannerItemPriority,
   updatePlannerItemSchedule,
 } from "@/db/queries/items";
 import {
@@ -20,6 +21,7 @@ import {
   createReminderPolicyIfMissing,
   stopPoliciesForItem,
   updateReminderPolicy,
+  updatePoliciesPriorityForItem,
 } from "@/db/queries/reminderPolicies";
 import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
 
@@ -85,9 +87,26 @@ export async function applyAgentItemUpdates(params: {
         continue;
       }
 
+      if (update.priority != null) {
+        const priorityItem = await updatePlannerItemPriority({
+          userId: params.userId,
+          itemId: item.id,
+          priority: update.priority,
+        });
+        await updatePoliciesPriorityForItem({
+          userId: params.userId,
+          itemId: item.id,
+          priority: update.priority,
+        });
+        if (priorityItem) {
+          updatedItems.push(priorityItem);
+          configuredItemIds.push(priorityItem.id);
+        }
+      }
+
       const start = item.startAt ?? item.dueAt;
       if (!start) {
-        warnings.push(`item_has_no_time:${itemId}`);
+        if (update.priority == null) warnings.push(`item_has_no_time:${itemId}`);
         continue;
       }
 
@@ -199,6 +218,7 @@ function mergeUpdatesByItemId(updates: AgentItemUpdate[]): AgentItemUpdate[] {
           update.reminderMinutesBefore ?? current?.reminderMinutesBefore ?? null,
         followupMinutesAfter:
           update.followupMinutesAfter ?? current?.followupMinutesAfter ?? null,
+        priority: update.priority ?? current?.priority ?? null,
         exposeManagementButtons:
           Boolean(current?.exposeManagementButtons) || update.exposeManagementButtons,
         note: [current?.note, update.note].filter(Boolean).join(" | ") || null,

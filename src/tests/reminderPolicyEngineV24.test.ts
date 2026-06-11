@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   markPolicyOccurrenceDelivered: vi.fn(),
   updateReminderPolicy: vi.fn(),
   createReminderIfMissing: vi.fn(),
+  restoreReminderByIdempotencyKey: vi.fn(),
 }));
 
 vi.mock("@/db/queries/reminderPolicies", () => ({
@@ -22,11 +23,13 @@ vi.mock("@/db/queries/reminderPolicies", () => ({
 }));
 vi.mock("@/db/queries/reminders", () => ({
   createReminderIfMissing: mocks.createReminderIfMissing,
+  restoreReminderByIdempotencyKey: mocks.restoreReminderByIdempotencyKey,
 }));
 
 import {
   advancePolicyAfterDelivery,
   applyAgentReminderPolicies,
+  materializeNextPolicyReminder,
 } from "@/services/reminderPolicyEngine";
 
 describe("V2.4 reminder policy engine", () => {
@@ -38,6 +41,7 @@ describe("V2.4 reminder policy engine", () => {
       ...input,
     }));
     mocks.createReminderIfMissing.mockResolvedValue({ id: "reminder-id" });
+    mocks.restoreReminderByIdempotencyKey.mockResolvedValue(null);
     mocks.createPolicyOccurrence.mockResolvedValue({ id: "occurrence-id" });
     mocks.updateReminderPolicy.mockImplementation(async (input) => ({
       id: input.policyId,
@@ -133,6 +137,29 @@ describe("V2.4 reminder policy engine", () => {
     expect(mocks.createReminderIfMissing).toHaveBeenCalledTimes(1);
   });
 
+  it("restores a cancelled reminder when rematerializing the same policy slot", async () => {
+    const policy = makePolicy();
+    const scheduledAt = new Date("2026-06-08T05:00:00.000Z");
+    mocks.createReminderIfMissing.mockResolvedValueOnce(null);
+    mocks.restoreReminderByIdempotencyKey.mockResolvedValueOnce({ id: "restored-reminder" });
+
+    const result = await materializeNextPolicyReminder(policy, scheduledAt, {
+      now: new Date("2026-06-08T04:00:00.000Z"),
+    });
+
+    expect(result).toEqual({ id: "restored-reminder" });
+    expect(mocks.restoreReminderByIdempotencyKey).toHaveBeenCalledWith({
+      userId: policy.userId,
+      idempotencyKey: `policy:${policy.id}:${scheduledAt.toISOString()}`,
+      scheduledAt,
+    });
+    expect(mocks.attachOccurrenceReminder).toHaveBeenCalledWith({
+      policyId: policy.id,
+      scheduledFor: scheduledAt,
+      reminderId: "restored-reminder",
+    });
+  });
+
   it("keeps weekly and biweekly reminders as two long-term policies", async () => {
     await applyAgentReminderPolicies({
       userId: "user-id",
@@ -200,5 +227,33 @@ function makeItem() {
     endAt: null,
     dueAt: new Date("2026-06-08T08:00:00.000Z"),
     metadata: {},
+  } as never;
+}
+
+function makePolicy() {
+  return {
+    id: "policy-id",
+    userId: "user-id",
+    itemId: "item-id",
+    title: "Reminder",
+    category: "people",
+    policyType: "one_time",
+    status: "active",
+    timezone: "UTC",
+    startsAt: new Date("2026-06-08T05:00:00.000Z"),
+    endsAt: null,
+    nextFireAt: new Date("2026-06-08T05:00:00.000Z"),
+    recurrenceRule: null,
+    intervalMinutes: null,
+    requireAck: false,
+    maxOccurrences: null,
+    windowEndInclusive: true,
+    catchUpMode: "one_immediate_then_resume",
+    onWindowEnd: "expire_silently",
+    quietHours: null,
+    escalationPolicy: null,
+    metadata: { allowDuringQuietHours: true },
+    createdAt: new Date(),
+    updatedAt: new Date(),
   } as never;
 }

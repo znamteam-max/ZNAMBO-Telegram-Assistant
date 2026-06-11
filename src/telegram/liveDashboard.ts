@@ -13,6 +13,11 @@ import {
 } from "@/db/queries/reminderPolicies";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { logger } from "@/lib/logger";
+import {
+  classifyTimelineItem,
+  compareTimelineEntries,
+  getEffectivePriority,
+} from "@/domain/timelineClassification";
 
 import { getBot } from "@/bot/createBot";
 import { liveDashboardKeyboard } from "@/bot/keyboards";
@@ -47,43 +52,45 @@ export async function renderLiveDashboard(params: {
   const local = DateTime.fromJSDate(now, { zone: "utc" }).setZone(params.timezone).setLocale("ru");
   const from = local.startOf("day").toUTC().toJSDate();
   const to = local.endOf("day").toUTC().toJSDate();
-  const [items, policies, longTerm] = await Promise.all([
+  const [items, policies] = await Promise.all([
     listRecentRangeItems({ userId: params.userId, from, to, limit: 80 }),
     listActiveReminderPolicies(params.userId, 80),
-    listLongTermReminderPolicies(params.userId, 12),
   ]);
   const todayItems = items
     .filter((item) => item.status === "active" || item.status === "completed")
-    .sort((a, b) => itemTime(a) - itemTime(b))
+    .sort((a, b) =>
+      compareTimelineEntries({ item: a }, { item: b }, now, params.timezone),
+    )
     .slice(0, 7);
-  const todayEnd = local.endOf("day").toUTC().toJSDate();
-  const soonEnd = local.plus({ hours: 48 }).toUTC().toJSDate();
-  const nagging = policies
-    .filter(
-      (policy) =>
-        ["interval_window", "nag_until_ack"].includes(policy.policyType) &&
-        (policy.startsAt ?? policy.nextFireAt ?? now) <= todayEnd &&
-        (!policy.endsAt || policy.endsAt >= now),
+  const displayPolicies = groupCampaignPolicies(policies);
+  const nagging = displayPolicies
+    .filter((policy) => classifyTimelineItem({ policy }, now, params.timezone) === "active_nag")
+    .sort((a, b) =>
+      compareTimelineEntries({ policy: a }, { policy: b }, now, params.timezone),
     )
     .slice(0, 5);
   const naggingIds = new Set(nagging.map((policy) => policy.id));
-  const soon = policies
-    .filter((policy) => {
-      if (naggingIds.has(policy.id)) return false;
-      const next = policy.startsAt ?? policy.nextFireAt;
-      return Boolean(next && next > todayEnd && next <= soonEnd);
-    })
+  const soon = displayPolicies
+    .filter(
+      (policy) =>
+        !naggingIds.has(policy.id) &&
+        classifyTimelineItem({ policy }, now, params.timezone) === "soon",
+    )
+    .sort((a, b) =>
+      compareTimelineEntries({ policy: a }, { policy: b }, now, params.timezone),
+    )
     .slice(0, 5);
   const soonIds = new Set(soon.map((policy) => policy.id));
-  const distant = longTerm
+  const distant = displayPolicies
     .filter((policy) => {
       if (naggingIds.has(policy.id) || soonIds.has(policy.id)) return false;
-      return Boolean(
-        (policy.nextFireAt && policy.nextFireAt > soonEnd) ||
-        policy.category === "long_term" ||
-        policy.category.startsWith("recurring_"),
+      return ["distant", "long_term"].includes(
+        classifyTimelineItem({ policy }, now, params.timezone),
       );
     })
+    .sort((a, b) =>
+      compareTimelineEntries({ policy: a }, { policy: b }, now, params.timezone),
+    )
     .slice(0, 4);
 
   const lines = [`JARVIS · Сегодня, ${local.toFormat("d LLLL")}`];
@@ -104,14 +111,14 @@ export async function renderLiveDashboard(params: {
     lines.push(...soon.map((policy) => `• ${formatPolicy(policy, params.timezone)}`));
   }
   if (distant.length) {
-    lines.push("", "Дальние:");
+    lines.push("", "Дальние по приоритету:");
     lines.push(...distant.map((policy) => `• ${formatPolicy(policy, params.timezone)}`));
   }
 
   return {
     text: lines.join("\n"),
     items: todayItems,
-    policies,
+    policies: displayPolicies,
     keyboard: liveDashboardKeyboard(todayItems),
   };
 }
@@ -236,10 +243,6 @@ export async function refreshDashboardAfterMutation(params: {
   });
 }
 
-function itemTime(item: PlannerItem) {
-  return (item.startAt ?? item.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-}
-
 function formatDashboardItem(item: PlannerItem, index: number, timezone: string) {
   if (item.status === "completed") return `${index}. ✅ ${item.title} — завершено`;
   const start = item.startAt ?? item.dueAt;
@@ -263,8 +266,23 @@ function formatPolicy(policy: ReminderPolicy, timezone: string) {
         .setZone(policy.timezone || timezone)
         .toFormat("dd.LL HH:mm")
     : "без ближайшего запуска";
+  const priority = getEffectivePriority({ policy }, new Date(), timezone);
+  const priorityLabel = priority !== 3 ? `P${priority} · ` : "";
   if (policy.policyType === "interval_window") {
-    return `${policy.title}: каждые ${policy.intervalMinutes ?? "?"} мин, следующее ${next}`;
+    return `${priorityLabel}${policy.title}: каждые ${policy.intervalMinutes ?? "?"} мин, следующее ${next}`;
   }
-  return `${policy.title} — ${next}`;
+  return `${priorityLabel}${policy.title} — ${next}`;
+}
+
+function groupCampaignPolicies(policies: ReminderPolicy[]) {
+  const result = new Map<string, ReminderPolicy>();
+  for (const policy of policies) {
+    const group = String(policy.metadata?.campaignGroup ?? "");
+    const key = group || policy.id;
+    const current = result.get(key);
+    if (!current || (policy.nextFireAt?.getTime() ?? Infinity) < (current.nextFireAt?.getTime() ?? Infinity)) {
+      result.set(key, policy);
+    }
+  }
+  return [...result.values()];
 }

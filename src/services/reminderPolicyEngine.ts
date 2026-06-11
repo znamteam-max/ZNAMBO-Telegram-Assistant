@@ -10,7 +10,10 @@ import {
   markPolicyOccurrenceDelivered,
   updateReminderPolicy,
 } from "@/db/queries/reminderPolicies";
-import { createReminderIfMissing } from "@/db/queries/reminders";
+import {
+  createReminderIfMissing,
+  restoreReminderByIdempotencyKey,
+} from "@/db/queries/reminders";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { localIsoToUtcDate } from "@/domain/dateTime";
 import {
@@ -87,6 +90,10 @@ export async function applyAgentReminderPolicies(params: {
           minutesBefore: proposal.minutesBefore,
           stopOnItemComplete: proposal.requireAck,
           allowDuringQuietHours: proposal.allowDuringQuietHours,
+          basePriority: target?.priority ?? 3,
+          campaignGroup: target?.metadata?.campaignGroup ?? null,
+          campaignSequence: target?.metadata?.campaignSequence ?? null,
+          campaignState: target?.metadata?.campaignState ?? null,
         },
       });
       createdPolicies.push(policy);
@@ -129,11 +136,12 @@ export async function materializeNextPolicyReminder(
       deliveryAt: deliveryAt.toISOString(),
     },
   });
-  const reminder = await createReminderIfMissing({
+  const idempotencyKey = `policy:${policy.id}:${scheduledAt.toISOString()}`;
+  const created = await createReminderIfMissing({
     userId: policy.userId,
     plannerItemId: policy.itemId,
     type: reminderTypeForPolicy(policy),
-    idempotencyKey: `policy:${policy.id}:${scheduledAt.toISOString()}`,
+    idempotencyKey,
     scheduledAt: deliveryAt,
     repeatUntilAck: policy.requireAck,
     recurrenceKey: policy.recurrenceRule,
@@ -149,6 +157,13 @@ export async function materializeNextPolicyReminder(
       catchUp: options?.catchUp === true,
     },
   });
+  const reminder =
+    created ??
+    (await restoreReminderByIdempotencyKey({
+      userId: policy.userId,
+      idempotencyKey,
+      scheduledAt: deliveryAt,
+    }));
   if (reminder) {
     await attachOccurrenceReminder({
       policyId: policy.id,

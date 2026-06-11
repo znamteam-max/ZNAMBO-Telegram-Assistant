@@ -10,6 +10,7 @@ export const agentItemUpdateSchema = z
     endAtLocal: z.string().nullable(),
     reminderMinutesBefore: z.number().int().positive().nullable(),
     followupMinutesAfter: z.number().int().nonnegative().nullable(),
+    priority: z.number().int().min(1).max(5).nullable().optional(),
     exposeManagementButtons: z.boolean(),
     note: z.string().nullable(),
   })

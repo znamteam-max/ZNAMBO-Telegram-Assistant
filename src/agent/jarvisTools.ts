@@ -27,6 +27,7 @@ import { renderAndSaveTaskView, type TaskViewSection } from "./views/renderAndSa
 import { prepareActivePlanReset } from "@/services/activePlanReset";
 import { resetActivePlanKeyboard } from "@/bot/keyboards";
 import { isGarbageOrTestItem } from "@/domain/itemVisibility";
+import { undoLastReminderPolicyEdit } from "@/services/reminderPolicyEditor";
 
 type ToolParams = {
   userId: string;
@@ -448,6 +449,14 @@ export async function undoLastActionTool(params: ToolParams): Promise<JarvisTool
   }>;
 
   if (!action || !undoItems.length) {
+    const restoredPolicy = await undoLastReminderPolicyEdit(params.userId);
+    if (restoredPolicy) {
+      return {
+        handled: true,
+        reply: `Откатил последнее изменение напоминания: ${restoredPolicy.title}.`,
+        affectedItemIds: restoredPolicy.itemId ? [restoredPolicy.itemId] : [],
+      };
+    }
     return {
       handled: true,
       reply: "Пока нет последнего удаления или cleanup, который можно откатить.",

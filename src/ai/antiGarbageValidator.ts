@@ -109,6 +109,7 @@ export function validateReminderPoliciesBeforeSave(params: {
   plan: ActionPlan;
   policies: AgentReminderPolicy[];
   timezone: string;
+  originalMessage?: string;
 }): PlannerValidationResult {
   const warnings: string[] = [];
   const actionTitles = new Set(params.plan.actions.map((action) => normalize(action.title)));
@@ -142,7 +143,39 @@ export function validateReminderPoliciesBeforeSave(params: {
     }
   }
 
+  const original = params.originalMessage ?? "";
+  const actionReminders = params.plan.actions.flatMap((action) => action.reminders);
+  if (containsReminderIntent(original) && !params.policies.length && !actionReminders.length) {
+    warnings.push("explicit reminder intent has no committed policy");
+  }
+  const explicitTimes = extractExplicitReminderTimes(original);
+  if (explicitTimes.length) {
+    const concreteTimes = new Set(
+      [
+        ...actionReminders.map((reminder) => reminder.scheduledAtLocal?.slice(11, 16)),
+        ...params.policies.map((policy) => policy.nextFireAtLocal?.slice(11, 16)),
+      ].filter((value): value is string => Boolean(value)),
+    );
+    if (explicitTimes.some((time) => !concreteTimes.has(time))) {
+      warnings.push("explicit reminder times are not fully materialized");
+    }
+  }
+
   return { ok: warnings.length === 0, warnings: [...new Set(warnings)] };
+}
+
+function containsReminderIntent(text: string) {
+  return /(напомн|напоминан|кажд(?:ый|ые|ую)\s+(?:час|день|недел|полчас)|пока\s+не\s+сдел)/i.test(text);
+}
+
+function extractExplicitReminderTimes(text: string) {
+  const index = text.search(/напоминан|напомн/i);
+  if (index < 0) return [];
+  const times = new Set<string>();
+  for (const match of text.slice(index).matchAll(/\b(\d{1,2})[.:](\d{2})\b/g)) {
+    times.add(`${String(Number(match[1])).padStart(2, "0")}:${match[2]}`);
+  }
+  return [...times];
 }
 
 function hasMultipleBulletMarkers(text: string) {

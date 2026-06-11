@@ -169,8 +169,10 @@ describe("live dashboard lifecycle", () => {
 
     expect(result.text).toContain("Скоро:");
     expect(result.text).toContain("Записаться к Дрик");
-    expect(result.text).toContain("Дальние:");
+    expect(result.text).toContain("Дальние по приоритету:");
     expect(result.text).toContain("Заменить зеркало");
-    expect(result.text.indexOf("Записаться к Дрик")).toBeLessThan(result.text.indexOf("Дальние:"));
+    expect(result.text.indexOf("Записаться к Дрик")).toBeLessThan(
+      result.text.indexOf("Дальние по приоритету:"),
+    );
   });
 });

@@ -200,6 +200,7 @@ export async function executeActionPlanForMessage(
     forceCommit: boolean;
     committedIntro?: string;
     reminderPolicies?: AgentReminderPolicy[];
+    compactMode?: boolean;
   },
 ): Promise<{
   finalAction: string;
@@ -233,6 +234,7 @@ export async function executeActionPlanForMessage(
     plan: params.plan,
     policies: params.reminderPolicies ?? [],
     timezone: params.timezone,
+    originalMessage: params.text,
   });
   validation.warnings.push(...policyValidation.warnings);
   validation.ok = validation.ok && policyValidation.ok;
@@ -289,15 +291,17 @@ export async function executeActionPlanForMessage(
       reminderPolicies: params.reminderPolicies,
     });
     if (result.status === "committed") {
-      await replyAndRecord(
-        ctx,
-        formatCommittedPlanSummary({
-          items: result.items,
-          reminderCount: result.reminders.length,
-          timezone: params.timezone,
-          intro: params.committedIntro,
-        }),
-      );
+      if (!params.compactMode) {
+        await replyAndRecord(
+          ctx,
+          formatCommittedPlanSummary({
+            items: result.items,
+            reminderCount: result.reminders.length,
+            timezone: params.timezone,
+            intro: params.committedIntro,
+          }),
+        );
+      }
       await syncItemsToCalendarBestEffort(result.items);
       return {
         finalAction: "committed_action_plan",
@@ -315,7 +319,7 @@ export async function executeActionPlanForMessage(
       };
     }
     if (result.status === "already_committed") {
-      await replyAndRecord(ctx, "Этот план уже был сохранён.");
+      if (!params.compactMode) await replyAndRecord(ctx, "Этот план уже был сохранён.");
       return {
         finalAction: "already_committed",
         validatorWarnings: validation.warnings,

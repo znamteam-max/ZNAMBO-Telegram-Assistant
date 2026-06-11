@@ -323,6 +323,31 @@ npm run build -> passed
 verified behavioral production commit -> 4fb97b3528b0eb9793b79b23f36538548a578ba9
 ```
 
+### Turn: V2.5.1 implementation from full handoff archive
+
+User request:
+
+```text
+Deploy and apply all updates autonomously.
+```
+
+What changed:
+
+```text
+Implemented compact dashboard/reminder lifecycle, reminder control center, semantic timeline
+classification, five-level editable priority, NBA upcoming-night parsing, explicit reminder-time
+invariant, repair-in-place corrections, sequential Central Park behavior, daily history/carryover
+snapshots, compact voice transcription, policy undo audit, and owner-only V2.5.1 production repair.
+```
+
+Validation before deployment:
+
+```text
+npm test -> 37 files passed, 114 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
 ### Turn: contextual completion and hybrid planning incident
 
 Fresh production transcript:

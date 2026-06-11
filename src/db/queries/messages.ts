@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { messageAttachments, telegramMessages } from "../schema";
@@ -63,4 +63,17 @@ export async function recordMessageAttachment(params: {
       durationSeconds: params.durationSeconds,
       status: params.status ?? "processed",
     });
+}
+
+export async function getLatestTranscriptForUser(userId: string) {
+  const [row] = await getDb()
+    .select({
+      transcript: telegramMessages.transcript,
+      createdAt: telegramMessages.createdAt,
+    })
+    .from(telegramMessages)
+    .where(and(eq(telegramMessages.userId, userId), isNotNull(telegramMessages.transcript)))
+    .orderBy(desc(telegramMessages.createdAt))
+    .limit(1);
+  return row ?? null;
 }

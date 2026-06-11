@@ -40,6 +40,9 @@ import {
   recordRunnerStarted,
 } from "@/db/queries/schedulerHealth";
 import { acquireRuntimeLease, releaseRuntimeLease } from "@/db/queries/runtimeLocks";
+import { syncCompactChat } from "@/telegram/compactChatOrchestrator";
+import type { LiveDashboardTelegramApi } from "@/telegram/liveDashboard";
+import { ensureDailySnapshot } from "@/services/dailyHistory";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -98,7 +101,11 @@ export async function runDueReminders(params?: {
 
     for (const reminder of due) {
       try {
-        const sentMessage = await sendReminder(reminder, sender);
+        const compactDelivery = !params?.sender && !isDigestReminder(reminder);
+        const sentMessage = await sendReminder(reminder, sender, {
+          compact: compactDelivery,
+          now,
+        });
         await markReminderSent({
           reminderId: reminder.id,
           telegramMessageId: sentMessage.message_id,
@@ -108,7 +115,7 @@ export async function runDueReminders(params?: {
           status: "sent",
           telegramMessageId: sentMessage.message_id,
         });
-        if (!params?.sender && sentMessage.message_id) {
+        if (!params?.sender && sentMessage.message_id && !compactDelivery) {
           const user = await getUserById(reminder.userId);
           if (user) {
             await registerBotMessage({
@@ -131,7 +138,7 @@ export async function runDueReminders(params?: {
             await scheduleNextRecurringOccurrence(reminder, now);
           }
         }
-        if (!params?.sender) await refreshReminderDashboardBestEffort(reminder, now);
+        if (!params?.sender && !compactDelivery) await refreshReminderDashboardBestEffort(reminder, now);
         results.sent += 1;
       } catch (error) {
         results.failed += 1;
@@ -170,7 +177,11 @@ export async function runDueReminders(params?: {
   }
 }
 
-async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramSender) {
+async function sendReminder(
+  reminder: ClaimedReminder,
+  sender: ReminderTelegramSender,
+  options?: { compact?: boolean; now?: Date },
+) {
   const user = await getUserById(reminder.userId);
   if (!user) throw new Error("Reminder user not found");
 
@@ -213,6 +224,11 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
     const from = nowLocal.startOf("day").toUTC().toJSDate();
     const to = nowLocal.endOf("day").toUTC().toJSDate();
     const tasks = await listEveningReviewItems({ userId: user.id, from, to, limit: 80 });
+    await ensureDailySnapshot({
+      userId: user.id,
+      timezone: user.timezone,
+      localDate: nowLocal.toISODate()!,
+    });
     const rendered = await renderAndSaveTaskView({
       userId: user.id,
       timezone: user.timezone,
@@ -233,9 +249,25 @@ async function sendReminder(reminder: ClaimedReminder, sender: ReminderTelegramS
         ? `Тренировка «${item.title}» завершилась. Что делаем?`
         : `Событие «${item.title}» завершилось. Что делаем?`
       : formatReminderMessage(reminder, item);
-  return sender.sendMessage(user.telegramUserId.toString(), text, {
-    reply_markup: buildReminderKeyboard(reminder, item),
-  });
+  const messageOptions = { reply_markup: buildReminderKeyboard(reminder, item) };
+  if (options?.compact) {
+    const synced = await syncCompactChat({
+      userId: user.id,
+      chatId: user.telegramUserId.toString(),
+      timezone: user.timezone,
+      reason: "reminder_delivery",
+      activeReminder: {
+        text,
+        options: messageOptions,
+        relatedItemId: reminder.plannerItemId,
+        relatedReminderId: reminder.id,
+      },
+      now: options.now,
+      api: sender as LiveDashboardTelegramApi,
+    });
+    return { message_id: synced.reminderMessageId ?? undefined };
+  }
+  return sender.sendMessage(user.telegramUserId.toString(), text, messageOptions);
 }
 
 function buildReminderKeyboard(
@@ -266,6 +298,10 @@ function isPostEventReminder(reminder: ClaimedReminder) {
     reminder.menuType === "event_reaction" ||
     ["followup", "training_followup", "after_event"].includes(reminder.type)
   );
+}
+
+function isDigestReminder(reminder: ClaimedReminder) {
+  return reminder.type === "morning_digest" || reminder.type === "evening_checkin";
 }
 
 async function archiveTestReminderIfNeeded(reminder: ClaimedReminder) {
@@ -371,9 +407,18 @@ async function scheduleTomorrowDigests(now: Date) {
   const { listUsers } = await import("@/db/queries/users");
   const users = await listUsers();
   for (const user of users) {
-    const localTomorrow = DateTime.fromJSDate(now, { zone: "utc" })
-      .setZone(user.timezone)
-      .plus({ days: 1 });
+    const localNow = DateTime.fromJSDate(now, { zone: "utc" }).setZone(user.timezone);
+    await ensureDailySnapshot({
+      userId: user.id,
+      timezone: user.timezone,
+      localDate: localNow.minus({ days: 1 }).toISODate()!,
+    }).catch((error) => {
+      logger.warn("Daily history snapshot failed", {
+        userId: user.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    const localTomorrow = localNow.plus({ days: 1 });
     const morning = localTomorrow.startOf("day").plus({ hours: 8 }).toUTC().toJSDate();
     const evening = localTomorrow.startOf("day").plus({ hours: 21 }).toUTC().toJSDate();
     const dateKey = localTomorrow.toISODate();

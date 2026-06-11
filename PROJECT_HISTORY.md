@@ -1527,6 +1527,43 @@ the protected execution proof does not render a Telegram summary card itself
 the normal webhook path uses the same proposal, validator, commit and update services and adds the user-facing summary/buttons
 ```
 
+### 13.28. V2.5.1 compact control, priority and temporal semantics
+
+Implemented:
+
+```text
+compact chat orchestrator with dashboard-before-reminder ordering and one active reminder slot
+bot-only stale card cleanup; user messages remain outside the lifecycle registry
+semantic timeline classification and effective priority escalation
+priority-sorted distant dashboard section
+interactive reminder control center with policy cards, priority, interval, pause/resume and cancel
+policy version audit and /undo fallback
+upcoming-night NBA 03:30 normalization and explicit reminder-time validation
+repair-in-place correction path for existing night events
+sequential Central Park reminder activation boundary and grouped campaign rendering
+durable daily snapshots in audit_log plus history commands
+compact voice processing and /lasttranscript
+owner-only /admin_repair_v251 preview|apply
+```
+
+Preserved:
+
+```text
+runner lease
+reconciler before claim
+anchor-grid-v2
+snooze as one-off
+atomic action-plan commit
+```
+
+Local validation before deployment:
+
+```text
+npm test -> 37 files passed, 114 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
 ### 13.28. V2.3.0 contextual planner operations
 
 Fresh production behavior report:

@@ -1,4 +1,5 @@
 import { InputFile, type Bot } from "grammy";
+import { DateTime } from "luxon";
 
 import {
   cleanupGarbageTool,
@@ -12,13 +13,16 @@ import type { JarvisToolResult } from "@/agent/types";
 import { getLatestAuditByActions, writeAudit } from "@/db/queries/audit";
 import { runOpenAiHealthCheck } from "@/ai/aiHealth";
 import { deleteMemoryForUser, exportOwnerData, listActiveMemories } from "@/db/queries/memories";
+import { getLatestTranscriptForUser } from "@/db/queries/messages";
 import { createManualPlannerItem } from "@/db/queries/items";
 import { createReminderIfMissing } from "@/db/queries/reminders";
 import { markUserOnboarded, updateUserTimezone } from "@/db/queries/users";
 import { assertValidZone } from "@/domain/dateTime";
 import { getCalendarProvider, getEnv, isGoogleCalendarConfigured } from "@/lib/env";
 import { createGoogleCalendarAuthUrl } from "@/integrations/googleCalendar";
-import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
+import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
+import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
+import { renderDailyHistory } from "@/services/dailyHistory";
 import { cleanupTransientMessages } from "@/telegram/messageLifecycle";
 import { renderCronHealth, renderPolicyDebug } from "@/services/reminderDiagnostics";
 import {
@@ -36,6 +40,10 @@ import {
   applyV242ProductionRepair,
   previewV242ProductionRepair,
 } from "@/services/v242ProductionRepair";
+import {
+  applyV251ProductionRepair,
+  previewV251ProductionRepair,
+} from "@/services/v251ProductionRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -91,6 +99,8 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/cronhealth — статус scheduler и policy reconciler",
         "/policydebug — диагностика последней reminder policy",
         "/versiondebug — версии policy engine, interval algorithm и runner lock",
+        "/lasttranscript — показать последнюю расшифровку",
+        "/history, /yesterday, /weeklog, /review — история и итоги",
         "/calendar — статус календаря",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -175,31 +185,40 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("reminders", async (ctx) => {
     const owner = requireOwner(ctx);
-    const category =
-      String(ctx.match ?? "")
-        .trim()
-        .toLowerCase() || null;
-    const text = await renderReminderPolicyList({
+    const scope = String(ctx.match ?? "").trim().toLowerCase() || "active";
+    const center = await renderReminderControlCenter({
       userId: owner.id,
       timezone: owner.timezone,
-      category,
+      scope,
     });
-    await replyAndRecord(
-      ctx,
-      text,
-      text.includes("без policy") ? { reply_markup: reminderPolicyRepairKeyboard() } : undefined,
-    );
+    await replyAndRecord(ctx, center.text, { reply_markup: center.keyboard });
   });
   bot.command("longterm", async (ctx) => {
     const owner = requireOwner(ctx);
-    await replyAndRecord(
-      ctx,
-      await renderReminderPolicyList({
-        userId: owner.id,
-        timezone: owner.timezone,
-        longTermOnly: true,
-      }),
-    );
+    const center = await renderReminderControlCenter({
+      userId: owner.id,
+      timezone: owner.timezone,
+      scope: "longterm",
+    });
+    await replyAndRecord(ctx, center.text, { reply_markup: center.keyboard });
+  });
+  bot.command("distant", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const center = await renderReminderControlCenter({
+      userId: owner.id,
+      timezone: owner.timezone,
+      scope: "distant",
+    });
+    await replyAndRecord(ctx, center.text, { reply_markup: center.keyboard });
+  });
+  bot.command("priority", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const center = await renderReminderControlCenter({
+      userId: owner.id,
+      timezone: owner.timezone,
+      scope: "active",
+    });
+    await replyAndRecord(ctx, center.text, { reply_markup: center.keyboard });
   });
   bot.command("cleanup_chat", async (ctx) => {
     const owner = requireOwner(ctx);
@@ -239,6 +258,50 @@ export function registerCommands(bot: Bot<BotContext>) {
         `Reconciler enabled: ${RECONCILER_ENABLED ? "yes" : "no"}`,
         `Runner lock enabled: ${RUNNER_LOCK_ENABLED ? "yes" : "no"}`,
       ].join("\n"),
+    );
+  });
+  bot.command("lasttranscript", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const latest = await getLatestTranscriptForUser(owner.id);
+    await replyAndRecord(
+      ctx,
+      latest?.transcript
+        ? `Последняя расшифровка:\n\n${latest.transcript}`
+        : "Сохранённых расшифровок пока нет.",
+    );
+  });
+  bot.command("history", async (ctx) => {
+    const owner = requireOwner(ctx);
+    await replyAndRecord(
+      ctx,
+      await renderDailyHistory({ userId: owner.id, timezone: owner.timezone, days: 3 }),
+    );
+  });
+  bot.command("yesterday", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const localDate = DateTime.now().setZone(owner.timezone).minus({ days: 1 }).toISODate()!;
+    await replyAndRecord(
+      ctx,
+      await renderDailyHistory({
+        userId: owner.id,
+        timezone: owner.timezone,
+        days: 1,
+        endDate: localDate,
+      }),
+    );
+  });
+  bot.command("weeklog", async (ctx) => {
+    const owner = requireOwner(ctx);
+    await replyAndRecord(
+      ctx,
+      await renderDailyHistory({ userId: owner.id, timezone: owner.timezone, days: 7 }),
+    );
+  });
+  bot.command("review", async (ctx) => {
+    const owner = requireOwner(ctx);
+    await replyAndRecord(
+      ctx,
+      await renderDailyHistory({ userId: owner.id, timezone: owner.timezone, days: 1 }),
     );
   });
   bot.command("admin_repair_reminder_policies", async (ctx) => {
@@ -331,6 +394,46 @@ export function registerCommands(bot: Bot<BotContext>) {
         `Shifted/duplicate reminder records found: ${preview.shiftedReminderIds.length}`,
         "",
         "Для применения: /admin_repair_v242 apply",
+      ].join("\n"),
+    );
+  });
+  bot.command("admin_repair_v251", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    if (mode === "apply") {
+      const result = await applyV251ProductionRepair(owner.id);
+      await replyAndRecord(
+        ctx,
+        [
+          "V2.5.1 production repair применён.",
+          `Malformed items: ${result.malformedItems.length}`,
+          `Malformed policies: ${result.malformedPolicies.length}`,
+          `Central Park policies grouped: ${result.centralPolicies.length}`,
+          `Central Park duplicates expired: ${result.duplicateCentralPolicyIds.length}`,
+          `Old bot cards marked stale: ${result.staleBotCards.length}`,
+        ].join("\n"),
+      );
+      if (ctx.chat?.id) {
+        await refreshDashboardAfterMutation({
+          userId: owner.id,
+          chatId: ctx.chat.id,
+          timezone: owner.timezone,
+        });
+      }
+      return;
+    }
+    const preview = await previewV251ProductionRepair(owner.id);
+    await replyAndRecord(
+      ctx,
+      [
+        "V2.5.1 production repair preview:",
+        `Malformed items: ${preview.malformedItems.length}`,
+        `Malformed policies: ${preview.malformedPolicies.length}`,
+        `Central Park policies: ${preview.centralPolicies.length}`,
+        `Central Park duplicates: ${preview.duplicateCentralPolicyIds.length}`,
+        `Old bot cards: ${preview.staleBotCards.length}`,
+        "",
+        "Для применения: /admin_repair_v251 apply",
       ].join("\n"),
     );
   });

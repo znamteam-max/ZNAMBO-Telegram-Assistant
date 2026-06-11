@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, lte, ne, or, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { calendarSyncJobs, plannerItems, type PlannerItem } from "../schema";
@@ -33,7 +33,7 @@ export async function listItemsBetween(params: {
     )
     .orderBy(
       sql`coalesce(${plannerItems.startAt}, ${plannerItems.dueAt}) asc`,
-      asc(plannerItems.priority),
+      desc(plannerItems.priority),
     )
     .limit(params.limit ?? 50);
 }
@@ -376,6 +376,19 @@ export async function updatePlannerItemSchedule(params: {
         : plannerItems.metadata,
       updatedAt: new Date(),
     })
+    .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.id, params.itemId)))
+    .returning();
+  return item ?? null;
+}
+
+export async function updatePlannerItemPriority(params: {
+  userId: string;
+  itemId: string;
+  priority: number;
+}) {
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({ priority: Math.max(1, Math.min(5, params.priority)), updatedAt: new Date() })
     .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.id, params.itemId)))
     .returning();
   return item ?? null;

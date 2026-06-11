@@ -135,6 +135,32 @@ export async function restorePolicyReminder(params: { reminderId: string; schedu
   return row ?? null;
 }
 
+export async function restoreReminderByIdempotencyKey(params: {
+  userId: string;
+  idempotencyKey: string;
+  scheduledAt: Date;
+}) {
+  const [row] = await getDb()
+    .update(reminders)
+    .set({
+      status: "pending",
+      scheduledAt: params.scheduledAt,
+      claimedAt: null,
+      sentAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(reminders.userId, params.userId),
+        eq(reminders.idempotencyKey, params.idempotencyKey),
+        inArray(reminders.status, ["failed", "cancelled"]),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
 export async function cancelItemReminders(userId: string, plannerItemId: string) {
   await getDb()
     .update(reminders)

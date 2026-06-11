@@ -5,7 +5,6 @@ import type { BotContext } from "@/bot/context";
 import { requireOwner } from "@/bot/context";
 import { executeActionPlanForMessage } from "@/bot/messagePipeline";
 import { replyAndRecord } from "@/bot/reply";
-import { taskManagementKeyboard } from "@/bot/keyboards";
 import { MandatoryAiError, proposeAgentExecution, type AiCallTelemetry } from "@/ai/agentExecution";
 import type { AgentExecution } from "@/ai/schemas/agentExecution";
 import { storePlanMemoryFacts } from "@/services/memory";
@@ -219,6 +218,7 @@ async function executeAgentProposal(params: {
         plan: deduped.plan,
         forceCommit: false,
         reminderPolicies: params.execution.reminderPolicies,
+        compactMode: true,
       });
       result.createdItemIds = actionResult.savedItemIds;
       result.createdPolicyIds = actionResult.createdPolicyIds ?? [];
@@ -278,24 +278,6 @@ async function executeAgentProposal(params: {
     result.validationWarnings = updateResult.warnings;
     result.finalAction = "updated_existing_items";
     await syncItemsToCalendarBestEffort(updateResult.updatedItems);
-    const lines = [
-      buildUpdateIntro(params.execution.reply, updateResult),
-      "",
-      ...updateResult.updatedItems.map((item) => `• ${item.title}`),
-    ];
-    if (updateResult.configuredItemIds.length || updateResult.reminderIds.length) {
-      lines.push(
-        updateResult.reminderIds.length
-          ? `Напоминаний и follow-up создано: ${updateResult.reminderIds.length}.`
-          : "Новых напоминаний не создано.",
-      );
-    }
-    await replyAndRecord(params.ctx, lines.join("\n"), {
-      reply_markup:
-        updateResult.exposeManagementButtons && updateResult.updatedItems.length
-          ? taskManagementKeyboard(updateResult.updatedItems)
-          : undefined,
-    });
     if (params.execution.reminderPolicies.length) {
       const policyResult = await executePolicyProposals({
         execution: params.execution,
@@ -323,10 +305,6 @@ async function executeAgentProposal(params: {
     result.validationWarnings.push(...policyResult.warnings);
     result.mutationOccurred = policyResult.policyCount > 0;
     result.finalAction = "updated_reminder_policies";
-    await replyAndRecord(
-      params.ctx,
-      params.execution.reply ?? `Настроил политик напоминаний: ${policyResult.policyCount}.`,
-    );
     return result;
   }
 
@@ -368,19 +346,6 @@ async function executeAgentProposal(params: {
     .join("\n");
   await replyAndRecord(params.ctx, reply || "Уточни, пожалуйста, что именно нужно сделать.");
   return result;
-}
-
-function buildUpdateIntro(
-  proposedReply: string | null,
-  result: Awaited<ReturnType<typeof applyAgentItemUpdates>>,
-) {
-  if (result.completedItemIds.length && !result.rescheduledItemIds.length) {
-    return "Готово. Отметил выполненным:";
-  }
-  if (result.rescheduledItemIds.length && !result.completedItemIds.length) {
-    return "Обновил время:";
-  }
-  return proposedReply ?? "Обновил существующие события.";
 }
 
 async function executeViewOrManagementTool(

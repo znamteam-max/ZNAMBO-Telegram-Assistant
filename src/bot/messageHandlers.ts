@@ -39,7 +39,7 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
         );
       }
 
-      await replyAndRecord(ctx, "Расшифровываю сообщение...");
+      if (ctx.chat?.id) await ctx.api.sendChatAction(ctx.chat.id, "typing");
       const bytes = await downloadTelegramMedia(bot, media);
       const transcript = await transcribeMedia({
         bytes,
@@ -59,7 +59,6 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
         await markTelegramMessageProcessed(ctx.dbMessageId, transcript);
       }
 
-      await replyAndRecord(ctx, `Расшифровка: ${transcript}`);
       await handleNaturalLanguageTurn(ctx, transcript, owner.timezone);
     } catch (error) {
       await replyAndRecord(ctx, toUserMessage(error));

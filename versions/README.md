@@ -17,3 +17,5 @@ Version index:
 - `V2.3.0.md` - contextual completion, hybrid planning and typed item updates.
 - `V2.4.0.md` - Live Plan Dashboard, Reminder Policy Engine and clean Telegram message lifecycle.
 - `V2.4.1.md` - policy reconciliation, interval reliability, scheduler health and production legacy repair.
+- `V2.4.2.md` - transactional reminder semantics, runner lease and anchored interval grid.
+- `V2.5.1.md` - compact control UX, priority routing, night temporal semantics and daily history.

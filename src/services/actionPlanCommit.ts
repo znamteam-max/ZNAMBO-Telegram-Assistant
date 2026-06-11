@@ -207,6 +207,7 @@ export async function commitStoredActionPlan(params: {
                   actionPlanId: planRecord.id,
                   actionPlanSequence: index,
                   reminderType: reminder.type,
+                  basePriority: item.priority,
                 },
               })
               .returning();
@@ -303,6 +304,10 @@ export async function commitStoredActionPlan(params: {
                 idempotencyKey: `${planRecord.id}:policy:${policyIndex}:${target?.id ?? "unattached"}`,
                 actionPlanId: planRecord.id,
                 policyIndex,
+                basePriority: target?.priority ?? 3,
+                campaignGroup: target?.metadata?.campaignGroup ?? null,
+                campaignSequence: target?.metadata?.campaignSequence ?? null,
+                campaignState: target?.metadata?.campaignState ?? null,
                 stopOnItemComplete:
                   proposal.requireAck &&
                   ["interval_window", "nag_until_ack"].includes(proposal.policyType),

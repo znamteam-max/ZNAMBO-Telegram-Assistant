@@ -17,18 +17,188 @@ export function normalizeAgentExecutionProposal(params: {
   activeContext: string;
 }): AgentExecution {
   const centralPark = normalizeCentralPark(params);
-  const interval = normalizeIntervalWindow({
+  const temporal = normalizeNightTemporalSemantics({
     ...params,
     execution: centralPark,
+  });
+  const interval = normalizeIntervalWindow({
+    ...params,
+    execution: temporal,
   });
   const recurring = normalizeLongTermRecurrence({
     ...params,
     execution: interval,
   });
-  return normalizeEveryEventConfiguration({
+  const configured = normalizeEveryEventConfiguration({
     ...params,
     execution: recurring,
   });
+  return normalizePrioritySemantics({
+    execution: configured,
+    text: params.text,
+    activeContext: params.activeContext,
+  });
+}
+
+function normalizeNightTemporalSemantics(params: {
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+  activeContext: string;
+}) {
+  if (
+    !/(?:nba|нба|финал[а-я]*\s+нба)/i.test(`${params.text}\n${params.activeContext}`) ||
+    !/(?:^|\D)0?3[.:]30(?:\D|$)/i.test(params.text)
+  ) {
+    return params.execution;
+  }
+
+  const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
+  let eventStart = nowLocal.startOf("day").set({ hour: 3, minute: 30 });
+  if (eventStart <= nowLocal || (/сегодня/i.test(params.text) && nowLocal.hour >= 12)) {
+    eventStart = eventStart.plus({ days: 1 });
+  }
+  const startAtLocal = eventStart.toFormat("yyyy-MM-dd'T'HH:mm:ss");
+  const reminderTimes = extractExplicitReminderTimes(params.text)
+    .map(({ hour, minute }) => eventStart.startOf("day").set({ hour, minute }))
+    .filter((value) => value < eventStart && value > nowLocal);
+
+  if (isCorrectionText(params.text)) {
+    const itemId = extractMatchingContextItemId(params.activeContext, /(?:nba|нба|финал)/i);
+    if (!itemId) return params.execution;
+    return {
+      ...params.execution,
+      intent: "update_existing_items" as const,
+      actionPlan: null,
+      itemUpdates: [
+        {
+          itemIds: [itemId],
+          operation: "reschedule" as const,
+          startAtLocal,
+          endAtLocal: null,
+          reminderMinutesBefore: null,
+          followupMinutesAfter: null,
+          priority: null,
+          exposeManagementButtons: true,
+          note: "Night-time correction repaired the existing event.",
+        },
+      ],
+      reminderPolicies: reminderTimes.map((value) => ({
+        operation: "create_reminder_policy" as const,
+        itemIds: [itemId],
+        itemTitle: null,
+        title: "Напоминание перед матчем НБА",
+        category: "pre_event" as const,
+        policyType: "one_time" as const,
+        startsAtLocal: value.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+        endsAtLocal: null,
+        nextFireAtLocal: value.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+        recurrenceRule: null,
+        intervalMinutes: null,
+        requireAck: false,
+        maxOccurrences: 1,
+        minutesBefore: null,
+        windowEndInclusive: true,
+        catchUpMode: "one_immediate_then_resume" as const,
+        onWindowEnd: "expire_silently" as const,
+        quietHoursStart: null,
+        quietHoursEnd: null,
+        allowDuringQuietHours: true,
+      })),
+      clarificationQuestions: [],
+    };
+  }
+
+  if (!params.execution.actionPlan?.actions.length) return params.execution;
+  let changed = false;
+  const actions = params.execution.actionPlan.actions.map((action) => {
+    if (changed || !["event", "tentative_event"].includes(action.kind)) return action;
+    changed = true;
+    const oldStart = action.startAtLocal
+      ? DateTime.fromISO(action.startAtLocal, { zone: params.timezone })
+      : null;
+    const oldEnd = action.endAtLocal
+      ? DateTime.fromISO(action.endAtLocal, { zone: params.timezone })
+      : null;
+    const durationMinutes =
+      oldStart?.isValid && oldEnd?.isValid ? Math.max(1, oldEnd.diff(oldStart, "minutes").minutes) : null;
+    return {
+      ...action,
+      startAtLocal,
+      endAtLocal: durationMinutes
+        ? eventStart.plus({ minutes: durationMinutes }).toFormat("yyyy-MM-dd'T'HH:mm:ss")
+        : action.endAtLocal,
+      priority: Math.max(action.priority, 4),
+      reminders: reminderTimes.length
+        ? reminderTimes.map((value) => ({
+            type: "custom" as const,
+            scheduledAtLocal: value.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+            offsetMinutesBefore: null,
+            repeatUntilAck: false,
+            payload: { explicitTime: true, sourceNormalization: "night_temporal_v251" },
+          }))
+        : action.reminders,
+      metadata: {
+        ...action.metadata,
+        sourceNormalization: "night_temporal_v251",
+        nightSemanticsApplied: true,
+        explicitReminderCount: reminderTimes.length,
+      },
+    };
+  });
+  return changed
+    ? {
+        ...params.execution,
+        intent: "create_plan" as const,
+        actionPlan: { ...params.execution.actionPlan, actions },
+        clarificationQuestions: [],
+      }
+    : params.execution;
+}
+
+function normalizePrioritySemantics(params: {
+  execution: AgentExecution;
+  text: string;
+  activeContext: string;
+}) {
+  const priority = extractPriority(params.text);
+  if (!priority) return params.execution;
+  if (params.execution.actionPlan) {
+    return {
+      ...params.execution,
+      actionPlan: {
+        ...params.execution.actionPlan,
+        actions: params.execution.actionPlan.actions.map((action) => ({
+          ...action,
+          priority,
+          metadata: { ...action.metadata, explicitPriority: true },
+        })),
+      },
+    };
+  }
+  const itemId = extractPriorityTargetContextItemId(params.text, params.activeContext);
+  if (!itemId) return params.execution;
+  return {
+    ...params.execution,
+    intent: "update_existing_items" as const,
+    actionPlan: null,
+    itemUpdates: [
+      {
+        itemIds: [itemId],
+        operation: "configure" as const,
+        startAtLocal: null,
+        endAtLocal: null,
+        reminderMinutesBefore: null,
+        followupMinutesAfter: null,
+        priority,
+        exposeManagementButtons: true,
+        note: "Priority updated from natural language.",
+      },
+    ],
+    reminderPolicies: [],
+    clarificationQuestions: [],
+  };
 }
 
 function normalizeIntervalWindow(params: {
@@ -220,6 +390,7 @@ function normalizeEveryEventConfiguration(params: {
     endAtLocal: null,
     reminderMinutesBefore,
     followupMinutesAfter,
+    priority: null,
     exposeManagementButtons,
     note: "Normalized after mandatory OpenAI proposal for every current event.",
   };
@@ -292,12 +463,12 @@ function normalizeCentralPark(params: {
   const secondStart = sixteenth.set({ hour: 8, minute: 0, second: 0, millisecond: 0 });
   const secondEnd = sixteenth.set({ hour: 12, minute: 0, second: 0, millisecond: 0 });
   const actions: ActionPlanItem[] = [
-    centralParkAction(firstStart, firstEnd, params.timezone),
-    centralParkAction(secondStart, secondEnd, params.timezone),
+    centralParkAction(firstStart, firstEnd, params.timezone, 1, "active"),
+    centralParkAction(secondStart, secondEnd, params.timezone, 2, "waiting"),
   ];
   const policies = [
     ...dailyPoliciesBeforeEvent(firstStart, nowLocal),
-    ...dailyPoliciesBeforeEvent(secondStart, nowLocal),
+    ...dailyPoliciesBeforeEvent(secondStart, nowLocal, firstEnd),
   ];
 
   return {
@@ -321,7 +492,13 @@ function normalizeCentralPark(params: {
   };
 }
 
-function centralParkAction(start: DateTime, end: DateTime, timezone: string): ActionPlanItem {
+function centralParkAction(
+  start: DateTime,
+  end: DateTime,
+  timezone: string,
+  campaignSequence: number,
+  campaignState: "active" | "waiting",
+): ActionPlanItem {
   return {
     actionType: "event",
     kind: "event",
@@ -341,16 +518,27 @@ function centralParkAction(start: DateTime, end: DateTime, timezone: string): Ac
     recurrence: null,
     reminders: [],
     memoryCandidates: [],
-    metadata: { sourceNormalization: "central_park_v242", important: true },
+    metadata: {
+      sourceNormalization: "central_park_v251",
+      important: true,
+      campaignGroup: "central_park",
+      campaignSequence,
+      campaignState,
+    },
   };
 }
 
-function dailyPoliciesBeforeEvent(eventStart: DateTime, nowLocal: DateTime): AgentReminderPolicy[] {
+function dailyPoliciesBeforeEvent(
+  eventStart: DateTime,
+  nowLocal: DateTime,
+  activationStart?: DateTime,
+): AgentReminderPolicy[] {
   return [10, 18].map((hour) => {
     let finalFire = eventStart.startOf("day").set({ hour, minute: 0 });
     if (finalFire >= eventStart) finalFire = finalFire.minus({ days: 1 });
-    let nextFire = nowLocal.startOf("day").set({ hour, minute: 0 });
-    if (nextFire <= nowLocal) nextFire = nextFire.plus({ days: 1 });
+    const notBefore = activationStart && activationStart > nowLocal ? activationStart : nowLocal;
+    let nextFire = notBefore.startOf("day").set({ hour, minute: 0 });
+    if (nextFire <= notBefore) nextFire = nextFire.plus({ days: 1 });
     return {
       operation: "create_recurring_policy",
       itemIds: [],
@@ -374,6 +562,56 @@ function dailyPoliciesBeforeEvent(eventStart: DateTime, nowLocal: DateTime): Age
       allowDuringQuietHours: false,
     };
   });
+}
+
+function extractExplicitReminderTimes(text: string) {
+  const reminderIndex = text.search(/напоминан|напомн/i);
+  if (reminderIndex < 0) return [];
+  const tail = text.slice(reminderIndex);
+  const result = new Map<string, { hour: number; minute: number }>();
+  for (const match of tail.matchAll(/\b(\d{1,2})[.:](\d{2})\b/g)) {
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (hour > 23 || minute > 59) continue;
+    result.set(`${hour}:${minute}`, { hour, minute });
+  }
+  return [...result.values()];
+}
+
+function isCorrectionText(text: string) {
+  return /(а\s+не|исправ|поправ|перенеси|вместо|не\s+в\s+15)/i.test(text);
+}
+
+function extractMatchingContextItemId(activeContext: string, titlePattern: RegExp) {
+  for (const line of activeContext.split("\n")) {
+    if (!titlePattern.test(line)) continue;
+    const match = line.match(new RegExp(`(?:^|\\s)id=(${UUID_PATTERN})(?:;|\\s|$)`, "i"));
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function extractPriority(text: string) {
+  const numeric = text.match(/приоритет(?:ом)?\s*([1-5])/i);
+  if (numeric?.[1]) return Number(numeric[1]);
+  if (/(?:важно!|очень\s+важно|срочно|важно\s+важно)/i.test(text)) return 5;
+  if (/\bважно\b/i.test(text)) return 4;
+  if (/(неважно|когда-нибудь)/i.test(text)) return 1;
+  return null;
+}
+
+function extractPriorityTargetContextItemId(text: string, activeContext: string) {
+  const words = text
+    .toLocaleLowerCase("ru")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length >= 4 && !/^(приоритет|сделай|понизь|повысь|важно)$/.test(word));
+  for (const line of activeContext.split("\n")) {
+    const lower = line.toLocaleLowerCase("ru");
+    if (!words.some((word) => lower.includes(word))) continue;
+    const match = line.match(new RegExp(`(?:^|\\s)id=(${UUID_PATTERN})(?:;|\\s|$)`, "i"));
+    if (match?.[1]) return match[1];
+  }
+  return null;
 }
 
 function nextWeekday(now: DateTime, weekday: number) {

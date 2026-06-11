@@ -1,6 +1,6 @@
 import { InlineKeyboard } from "grammy";
 
-import type { PlannerItem } from "@/db/schema";
+import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 
 export function pendingActionKeyboard(pendingActionId: string) {
   return new InlineKeyboard()
@@ -75,6 +75,8 @@ export function itemMenuKeyboard(itemId: string) {
     .text("🗑 Удалить", `manage:delete:${itemId}`)
     .row()
     .text("🔔 Напомнить", `item:remind:${itemId}`)
+    .text("⭐ Приоритет", `item:priority:${itemId}`)
+    .row()
     .text("📝 Итоги", `item:results:${itemId}`)
     .row()
     .text("🔙 К плану", "dashboard:refresh");
@@ -195,6 +197,58 @@ export function reminderPolicyRepairKeyboard() {
     .text("Показать детали", "repair_policies:preview")
     .row()
     .text("Архивировать вручную", "repair_policies:manual");
+}
+
+export function reminderPolicyListKeyboard(policies: ReminderPolicy[]) {
+  const keyboard = new InlineKeyboard();
+  for (const [index, policy] of policies.slice(0, 12).entries()) {
+    keyboard.text(String(index + 1), `policy:open:${policy.id}`);
+    if ((index + 1) % 4 === 0) keyboard.row();
+  }
+  if (policies.length % 4 !== 0) keyboard.row();
+  return keyboard
+    .text("Активные", "policy:list:active")
+    .text("Скоро", "policy:list:soon")
+    .text("Дальние", "policy:list:distant")
+    .row()
+    .text("Долгосрочные", "policy:list:longterm")
+    .text("На паузе", "policy:list:paused")
+    .row()
+    .text("План", "dashboard:refresh");
+}
+
+export function reminderPolicyCardKeyboard(policy: ReminderPolicy) {
+  const keyboard = new InlineKeyboard()
+    .text("Приоритет", `policy:priority:${policy.id}`)
+    .text("Частота", `policy:frequency:${policy.id}`)
+    .row();
+  if (policy.status === "active") {
+    keyboard.text("Пауза", `policy:pause:${policy.id}`);
+  } else {
+    keyboard.text("Возобновить", `policy:resume:${policy.id}`);
+  }
+  return keyboard
+    .text("Удалить", `policy:cancel:${policy.id}`)
+    .row()
+    .text("Назад", "policy:list:active")
+    .text("План", "dashboard:refresh");
+}
+
+export function priorityEditorKeyboard(target: "item" | "policy", id: string) {
+  const keyboard = new InlineKeyboard();
+  for (const priority of [1, 2, 3, 4, 5]) {
+    keyboard.text(String(priority), `${target}:set_priority:${id}:${priority}`);
+  }
+  return keyboard.row().text("Назад", target === "policy" ? `policy:open:${id}` : "dashboard:refresh");
+}
+
+export function policyFrequencyKeyboard(policyId: string) {
+  const keyboard = new InlineKeyboard();
+  for (const minutes of [5, 10, 15, 20, 30, 45, 60, 120, 180, 240, 300]) {
+    keyboard.text(minutes < 60 ? `${minutes} мин` : `${minutes / 60} ч`, `policy:set_interval:${policyId}:${minutes}`);
+    if ([15, 45, 180].includes(minutes)) keyboard.row();
+  }
+  return keyboard.row().text("Назад", `policy:open:${policyId}`);
 }
 
 export function tentativeEventFollowupKeyboard(itemId: string) {
