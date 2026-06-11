@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
+import { entityRefCallback, type EntityRef } from "@/domain/entityRefs";
 
 export function pendingActionKeyboard(pendingActionId: string) {
   return new InlineKeyboard()
@@ -66,8 +67,26 @@ export function liveDashboardKeyboard(items: PlannerItem[]) {
     .text("🧹 Очистить", "dashboard:cleanup");
 }
 
-export function itemMenuKeyboard(itemId: string) {
-  return new InlineKeyboard()
+export function entityListKeyboard(refs: EntityRef[], includeDashboardActions = false) {
+  const keyboard = new InlineKeyboard();
+  for (const [index, ref] of refs.slice(0, 12).entries()) {
+    keyboard.text(String(index + 1), entityRefCallback(ref));
+    if ((index + 1) % 4 === 0) keyboard.row();
+  }
+  if (refs.length % 4 !== 0) keyboard.row();
+  if (includeDashboardActions) {
+    keyboard
+      .text("➕ Добавить", "dashboard:add")
+      .text("🔔 Напоминания", "dashboard:reminders")
+      .row()
+      .text("📅 Дальние", "dashboard:longterm")
+      .text("🧹 Очистить", "dashboard:cleanup");
+  }
+  return keyboard;
+}
+
+export function itemMenuKeyboard(itemId: string, campaignGroup?: string | null) {
+  const keyboard = new InlineKeyboard()
     .text("✅ Выполнено", `done:${itemId}`)
     .text("⏭ Перенести", `manage:reschedule:${itemId}`)
     .row()
@@ -78,8 +97,9 @@ export function itemMenuKeyboard(itemId: string) {
     .text("⭐ Приоритет", `item:priority:${itemId}`)
     .row()
     .text("📝 Итоги", `item:results:${itemId}`)
-    .row()
-    .text("🔙 К плану", "dashboard:refresh");
+    .text("🔗 Напоминания", `entity:item_policies:${itemId}`);
+  if (campaignGroup) keyboard.row().text("📣 Кампания", `entity:open:campaign:${campaignGroup}`);
+  return keyboard.row().text("🔙 К плану", "dashboard:refresh");
 }
 
 export function eventReactionKeyboard(itemId: string, kind = "event") {
@@ -227,19 +247,51 @@ export function reminderPolicyCardKeyboard(policy: ReminderPolicy) {
   } else {
     keyboard.text("Возобновить", `policy:resume:${policy.id}`);
   }
-  return keyboard
+  keyboard
     .text("Удалить", `policy:cancel:${policy.id}`)
-    .row()
-    .text("Назад", "policy:list:active")
-    .text("План", "dashboard:refresh");
+    .row();
+  if (policy.itemId) keyboard.text("Связанная запись", `entity:open:planner_item:${policy.itemId}`).row();
+  const campaignGroup = String(policy.metadata?.campaignGroup ?? "");
+  if (campaignGroup) keyboard.text("Кампания", `entity:open:campaign:${campaignGroup}`).row();
+  return keyboard.text("Назад", "policy:list:active").text("План", "dashboard:refresh");
 }
 
 export function priorityEditorKeyboard(target: "item" | "policy", id: string) {
   const keyboard = new InlineKeyboard();
-  for (const priority of [1, 2, 3, 4, 5]) {
-    keyboard.text(String(priority), `${target}:set_priority:${id}:${priority}`);
+  for (const [priority, label] of [
+    [1, "Низкая"],
+    [2, "Ниже обычной"],
+    [3, "Обычная"],
+    [4, "Важная"],
+    [5, "Очень важная"],
+  ] as const) {
+    keyboard.text(label, `${target}:set_priority:${id}:${priority}`).row();
   }
-  return keyboard.row().text("Назад", target === "policy" ? `policy:open:${id}` : "dashboard:refresh");
+  return keyboard.text("Назад", target === "policy" ? `policy:open:${id}` : `entity:open:planner_item:${id}`);
+}
+
+export function campaignCardKeyboard(campaignGroup: string) {
+  return new InlineKeyboard()
+    .text("▶️ Активировать следующий", `campaign:activate:${campaignGroup}`)
+    .row()
+    .text("⏸ Пауза", `campaign:pause:${campaignGroup}`)
+    .text("▶️ Возобновить", `campaign:resume:${campaignGroup}`)
+    .row()
+    .text("⭐ Важность", `campaign:priority:${campaignGroup}`)
+    .text("🗑 Удалить", `campaign:cancel:${campaignGroup}`)
+    .row()
+    .text("🔙 К плану", "dashboard:refresh");
+}
+
+export function campaignCompletionGuardKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("Подготовка выполнена", `campaign:prep_done:${itemId}`)
+    .row()
+    .text("Событие уже прошло", `campaign:event_passed:${itemId}`)
+    .text("Отменить событие", `manage:delete:${itemId}`)
+    .row()
+    .text("Перенести", `manage:reschedule:${itemId}`)
+    .text("Назад", `entity:open:campaign_item:${itemId}`);
 }
 
 export function policyFrequencyKeyboard(policyId: string) {

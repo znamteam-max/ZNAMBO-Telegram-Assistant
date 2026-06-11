@@ -11,10 +11,12 @@ import {
   compareTimelineEntries,
   getBasePriority,
   getEffectivePriority,
+  getUrgencyBoost,
 } from "@/domain/timelineClassification";
+import { importanceLabel, importanceMarker, urgencyExplanation } from "@/domain/importance";
 import {
+  entityListKeyboard,
   reminderPolicyCardKeyboard,
-  reminderPolicyListKeyboard,
 } from "@/bot/keyboards";
 
 export async function renderReminderControlCenter(params: {
@@ -48,7 +50,14 @@ export async function renderReminderControlCenter(params: {
   return {
     text: lines.join("\n"),
     policies: filtered,
-    keyboard: reminderPolicyListKeyboard(filtered),
+    keyboard: entityListKeyboard(
+      filtered.map((policy) => {
+        const campaignGroup = String(policy.metadata?.campaignGroup ?? "");
+        return campaignGroup
+          ? { type: "campaign" as const, id: campaignGroup }
+          : { type: "reminder_policy" as const, id: policy.id };
+      }),
+    ),
   };
 }
 
@@ -76,7 +85,8 @@ export async function renderReminderPolicyCard(params: {
       "",
       `Статус: ${policy.status}`,
       `Тип: ${policy.policyType}`,
-      `Приоритет: ${getBasePriority({ policy })} (эффективный ${getEffectivePriority({ policy }, now, params.timezone)})`,
+      `Важность: ${importanceLabel(getBasePriority({ policy }))}`,
+      `Сейчас: ${importanceLabel(getEffectivePriority({ policy }, now, params.timezone))}; ${urgencyExplanation(getUrgencyBoost({ policy }, now, params.timezone))}`,
       `Частота: ${policy.intervalMinutes ? `каждые ${policy.intervalMinutes} мин` : policy.recurrenceRule ?? "один раз"}`,
       `Окно: ${window || "без ограничений"}`,
       `До выполнения: ${policy.requireAck ? "да" : "нет"}`,
@@ -97,7 +107,7 @@ function policyMatchesScope(policy: ReminderPolicy, scope: string, now: Date, ti
   if (scope === "today") return ["now", "today", "active_nag"].includes(classification);
   if (scope === "soon") return classification === "soon";
   if (scope === "longterm") return classification === "long_term";
-  if (scope === "distant") return classification === "distant";
+  if (scope === "distant") return classification === "distant_priority";
   return true;
 }
 
@@ -107,7 +117,8 @@ function formatPolicyLine(policy: ReminderPolicy, now: Date, timezone: string) {
         .setZone(policy.timezone || timezone)
         .toFormat("dd.LL HH:mm")
     : "нет следующего";
-  return `P${getEffectivePriority({ policy }, now, timezone)} · ${policy.title}\n   ${policy.policyType} · ${next}`;
+  const marker = importanceMarker(getBasePriority({ policy }));
+  return `${marker ? `${marker} · ` : ""}${policy.title}\n   ${policy.policyType} · ${next}`;
 }
 
 function formatDate(value: Date | null, timezone: string) {

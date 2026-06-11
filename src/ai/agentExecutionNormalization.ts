@@ -6,6 +6,7 @@ import type {
   AgentReminderPolicy,
 } from "@/ai/schemas/agentExecution";
 import type { ActionPlanItem } from "@/ai/schemas";
+import { parseRussianWeekdayAppointment } from "@/domain/russianWeekday";
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 
@@ -17,9 +18,13 @@ export function normalizeAgentExecutionProposal(params: {
   activeContext: string;
 }): AgentExecution {
   const centralPark = normalizeCentralPark(params);
-  const temporal = normalizeNightTemporalSemantics({
+  const weekday = normalizeRussianWeekdaySemantics({
     ...params,
     execution: centralPark,
+  });
+  const temporal = normalizeNightTemporalSemantics({
+    ...params,
+    execution: weekday,
   });
   const interval = normalizeIntervalWindow({
     ...params,
@@ -38,6 +43,119 @@ export function normalizeAgentExecutionProposal(params: {
     text: params.text,
     activeContext: params.activeContext,
   });
+}
+
+function normalizeRussianWeekdaySemantics(params: {
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+  activeContext: string;
+}) {
+  const appointment = parseRussianWeekdayAppointment(params);
+  if (!appointment) return params.execution;
+  const isMedicalFamily = /(ортодонт|врач|доктор|стоматолог|клиник|больниц|ребен|ребён|роба?)/i.test(
+    params.text,
+  );
+  if (!isMedicalFamily) return params.execution;
+
+  const existingId = extractMatchingContextItemId(
+    params.activeContext,
+    /(ортодонт|стоматолог|врач|доктор|роба?)/i,
+  );
+  if (existingId) {
+    return {
+      ...params.execution,
+      intent: "update_existing_items" as const,
+      actionPlan: null,
+      itemUpdates: [
+        {
+          itemIds: [existingId],
+          operation: "reschedule" as const,
+          startAtLocal: appointment.localDateTime,
+          endAtLocal: null,
+          reminderMinutesBefore: null,
+          followupMinutesAfter: null,
+          priority: 4,
+          exposeManagementButtons: true,
+          note: "Deterministic Russian weekday appointment repair.",
+        },
+      ],
+      reminderPolicies: [],
+      clarificationQuestions: [],
+    };
+  }
+
+  const proposed = params.execution.actionPlan?.actions[0];
+  const action: ActionPlanItem = {
+    ...(proposed ?? buildSyntheticAppointmentAction(params.timezone)),
+    actionType: "event",
+    kind: "event",
+    title: normalizeMedicalAppointmentTitle(params.text, proposed?.title),
+    timezone: proposed?.timezone || params.timezone,
+    startAtLocal: appointment.localDateTime,
+    dueAtLocal: null,
+    priority: Math.max(proposed?.priority ?? 3, 4),
+    metadata: {
+      ...(proposed?.metadata ?? {}),
+      sourceNormalization: "russian_weekday_v252",
+      category: "health",
+      familyRelated: true,
+      importanceMode: "auto",
+      basePriority: 4,
+      reminderSuggestion: "offer_before_event",
+    },
+  };
+  return {
+    ...params.execution,
+    intent: "create_plan" as const,
+    actionPlan: {
+      ...(params.execution.actionPlan ?? {
+        intent: "plan" as const,
+        summary: action.title,
+        reply: null,
+        confidence: 0.98,
+        requiresConfirmation: false,
+        actions: [],
+        memoryCandidates: [],
+        clarificationQuestions: [],
+      }),
+      intent: "plan" as const,
+      actions: [action],
+      clarificationQuestions: [],
+    },
+    itemUpdates: [],
+    clarificationQuestions: [],
+  };
+}
+
+function buildSyntheticAppointmentAction(timezone: string): ActionPlanItem {
+  return {
+    actionType: "event",
+    kind: "event",
+    title: "Запись к врачу",
+    description: null,
+    location: null,
+    timezone,
+    startAtLocal: null,
+    endAtLocal: null,
+    dueAtLocal: null,
+    durationMinutes: null,
+    priority: 4,
+    confidence: 0.98,
+    risk: "low",
+    requiresConfirmation: false,
+    tentative: false,
+    recurrence: null,
+    reminders: [],
+    memoryCandidates: [],
+    metadata: {},
+  };
+}
+
+function normalizeMedicalAppointmentTitle(text: string, fallback?: string | null) {
+  if (/ортодонт/i.test(text) && /роба?/i.test(text)) return "Отвести Роба к ортодонту";
+  return fallback?.trim() || text.replace(/\s+(?:во?|на)\s+\S+\s+к\s+\d.*$/i, "").trim();
 }
 
 function normalizeNightTemporalSemantics(params: {
@@ -172,7 +290,12 @@ function normalizePrioritySemantics(params: {
         actions: params.execution.actionPlan.actions.map((action) => ({
           ...action,
           priority,
-          metadata: { ...action.metadata, explicitPriority: true },
+          metadata: {
+            ...action.metadata,
+            explicitPriority: true,
+            importanceMode: "manual",
+            basePriority: priority,
+          },
         })),
       },
     };
@@ -521,6 +644,8 @@ function centralParkAction(
     metadata: {
       sourceNormalization: "central_park_v251",
       important: true,
+      importanceMode: "auto",
+      basePriority: 5,
       campaignGroup: "central_park",
       campaignSequence,
       campaignState,

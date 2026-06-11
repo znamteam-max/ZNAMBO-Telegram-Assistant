@@ -7,8 +7,9 @@ export type TimelineClassification =
   | "today"
   | "active_nag"
   | "soon"
-  | "distant"
+  | "distant_priority"
   | "long_term"
+  | "campaign_active"
   | "campaign_waiting"
   | "history"
   | "hidden";
@@ -29,6 +30,7 @@ export function classifyTimelineItem(
     return "history";
   }
   if (metadataValue(item, policy, "campaignState") === "waiting") return "campaign_waiting";
+  if (metadataValue(item, policy, "campaignState") === "active") return "campaign_active";
 
   const anchor = item?.startAt ?? item?.dueAt ?? policy?.nextFireAt ?? policy?.startsAt ?? null;
   const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
@@ -60,7 +62,7 @@ export function classifyTimelineItem(
   }
   if (anchorLocal?.hasSame(nowLocal, "day")) return "today";
   if (anchor && anchor.getTime() <= now.getTime() + 48 * 60 * 60 * 1000) return "soon";
-  return anchor ? "distant" : "long_term";
+  return anchor ? "distant_priority" : "long_term";
 }
 
 export function getBasePriority(entry: TimelineEntry): number {
@@ -90,6 +92,10 @@ export function getEffectivePriority(
   }
   if (classifyTimelineItem(entry, now, timezone) === "active_nag") boost = Math.max(boost, 1);
   return clampPriority(base + boost);
+}
+
+export function getUrgencyBoost(entry: TimelineEntry, now: Date, timezone: string): number {
+  return getEffectivePriority(entry, now, timezone) - getBasePriority(entry);
 }
 
 export function compareTimelineEntries(
@@ -143,11 +149,12 @@ function classificationRank(value: TimelineClassification) {
     active_nag: 1,
     today: 2,
     soon: 3,
-    campaign_waiting: 4,
-    distant: 5,
-    long_term: 6,
-    history: 7,
-    hidden: 8,
+    campaign_active: 4,
+    campaign_waiting: 5,
+    distant_priority: 6,
+    long_term: 7,
+    history: 8,
+    hidden: 9,
   }[value];
 }
 

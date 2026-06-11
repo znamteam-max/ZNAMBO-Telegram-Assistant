@@ -22,7 +22,7 @@ import { getCalendarProvider, getEnv, isGoogleCalendarConfigured } from "@/lib/e
 import { createGoogleCalendarAuthUrl } from "@/integrations/googleCalendar";
 import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
-import { renderDailyHistory } from "@/services/dailyHistory";
+import { renderDailyHistoryView } from "@/services/dailyHistory";
 import { cleanupTransientMessages } from "@/telegram/messageLifecycle";
 import { renderCronHealth, renderPolicyDebug } from "@/services/reminderDiagnostics";
 import {
@@ -44,6 +44,10 @@ import {
   applyV251ProductionRepair,
   previewV251ProductionRepair,
 } from "@/services/v251ProductionRepair";
+import {
+  applyV252ProductionRepair,
+  previewV252ProductionRepair,
+} from "@/services/v252ProductionRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -272,37 +276,29 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("history", async (ctx) => {
     const owner = requireOwner(ctx);
-    await replyAndRecord(
-      ctx,
-      await renderDailyHistory({ userId: owner.id, timezone: owner.timezone, days: 3 }),
-    );
+    const view = await renderDailyHistoryView({ userId: owner.id, timezone: owner.timezone, days: 3 });
+    await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
   });
   bot.command("yesterday", async (ctx) => {
     const owner = requireOwner(ctx);
     const localDate = DateTime.now().setZone(owner.timezone).minus({ days: 1 }).toISODate()!;
-    await replyAndRecord(
-      ctx,
-      await renderDailyHistory({
+    const view = await renderDailyHistoryView({
         userId: owner.id,
         timezone: owner.timezone,
         days: 1,
         endDate: localDate,
-      }),
-    );
+      });
+    await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
   });
   bot.command("weeklog", async (ctx) => {
     const owner = requireOwner(ctx);
-    await replyAndRecord(
-      ctx,
-      await renderDailyHistory({ userId: owner.id, timezone: owner.timezone, days: 7 }),
-    );
+    const view = await renderDailyHistoryView({ userId: owner.id, timezone: owner.timezone, days: 7 });
+    await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
   });
   bot.command("review", async (ctx) => {
     const owner = requireOwner(ctx);
-    await replyAndRecord(
-      ctx,
-      await renderDailyHistory({ userId: owner.id, timezone: owner.timezone, days: 1 }),
-    );
+    const view = await renderDailyHistoryView({ userId: owner.id, timezone: owner.timezone, days: 1 });
+    await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
   });
   bot.command("admin_repair_reminder_policies", async (ctx) => {
     const owner = requireOwner(ctx);
@@ -434,6 +430,48 @@ export function registerCommands(bot: Bot<BotContext>) {
         `Old bot cards: ${preview.staleBotCards.length}`,
         "",
         "Для применения: /admin_repair_v251 apply",
+      ].join("\n"),
+    );
+  });
+  bot.command("admin_repair_v252", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const params = { userId: owner.id, timezone: owner.timezone };
+    if (mode === "apply") {
+      const result = await applyV252ProductionRepair(params);
+      await replyAndRecord(
+        ctx,
+        [
+          "V2.5.2 production repair применён.",
+          `Ортодонт исправлен: ${result.orthodontistItems.length}`,
+          `Legacy Drik отмечены: ${result.drikOrphans.length}`,
+          `Старые просроченные архивированы: ${result.oldOverdueItems.length}`,
+          `Старые bot-карточки скрыты: ${result.staleBotCards.length}`,
+          "Снимок для отката сохранён в audit.",
+        ].join("\n"),
+      );
+      if (ctx.chat?.id) {
+        await refreshDashboardAfterMutation({
+          userId: owner.id,
+          chatId: ctx.chat.id,
+          timezone: owner.timezone,
+        });
+      }
+      return;
+    }
+    const result = await previewV252ProductionRepair(params);
+    await replyAndRecord(
+      ctx,
+      [
+        "V2.5.2 production repair preview:",
+        `Ортодонт: ${result.orthodontistItems.length}`,
+        `Legacy Drik: ${result.drikOrphans.length}`,
+        `Старые просроченные: ${result.oldOverdueItems.length}`,
+        `Старые bot-карточки: ${result.staleBotCards.length}`,
+        `Central Park items: ${result.v251.centralItems.length}`,
+        `Malformed: ${result.v251.malformedItems.length}`,
+        "",
+        "Для применения: /admin_repair_v252 apply",
       ].join("\n"),
     );
   });

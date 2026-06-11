@@ -51,6 +51,10 @@ import {
   applyV251ProductionRepair,
   previewV251ProductionRepair,
 } from "@/services/v251ProductionRepair";
+import {
+  applyV252ProductionRepair,
+  previewV252ProductionRepair,
+} from "@/services/v252ProductionRepair";
 import { renderLiveDashboard } from "@/telegram/liveDashboard";
 
 export const runtime = "nodejs";
@@ -99,6 +103,20 @@ export async function POST(request: Request) {
   }
   if (body.action === "v251_repair_apply" && body.confirm === true) {
     const result = await applyV251ProductionRepair(owner.id);
+    return NextResponse.json({ ok: true, result });
+  }
+  if (body.action === "v252_repair_preview") {
+    const preview = await previewV252ProductionRepair({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: true, preview });
+  }
+  if (body.action === "v252_repair_apply" && body.confirm === true) {
+    const result = await applyV252ProductionRepair({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
     return NextResponse.json({ ok: true, result });
   }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {

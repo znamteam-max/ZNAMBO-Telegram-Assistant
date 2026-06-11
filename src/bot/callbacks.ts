@@ -7,7 +7,7 @@ import {
   cancelPlannerItem,
   getPlannerItemById,
   markPlannerItemCompleted,
-  updatePlannerItemPriority,
+  setPlannerItemManualPriority,
 } from "@/db/queries/items";
 import { deleteMemoryForUser } from "@/db/queries/memories";
 import {
@@ -28,6 +28,7 @@ import {
   stopPoliciesForItem,
   updatePoliciesPriorityForItem,
   updateReminderPolicy,
+  listReminderPoliciesForItem,
 } from "@/db/queries/reminderPolicies";
 import {
   acknowledgePolicyReminder,
@@ -50,6 +51,14 @@ import {
   renderReminderPolicyCard,
 } from "@/telegram/reminderControlCenter";
 import { editReminderPolicy } from "@/services/reminderPolicyEditor";
+import {
+  completeCampaignEventAndActivateNext,
+  markCampaignPreparationDone,
+  requiresCampaignCompletionClarification,
+  updateCampaignState,
+} from "@/services/campaignLifecycle";
+import { renderEntityCard } from "@/telegram/entityCards";
+import type { EntityRefType } from "@/domain/entityRefs";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -57,6 +66,8 @@ import {
   afterEventKeyboard,
   beforeEventReminderMenuKeyboard,
   intervalReminderMenuKeyboard,
+  campaignCompletionGuardKeyboard,
+  entityListKeyboard,
   itemMenuKeyboard,
   oneTimeReminderMenuKeyboard,
   policyFrequencyKeyboard,
@@ -253,6 +264,15 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^done:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
+    const existing = await getPlannerItemById(owner.id, ctx.match[1]);
+    if (existing && requiresCampaignCompletionClarification(existing)) {
+      await ctx.answerCallbackQuery("Нужно уточнение");
+      await ctx.reply(
+        `«${existing.title}» ещё в будущем. Что именно произошло?`,
+        { reply_markup: campaignCompletionGuardKeyboard(existing.id) },
+      );
+      return;
+    }
     await ctx.answerCallbackQuery("Отмечаю");
     const item = await markPlannerItemCompleted(owner.id, ctx.match[1]);
     if (item) await cancelItemReminders(owner.id, item.id);
@@ -479,8 +499,13 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       await refreshAfterCallback(ctx);
       return;
     }
-    const sent = await ctx.reply(`${item.title}\n\nЧто делаем?`, {
-      reply_markup: itemMenuKeyboard(item.id),
+    const card = await renderEntityCard({
+      userId: owner.id,
+      timezone: owner.timezone,
+      ref: { type: "planner_item", id: item.id },
+    });
+    const sent = await ctx.reply(card?.text ?? `${item.title}\n\nЧто делаем?`, {
+      reply_markup: card?.keyboard ?? itemMenuKeyboard(item.id),
     });
     if (ctx.chat?.id) {
       await registerBotMessage({
@@ -782,7 +807,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^item:set_priority:(.+):([1-5])$/, async (ctx) => {
     const owner = requireOwner(ctx);
-    const updated = await updatePlannerItemPriority({
+    const updated = await setPlannerItemManualPriority({
       userId: owner.id,
       itemId: ctx.match[1],
       priority: Number(ctx.match[2]),
@@ -796,6 +821,79 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     }
     await ctx.answerCallbackQuery(updated ? `Приоритет ${ctx.match[2]}` : "Запись не найдена");
     await refreshAfterCallback(ctx, updated?.id);
+  });
+
+  bot.callbackQuery(
+    /^entity:open:(planner_item|reminder_policy|campaign|campaign_item|history_item|legacy_orphan):(.+)$/,
+    async (ctx) => {
+      const owner = requireOwner(ctx);
+      const card = await renderEntityCard({
+        userId: owner.id,
+        timezone: owner.timezone,
+        ref: { type: ctx.match[1] as EntityRefType, id: ctx.match[2] },
+      });
+      await ctx.answerCallbackQuery(card ? "Открываю" : "Запись не найдена");
+      if (card) await ctx.reply(card.text, { reply_markup: card.keyboard });
+    },
+  );
+
+  bot.callbackQuery(/^entity:item_policies:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const policies = await listReminderPoliciesForItem(owner.id, ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      policies.length
+        ? policies.map((policy, index) => `${index + 1}. ${policy.title} — ${policy.status}`).join("\n")
+        : "Связанных напоминаний пока нет.",
+      policies.length
+        ? {
+            reply_markup: entityListKeyboard(
+              policies.map((policy) => ({ type: "reminder_policy", id: policy.id })),
+            ),
+          }
+        : undefined,
+    );
+  });
+
+  bot.callbackQuery(/^campaign:prep_done:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const updated = await markCampaignPreparationDone(owner.id, ctx.match[1]);
+    await ctx.answerCallbackQuery(updated ? "Подготовку отметил" : "Запись не найдена");
+    if (updated) {
+      await ctx.reply("Подготовка отмечена. Само будущее событие осталось активным.");
+    }
+  });
+
+  bot.callbackQuery(/^campaign:event_passed:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const item = await getPlannerItemById(owner.id, ctx.match[1]);
+    const result = item
+      ? await completeCampaignEventAndActivateNext({ userId: owner.id, item })
+      : null;
+    if (result?.completed) {
+      await cancelItemReminders(owner.id, result.completed.id);
+      await stopPoliciesForItem(owner.id, result.completed.id);
+    }
+    await ctx.answerCallbackQuery(result?.completed ? "Событие завершено" : "Запись не найдена");
+    await refreshAfterCallback(ctx, result?.activated?.id ?? result?.completed?.id);
+  });
+
+  bot.callbackQuery(/^campaign:(activate|pause|resume|cancel|priority):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const action = ctx.match[1];
+    if (action === "priority") {
+      await ctx.answerCallbackQuery();
+      await ctx.reply("Напиши новую важность кампании одним сообщением, например: «Central Park очень важно».");
+      return;
+    }
+    const result = await updateCampaignState({
+      userId: owner.id,
+      campaignGroup: ctx.match[2],
+      action: action as "activate" | "pause" | "resume" | "cancel",
+    });
+    await ctx.answerCallbackQuery("Готово");
+    await ctx.reply(`Кампания обновлена: ${result.itemCount} элементов, ${result.policyCount} политик.`);
+    await refreshAfterCallback(ctx);
   });
 
   bot.callbackQuery(/^forget:(.+)$/, async (ctx) => {

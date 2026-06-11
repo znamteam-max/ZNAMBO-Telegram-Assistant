@@ -1890,3 +1890,36 @@ Yandex Calendar remains best-effort; failures must not block planner/reminder wr
 Vercel CLI/connector auth is still unavailable locally, but GitHub auto-deploy is working.
 Direct local Neon pooler connections are still unreliable; protected server-side diagnostics are the reliable production path.
 ```
+
+## V2.5.2 universal editability and temporal safety
+
+V2.5.2 added universal entity cards and opening buttons across dashboard, tasks, reminder views and
+daily history. Reminder policies link back to items, item cards always expose reminder controls,
+and campaigns have their own management card.
+
+Raw `P3/P4` labels were removed from normal UI. Importance now keeps `importanceMode`,
+`basePriority`, effective priority and urgency boost separate. Timeline classification now includes
+`distant_priority` and `campaign_active`.
+
+The deterministic Russian weekday layer resolves `во вторник к 10.20` from Thursday 2026-06-11 to
+Tuesday 2026-06-16 10:20. Medical/family appointments receive health metadata, automatic base
+importance 4 and reminder suggestions. Repeated requests now open existing records instead of
+silently no-oping.
+
+Future campaign events cannot be completed by an accidental early `Done`. The bot asks whether
+preparation is done, the event passed, it was cancelled, or it should be rescheduled. Only explicit
+event completion or manual activation advances the campaign.
+
+Owner-only `/admin_repair_v252 preview|apply` fixes the orthodontist record, invokes the existing
+malformed/Central Park repair, marks legacy Drik orphans, archives old overdue records, marks old
+bot cards stale, preserves user messages, and saves an audit rollback snapshot.
+
+Local validation:
+
+```text
+npm test -> 39 files passed, 123 tests passed
+npm run lint -> passed
+npx tsc --noEmit -> passed
+npm run build -> passed
+git diff --check -> passed
+```

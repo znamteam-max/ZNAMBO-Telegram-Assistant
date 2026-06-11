@@ -99,6 +99,33 @@ export async function listReminderPoliciesByStatus(userId: string, status: strin
     .limit(limit);
 }
 
+export async function listReminderPoliciesForItem(userId: string, itemId: string, limit = 100) {
+  return getDb()
+    .select()
+    .from(reminderPolicies)
+    .where(and(eq(reminderPolicies.userId, userId), eq(reminderPolicies.itemId, itemId)))
+    .orderBy(desc(reminderPolicies.createdAt))
+    .limit(limit);
+}
+
+export async function listReminderPoliciesForCampaign(
+  userId: string,
+  campaignGroup: string,
+  limit = 100,
+) {
+  return getDb()
+    .select()
+    .from(reminderPolicies)
+    .where(
+      and(
+        eq(reminderPolicies.userId, userId),
+        sql`${reminderPolicies.metadata}->>'campaignGroup' = ${campaignGroup}`,
+      ),
+    )
+    .orderBy(sql`${reminderPolicies.nextFireAt} asc nulls last`)
+    .limit(limit);
+}
+
 export async function listLongTermReminderPolicies(userId: string, limit = 100) {
   return getDb()
     .select()
@@ -217,12 +244,14 @@ export async function updatePoliciesPriorityForItem(params: {
   userId: string;
   itemId: string;
   priority: number;
+  importanceMode?: "auto" | "manual";
 }) {
   await getDb()
     .update(reminderPolicies)
     .set({
       metadata: sql`${reminderPolicies.metadata} || ${JSON.stringify({
         basePriority: Math.max(1, Math.min(5, params.priority)),
+        importanceMode: params.importanceMode ?? "manual",
       })}::jsonb`,
       updatedAt: new Date(),
     })

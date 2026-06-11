@@ -16,6 +16,7 @@ import { listManageableItems } from "@/db/queries/items";
 import { listItemsByIds } from "@/db/queries/taskViewStates";
 import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
 import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
+import { campaignCompletionGuardKeyboard, entityListKeyboard } from "@/bot/keyboards";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
 import { detectHardManagementIntent } from "./hardManagementIntent";
@@ -240,6 +241,20 @@ async function executeAgentProposal(params: {
       }
     } else if (!params.execution.reminderPolicies.length) {
       result.finalAction = "all_proposed_actions_already_exist";
+      const existingItems = await listItemsByIds(owner.id, deduped.skippedItemIds);
+      await replyAndRecord(
+        params.ctx,
+        existingItems.length === 1
+          ? `Такая запись уже есть: ${existingItems[0].title}. Открываю существующую карточку.`
+          : `Эти записи уже существуют: ${existingItems.map((item) => item.title).join(", ")}.`,
+        existingItems.length
+          ? {
+              reply_markup: entityListKeyboard(
+                existingItems.map((item) => ({ type: "planner_item", id: item.id })),
+              ),
+            }
+          : undefined,
+      );
     }
     if (!deduped.plan.actions.length && params.execution.reminderPolicies.length) {
       const policyResult = await executePolicyProposals({
@@ -277,6 +292,19 @@ async function executeAgentProposal(params: {
     result.mutationOccurred = updateResult.updatedItems.length > 0;
     result.validationWarnings = updateResult.warnings;
     result.finalAction = "updated_existing_items";
+    const guardedId = updateResult.warnings
+      .find((warning) => warning.startsWith("future_campaign_completion_requires_clarification:"))
+      ?.split(":")[1];
+    if (guardedId) {
+      const [item] = await listItemsByIds(owner.id, [guardedId]);
+      await replyAndRecord(
+        params.ctx,
+        item
+          ? `«${item.title}» ещё в будущем. Что именно произошло?`
+          : "Будущее событие кампании не завершил: нужно уточнение.",
+        item ? { reply_markup: campaignCompletionGuardKeyboard(item.id) } : undefined,
+      );
+    }
     await syncItemsToCalendarBestEffort(updateResult.updatedItems);
     if (params.execution.reminderPolicies.length) {
       const policyResult = await executePolicyProposals({

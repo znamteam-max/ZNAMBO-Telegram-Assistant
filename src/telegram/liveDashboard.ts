@@ -16,11 +16,13 @@ import { logger } from "@/lib/logger";
 import {
   classifyTimelineItem,
   compareTimelineEntries,
-  getEffectivePriority,
+  getBasePriority,
 } from "@/domain/timelineClassification";
+import { importanceMarker } from "@/domain/importance";
+import type { EntityRef } from "@/domain/entityRefs";
 
 import { getBot } from "@/bot/createBot";
-import { liveDashboardKeyboard } from "@/bot/keyboards";
+import { entityListKeyboard } from "@/bot/keyboards";
 import { deleteMessageSafe, registerBotMessage, removeKeyboardSafe } from "./messageLifecycle";
 
 export type LiveDashboardTelegramApi = {
@@ -81,45 +83,79 @@ export async function renderLiveDashboard(params: {
     )
     .slice(0, 5);
   const soonIds = new Set(soon.map((policy) => policy.id));
+  const campaigns = displayPolicies
+    .filter((policy) => Boolean(policy.metadata?.campaignGroup))
+    .sort((a, b) => compareTimelineEntries({ policy: a }, { policy: b }, now, params.timezone))
+    .slice(0, 4);
+  const campaignIds = new Set(campaigns.map((policy) => policy.id));
   const distant = displayPolicies
     .filter((policy) => {
-      if (naggingIds.has(policy.id) || soonIds.has(policy.id)) return false;
-      return ["distant", "long_term"].includes(
-        classifyTimelineItem({ policy }, now, params.timezone),
+      if (naggingIds.has(policy.id) || soonIds.has(policy.id) || campaignIds.has(policy.id)) return false;
+      return (
+        classifyTimelineItem({ policy }, now, params.timezone) === "distant_priority" &&
+        getBasePriority({ policy }) >= 4
       );
     })
     .sort((a, b) =>
       compareTimelineEntries({ policy: a }, { policy: b }, now, params.timezone),
     )
     .slice(0, 4);
+  const longTerm = displayPolicies
+    .filter(
+      (policy) =>
+        !campaignIds.has(policy.id) &&
+        classifyTimelineItem({ policy }, now, params.timezone) === "long_term",
+    )
+    .sort((a, b) => compareTimelineEntries({ policy: a }, { policy: b }, now, params.timezone))
+    .slice(0, 4);
 
   const lines = [`JARVIS · Сегодня, ${local.toFormat("d LLLL")}`];
+  const refs: EntityRef[] = [];
+  let displayIndex = 1;
+  const pushRows = (rows: Array<{ text: string; ref: EntityRef }>) => {
+    for (const row of rows) {
+      lines.push(`${displayIndex}. ${row.text}`);
+      refs.push(row.ref);
+      displayIndex += 1;
+    }
+  };
   lines.push("", "Сейчас / ближайшее:");
   if (todayItems.length) {
-    lines.push(
-      ...todayItems.map((item, index) => formatDashboardItem(item, index + 1, params.timezone)),
+    pushRows(
+      todayItems.map((item) => ({
+        text: formatDashboardItem(item, params.timezone),
+        ref: { type: item.status === "active" ? "planner_item" : "history_item", id: item.id },
+      })),
     );
   } else {
     lines.push("План на сегодня пока пуст.");
   }
   if (nagging.length) {
     lines.push("", "Активные напоминания:");
-    lines.push(...nagging.map((policy) => `• ${formatPolicy(policy, params.timezone)}`));
+    pushRows(nagging.map((policy) => policyRow(policy, params.timezone)));
   }
   if (soon.length) {
     lines.push("", "Скоро:");
-    lines.push(...soon.map((policy) => `• ${formatPolicy(policy, params.timezone)}`));
+    pushRows(soon.map((policy) => policyRow(policy, params.timezone)));
+  }
+  if (campaigns.length) {
+    lines.push("", "Кампании:");
+    pushRows(campaigns.map((policy) => policyRow(policy, params.timezone)));
   }
   if (distant.length) {
-    lines.push("", "Дальние по приоритету:");
-    lines.push(...distant.map((policy) => `• ${formatPolicy(policy, params.timezone)}`));
+    lines.push("", "Дальние по важности:");
+    pushRows(distant.map((policy) => policyRow(policy, params.timezone)));
+  }
+  if (longTerm.length) {
+    lines.push("", "Долгосрочные:");
+    pushRows(longTerm.map((policy) => policyRow(policy, params.timezone)));
   }
 
   return {
     text: lines.join("\n"),
     items: todayItems,
     policies: displayPolicies,
-    keyboard: liveDashboardKeyboard(todayItems),
+    keyboard: entityListKeyboard(refs, true),
   };
 }
 
@@ -243,8 +279,8 @@ export async function refreshDashboardAfterMutation(params: {
   });
 }
 
-function formatDashboardItem(item: PlannerItem, index: number, timezone: string) {
-  if (item.status === "completed") return `${index}. ✅ ${item.title} — завершено`;
+function formatDashboardItem(item: PlannerItem, timezone: string) {
+  if (item.status === "completed") return `✅ ${item.title} — завершено`;
   const start = item.startAt ?? item.dueAt;
   const time = start
     ? DateTime.fromJSDate(start, { zone: "utc" })
@@ -257,7 +293,8 @@ function formatDashboardItem(item: PlannerItem, index: number, timezone: string)
         .toFormat("HH:mm")
     : null;
   const marker = item.kind === "training" ? "🟢" : item.kind === "preparation_task" ? "🟡" : "🔴";
-  return `${index}. ${marker} ${time}${end ? `–${end}` : ""} · ${item.title}`;
+  const important = importanceMarker(getBasePriority({ item }));
+  return `${marker} ${time}${end ? `–${end}` : ""} · ${item.title}${important ? ` · ${important}` : ""}`;
 }
 
 function formatPolicy(policy: ReminderPolicy, timezone: string) {
@@ -266,12 +303,21 @@ function formatPolicy(policy: ReminderPolicy, timezone: string) {
         .setZone(policy.timezone || timezone)
         .toFormat("dd.LL HH:mm")
     : "без ближайшего запуска";
-  const priority = getEffectivePriority({ policy }, new Date(), timezone);
-  const priorityLabel = priority !== 3 ? `P${priority} · ` : "";
+  const priorityLabel = importanceMarker(getBasePriority({ policy }));
   if (policy.policyType === "interval_window") {
-    return `${priorityLabel}${policy.title}: каждые ${policy.intervalMinutes ?? "?"} мин, следующее ${next}`;
+    return `${priorityLabel ? `${priorityLabel} · ` : ""}${policy.title}: каждые ${policy.intervalMinutes ?? "?"} мин, следующее ${next}`;
   }
-  return `${priorityLabel}${policy.title} — ${next}`;
+  return `${priorityLabel ? `${priorityLabel} · ` : ""}${policy.title} — ${next}`;
+}
+
+function policyRow(policy: ReminderPolicy, timezone: string): { text: string; ref: EntityRef } {
+  const campaignGroup = String(policy.metadata?.campaignGroup ?? "");
+  return {
+    text: formatPolicy(policy, timezone),
+    ref: campaignGroup
+      ? { type: "campaign", id: campaignGroup }
+      : { type: "reminder_policy", id: policy.id },
+  };
 }
 
 function groupCampaignPolicies(policies: ReminderPolicy[]) {

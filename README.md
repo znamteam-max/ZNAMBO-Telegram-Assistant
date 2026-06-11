@@ -1,6 +1,6 @@
 # Personal Telegram Daily Assistant
 
-Current application version: `2.5.1`.
+Current application version: `2.5.2`.
 
 Release summaries are stored as one file per version in [`versions/`](./versions/README.md).
 

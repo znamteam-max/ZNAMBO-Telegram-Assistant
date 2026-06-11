@@ -4,6 +4,7 @@ import type { AgentItemUpdate } from "@/ai/schemas/agentExecution";
 import {
   markPlannerItemCompleted,
   mergePlannerItemMetadata,
+  setPlannerItemManualPriority,
   updatePlannerItemPriority,
   updatePlannerItemSchedule,
 } from "@/db/queries/items";
@@ -24,6 +25,7 @@ import {
   updatePoliciesPriorityForItem,
 } from "@/db/queries/reminderPolicies";
 import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
+import { requiresCampaignCompletionClarification } from "@/services/campaignLifecycle";
 
 export async function applyAgentItemUpdates(params: {
   userId: string;
@@ -59,6 +61,10 @@ export async function applyAgentItemUpdates(params: {
       }
 
       if (update.operation === "complete") {
+        if (requiresCampaignCompletionClarification(item, now)) {
+          warnings.push(`future_campaign_completion_requires_clarification:${item.id}`);
+          continue;
+        }
         const completed = await markPlannerItemCompleted(params.userId, item.id);
         await cancelItemReminderChains(params.userId, [item.id]);
         await stopPoliciesForItem(params.userId, item.id);
@@ -88,15 +94,32 @@ export async function applyAgentItemUpdates(params: {
       }
 
       if (update.priority != null) {
-        const priorityItem = await updatePlannerItemPriority({
+        const automaticImportance = update.note?.includes("Deterministic Russian weekday") === true;
+        const priorityItem = await (automaticImportance
+          ? updatePlannerItemPriority
+          : setPlannerItemManualPriority)({
           userId: params.userId,
           itemId: item.id,
           priority: update.priority,
         });
+        if (priorityItem && automaticImportance) {
+          await mergePlannerItemMetadata({
+            userId: params.userId,
+            itemId: item.id,
+            metadata: {
+              basePriority: update.priority,
+              importanceMode: "auto",
+              category: "health",
+              familyRelated: true,
+              reminderSuggestion: "offer_before_event",
+            },
+          });
+        }
         await updatePoliciesPriorityForItem({
           userId: params.userId,
           itemId: item.id,
           priority: update.priority,
+          importanceMode: automaticImportance ? "auto" : "manual",
         });
         if (priorityItem) {
           updatedItems.push(priorityItem);

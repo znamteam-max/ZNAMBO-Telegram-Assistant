@@ -394,6 +394,41 @@ export async function updatePlannerItemPriority(params: {
   return item ?? null;
 }
 
+export async function setPlannerItemManualPriority(params: {
+  userId: string;
+  itemId: string;
+  priority: number;
+}) {
+  const priority = Math.max(1, Math.min(5, params.priority));
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({
+      priority,
+      metadata: sql`${plannerItems.metadata} || ${JSON.stringify({
+        basePriority: priority,
+        importanceMode: "manual",
+      })}::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.id, params.itemId)))
+    .returning();
+  return item ?? null;
+}
+
+export async function listCampaignItems(userId: string, campaignGroup: string, limit = 100) {
+  return getDb()
+    .select()
+    .from(plannerItems)
+    .where(
+      and(
+        eq(plannerItems.userId, userId),
+        sql`${plannerItems.metadata}->>'campaignGroup' = ${campaignGroup}`,
+      ),
+    )
+    .orderBy(sql`nullif(${plannerItems.metadata}->>'campaignSequence', '')::int asc nulls last`)
+    .limit(limit);
+}
+
 export async function cancelCalendarSyncJobsForItem(plannerItemId: string) {
   await getDb()
     .update(calendarSyncJobs)

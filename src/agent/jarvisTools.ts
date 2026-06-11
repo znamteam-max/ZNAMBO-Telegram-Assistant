@@ -77,6 +77,7 @@ export async function renderScheduleViewTool(params: ToolParams & {
     reply: rendered.reply,
     affectedItemIds: rendered.items.map((item) => item.id),
     viewStateId: rendered.viewState?.id ?? null,
+    replyMarkup: rendered.replyMarkup,
   };
 }
 
@@ -104,6 +105,7 @@ export async function renderTaskViewTool(params: ToolParams): Promise<JarvisTool
     reply: rendered.reply,
     affectedItemIds: rendered.items.map((item) => item.id),
     viewStateId: rendered.viewState?.id ?? null,
+    replyMarkup: rendered.replyMarkup,
   };
 }
 
@@ -135,6 +137,7 @@ export async function renderYesterdayReviewTool(params: ToolParams): Promise<Jar
     reply: rendered.reply,
     affectedItemIds: rendered.items.map((item) => item.id),
     viewStateId: rendered.viewState?.id ?? null,
+    replyMarkup: rendered.replyMarkup,
   };
 }
 
@@ -166,6 +169,7 @@ export async function renderEveningReviewTool(params: ToolParams): Promise<Jarvi
     reply: rendered.reply,
     affectedItemIds: rendered.items.map((item) => item.id),
     viewStateId: rendered.viewState?.id ?? null,
+    replyMarkup: rendered.replyMarkup,
   };
 }
 
@@ -216,6 +220,7 @@ export async function renderRecentRangeTool(params: ToolParams & {
     reply: rendered.reply,
     affectedItemIds: rendered.items.map((item) => item.id),
     viewStateId: rendered.viewState?.id ?? null,
+    replyMarkup: rendered.replyMarkup,
   };
 }
 

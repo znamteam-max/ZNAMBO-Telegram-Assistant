@@ -4,6 +4,7 @@ import { DateTime } from "luxon";
 import { getDb } from "@/db/client";
 import { auditLog } from "@/db/schema";
 import { listRecentRangeItems } from "@/db/queries/items";
+import { entityListKeyboard } from "@/bot/keyboards";
 
 export type DailyItemSnapshot = {
   itemId: string;
@@ -63,6 +64,15 @@ export async function renderDailyHistory(params: {
   days?: number;
   endDate?: string;
 }) {
+  return (await renderDailyHistoryView(params)).text;
+}
+
+export async function renderDailyHistoryView(params: {
+  userId: string;
+  timezone: string;
+  days?: number;
+  endDate?: string;
+}) {
   const end = params.endDate
     ? DateTime.fromISO(params.endDate, { zone: params.timezone })
     : DateTime.now().setZone(params.timezone).minus({ days: 1 });
@@ -72,10 +82,19 @@ export async function renderDailyHistory(params: {
     const localDate = end.minus({ days: offset }).toISODate()!;
     snapshots.push(await ensureDailySnapshot({ ...params, localDate }));
   }
-  return snapshots
+  const validSnapshots = snapshots.filter(Boolean);
+  const refs = validSnapshots.flatMap((snapshot) => {
+    const details = snapshot!.details as Record<string, unknown>;
+    const items = Array.isArray(details.items) ? (details.items as DailyItemSnapshot[]) : [];
+    return items.map((item) => ({ type: "history_item" as const, id: item.itemId }));
+  });
+  return {
+    text: validSnapshots
     .filter(Boolean)
     .map((snapshot) => formatSnapshot(snapshot!.details as Record<string, unknown>))
-    .join("\n\n");
+    .join("\n\n"),
+    keyboard: entityListKeyboard([...new Map(refs.map((ref) => [ref.id, ref])).values()]),
+  };
 }
 
 async function findDailySnapshot(userId: string, localDate: string) {

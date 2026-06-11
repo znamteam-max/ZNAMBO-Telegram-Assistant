@@ -626,3 +626,33 @@ Next step:
 Commit and push main, wait for Vercel auto-deploy, then verify health, webhook, AI, scheduler lease,
 repair preview/apply and exact Central Park/Drik production behavior.
 ```
+
+### Turn: V2.5.2 universal editability and priority fix
+
+Implemented the V2.5.2 request from
+`ZNAMBO_V2.5.2_UNIVERSAL_EDITABILITY_PRIORITY_FIX.md`.
+
+Key outcomes:
+
+```text
+all visible task/reminder/history rows receive entity-card opening buttons
+normal UI uses human importance labels instead of raw P3/P4
+base priority remains separate from urgency/effective priority
+Russian weekday appointment parsing maps Tuesday correctly
+repeated duplicate requests always answer and open existing records
+future campaign Done requires clarification and does not activate the next event
+/admin_repair_v252 preview|apply added with audit rollback snapshot
+```
+
+Validation:
+
+```text
+npm test -> 39 files, 123 tests passed
+npm run lint -> passed
+npx tsc --noEmit -> passed
+npm run build -> passed
+git diff --check -> passed
+```
+
+Production deployment remains blocked until the authenticated Vercel account can access the real
+`znambo-telegram-assistant` project.

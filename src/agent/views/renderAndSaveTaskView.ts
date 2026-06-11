@@ -3,6 +3,7 @@ import type { TaskViewScope } from "@/db/queries/taskViewStates";
 
 import { rememberTaskView } from "../state/taskViewState";
 import { formatNumberedItem } from "./renderShared";
+import { entityListKeyboard } from "@/bot/keyboards";
 
 export type TaskViewSection = {
   title: string;
@@ -56,5 +57,11 @@ export async function renderAndSaveTaskView(params: {
     reply: lines.join("\n"),
     items: orderedItems,
     viewState,
+    replyMarkup: entityListKeyboard(
+      orderedItems.map((item) => ({
+        type: item.status === "active" ? "planner_item" : "history_item",
+        id: item.id,
+      })),
+    ),
   };
 }

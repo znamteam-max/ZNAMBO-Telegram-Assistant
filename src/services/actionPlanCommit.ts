@@ -167,7 +167,10 @@ export async function commitStoredActionPlan(params: {
             startAt: materialized.item.startAt,
             endAt: materialized.item.endAt,
             dueAt: materialized.item.dueAt,
-            category: categoryForItem(materialized.item.kind),
+            category:
+              typeof materialized.item.metadata.category === "string"
+                ? materialized.item.metadata.category
+                : categoryForItem(materialized.item.kind),
             visibility: materialized.item.kind === "recurring_task" ? "long_term" : "active",
             priority: materialized.item.priority,
             metadata: materialized.item.metadata,
@@ -208,6 +211,7 @@ export async function commitStoredActionPlan(params: {
                   actionPlanSequence: index,
                   reminderType: reminder.type,
                   basePriority: item.priority,
+                  importanceMode: item.metadata.importanceMode ?? "auto",
                 },
               })
               .returning();
@@ -305,6 +309,7 @@ export async function commitStoredActionPlan(params: {
                 actionPlanId: planRecord.id,
                 policyIndex,
                 basePriority: target?.priority ?? 3,
+                importanceMode: target?.metadata?.importanceMode ?? "auto",
                 campaignGroup: target?.metadata?.campaignGroup ?? null,
                 campaignSequence: target?.metadata?.campaignSequence ?? null,
                 campaignState: target?.metadata?.campaignState ?? null,
