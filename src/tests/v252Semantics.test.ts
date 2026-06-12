@@ -82,6 +82,22 @@ describe("V2.5.2 universal editability and temporal safety", () => {
     expect(requiresCampaignCompletionClarification(campaignItem(), now)).toBe(true);
   });
 
+  it("does not bind an orthodontist request to a different task that only mentions Rob", () => {
+    const orthodontistId = "11111111-1111-4111-8111-111111111111";
+    const drikId = "22222222-2222-4222-8222-222222222222";
+    const execution = normalizeAgentExecutionProposal({
+      execution: agentExecutionSchema.parse(emptyExecution()),
+      text: "Отвести Роба к ортодонту во вторник к 10.20",
+      timezone: "Europe/Moscow",
+      now,
+      activeContext: [
+        `- id=${drikId}; task Позвонить Дрик по поводу Роба`,
+        `- id=${orthodontistId}; event Отвести Роба к ортодонту`,
+      ].join("\n"),
+    });
+    expect(execution.itemUpdates[0]?.itemIds).toEqual([orthodontistId]);
+  });
+
   it("keeps the future canonical Drik task and marks the stale duplicate", () => {
     const stale = campaignItem();
     stale.id = "stale";

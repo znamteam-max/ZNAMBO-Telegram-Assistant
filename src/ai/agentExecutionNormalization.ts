@@ -59,10 +59,10 @@ function normalizeRussianWeekdaySemantics(params: {
   );
   if (!isMedicalFamily) return params.execution;
 
-  const existingId = extractMatchingContextItemId(
-    params.activeContext,
-    /(ортодонт|стоматолог|врач|доктор|роба?)/i,
-  );
+  const medicalContextPattern = /ортодонт/i.test(params.text)
+    ? /(ортодонт|стоматолог)/i
+    : /(врач|доктор|стоматолог|клиник|больниц)/i;
+  const existingId = extractMatchingContextItemId(params.activeContext, medicalContextPattern);
   if (existingId) {
     return {
       ...params.execution,
