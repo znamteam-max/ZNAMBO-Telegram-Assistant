@@ -29,10 +29,27 @@ assistant.calendar_import_state exists
 external calendar unique/start/UID indexes exist
 ```
 
+Production acceptance:
+
+```text
+validated application commit -> 8506145e6f281cd12c69941664e4bf69a38c9810
+/api/health -> ok, appVersion 2.6.0, Jarvis pipeline active
+Yandex import -> 38 visible external events, 32 recurring occurrences, no import error
+Plan snapshot -> 23 items, 1 policy, no red urgency circles
+Telegram webhook -> pending 0, no last error
+real OpenAI health -> succeeded with valid structured output and tool call
+post-fix reminder smoke -> claimed 1, sent 1, failed 0, delivered and auto-archived
+```
+
+During production acceptance, external-event callback data exceeded Telegram's 64-byte limit and
+caused `BUTTON_DATA_INVALID` during compact reminder delivery. V2.6.0 now uses the short wire alias
+`external`; a regression test enforces the callback-data limit. Non-recurring external events can
+also be edited/rescheduled at the same CalDAV object URL.
+
 Local validation:
 
 ```text
-npm test -> 48 files, 174 tests passed
+npm test -> 48 files, 176 tests passed
 npm run lint -> passed
 npx tsc --noEmit -> passed
 npm run build -> passed

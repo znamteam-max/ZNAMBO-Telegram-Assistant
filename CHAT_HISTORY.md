@@ -836,3 +836,10 @@ build passed
 ```
 
 No secrets were written to chat or project history.
+
+Production acceptance then imported 38 visible external events including 32 recurring occurrences.
+The Plan snapshot contained 23 items and no red urgency circles. A real reminder smoke exposed a
+Telegram `BUTTON_DATA_INVALID` regression caused by a callback longer than 64 bytes; the external
+entity wire alias was shortened and protected by a regression test. The next smoke was delivered
+successfully and auto-archived. Non-recurring external events gained same-object-URL edit and
+reschedule flow. Final validation passed 48 files and 176 tests.

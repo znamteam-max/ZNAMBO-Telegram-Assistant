@@ -9,15 +9,72 @@ Last updated: 2026-06-12
 ## Current Production
 
 ```text
-Application version: 2.5.4.1
+Application version: 2.6.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: bd76bb2c4189f01051b6a63940c5b61af6b490b0
+Validated application deployment commit: 8506145e6f281cd12c69941664e4bf69a38c9810
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
 Reconciler: enabled
 Runner lock: enabled
 Production scheduler: cron-job.org
+```
+
+## Latest Deployment - V2.6.0
+
+V2.6.0 is the Plan UI and Yandex inbound-calendar release.
+
+Implemented:
+
+- Plan rows no longer show red/green/yellow urgency circles. Current events have their own section,
+  while visible star/fire importance is explicitly editable as none, important, very important or
+  auto.
+- Item cards have a compact default menu. Technical sync/debug/history actions live under `Ещё`,
+  and callbacks prefer in-place card updates when Telegram allows them.
+- Persistent bottom navigation provides Plan, Add, Tasks, Reminders and Settings.
+- Compound edits preserve explicit end times, understand ranges such as `с 19.00 до 20.00`,
+  interpret a future same-day bare evening hour safely, accept rename text without quotes, and
+  show full old/new values.
+- Inbound Yandex CalDAV import uses `REPORT calendar-query`, parses ICS, expands weekly recurrence
+  occurrences, skips JARVIS-synced object URLs, stores external events separately and merges them
+  into Plan without creating duplicate local planner items.
+- External Yandex cards support inspection, local hide, delete-everywhere, and editing/rescheduling
+  of single non-recurring events at the same object URL.
+- `/calendar_sync`, `/calendar_import_status`, bounded 15-minute background import and safe health
+  telemetry were added. Calendar failures remain best-effort and cannot block reminders.
+- A production `BUTTON_DATA_INVALID` regression caused by external-event callback data exceeding
+  Telegram's 64-byte limit was found during reminder acceptance and fixed with a short wire alias.
+
+## V2.6.0 Production Acceptance
+
+```text
+Production URL: https://znambo-telegram-assistant.vercel.app
+Validated application code commit: 8506145e6f281cd12c69941664e4bf69a38c9810
+/api/health: ok, appVersion 2.6.0, pipelineMode jarvis
+OpenAI configured: true
+OpenAI required for natural language: true
+Real OpenAI health: succeeded, structured output valid, tool call accepted
+Yandex Calendar: configured, authorization ok, write ok, create/read/delete test passed
+Inbound calendar import: succeeded
+External events visible: 38
+Recurring occurrences imported: 32
+Last calendar import error: none
+Production Plan snapshot: 23 items, 1 policy, no red urgency circles
+Telegram webhook: correct production URL, pending updates 0, last error none
+Reminder runner: succeeded
+Post-fix production reminder smoke: claimed 1, sent 1, failed 0, delivery sent, auto-archived
+Production database migration: external_calendar_events and calendar_import_state verified
+Local tests: 48 files, 176 tests passed
+Lint: passed
+TypeScript/build: passed
+Secret scan: passed
+```
+
+Remaining limitation:
+
+```text
+Recurring external Yandex series can be shown, hidden or deleted as a whole series. Editing a
+single occurrence or rewriting a whole recurring series from Telegram is not implemented yet.
 ```
 
 ## Latest Deployment - V2.5.4.1
