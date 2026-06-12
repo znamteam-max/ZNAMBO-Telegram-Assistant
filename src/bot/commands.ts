@@ -55,6 +55,11 @@ import {
   runCalendarWriteTest,
 } from "@/services/calendarDiagnostics";
 import { getProductionStateV252 } from "@/services/productionDiagnostics";
+import { retryCalendarSyncsForUser } from "@/services/calendarSyncRetry";
+import {
+  applyV253CalendarRepair,
+  previewV253CalendarRepair,
+} from "@/services/v253CalendarRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -115,6 +120,8 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/calendar — статус календаря",
         "/calendardebug — безопасная диагностика календаря",
         "/calendar_test — реальный create/read/delete тест Яндекс.Календаря",
+        "/calendar_retry_failed — повторить неудачные синхронизации календаря",
+        "/admin_repair_v253_calendar preview|apply — repair timeout-синхронизаций",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -192,6 +199,12 @@ export function registerCommands(bot: Bot<BotContext>) {
         `calendarUrlSource: ${debug.calendarUrlSource}`,
         `collectionUrlNormalized: ${debug.collectionUrlNormalized}`,
         `createdObjectUrlPresent: ${debug.createdObjectUrlPresent}`,
+        `lastNormalSyncStatus: ${debug.lastNormalSyncStatus ?? "none"}`,
+        `lastNormalSyncErrorClass: ${debug.lastNormalSyncErrorClass ?? "none"}`,
+        `lastNormalSyncDurationMs: ${debug.lastNormalSyncDurationMs ?? "unknown"}`,
+        `pendingCalendarRetries: ${debug.pendingCalendarRetries}`,
+        `failedCalendarSyncs: ${debug.failedCalendarSyncs}`,
+        `lastCalendarTestStatus: ${debug.lastCalendarTestStatus}`,
         `usesAppPassword: ${debug.usesAppPassword}`,
       ].join("\n"),
     );
@@ -220,6 +233,28 @@ export function registerCommands(bot: Bot<BotContext>) {
         .filter(Boolean)
         .join("\n"),
     );
+  });
+
+  bot.command("calendar_retry_failed", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const result = await retryCalendarSyncsForUser({ userId: owner.id });
+    await replyAndRecord(
+      ctx,
+      [
+        "Повторная синхронизация календаря завершена.",
+        `Проверено: ${result.checked}`,
+        `Синхронизировано: ${result.synced}`,
+        `Ожидают повтора: ${result.pendingRetry}`,
+        `Не удалось: ${result.failed}`,
+      ].join("\n"),
+    );
+    if (ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
   });
 
   bot.command("today", async (ctx) =>
@@ -526,6 +561,40 @@ export function registerCommands(bot: Bot<BotContext>) {
         `Malformed: ${result.v251.malformedItems.length}`,
         "",
         "Для применения: /admin_repair_v252 apply",
+      ].join("\n"),
+    );
+  });
+  bot.command("admin_repair_v253_calendar", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    if (mode === "apply") {
+      const result = await applyV253CalendarRepair(owner.id);
+      await replyAndRecord(
+        ctx,
+        [
+          "V2.5.3.1 calendar repair применён.",
+          `Кандидатов: ${result.preview.candidateCount}`,
+          `Ортодонт обнаружен: ${result.preview.orthodontistDetected}`,
+          `Синхронизировано: ${result.retry.synced}`,
+          `Ожидают повтора: ${result.retry.pendingRetry}`,
+          `Не удалось: ${result.retry.failed}`,
+        ].join("\n"),
+      );
+      return;
+    }
+    const preview = await previewV253CalendarRepair(owner.id);
+    await replyAndRecord(
+      ctx,
+      [
+        "V2.5.3.1 calendar repair preview:",
+        `Timeout-кандидатов: ${preview.candidateCount}`,
+        `Ортодонт обнаружен: ${preview.orthodontistDetected}`,
+        ...preview.items.map(
+          (item) =>
+            `• ${item.title}: ${item.status}/${item.errorClass}; externalIdPresent=${item.externalIdPresent}`,
+        ),
+        "",
+        "Для применения: /admin_repair_v253_calendar apply",
       ].join("\n"),
     );
   });

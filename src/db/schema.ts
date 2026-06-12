@@ -249,6 +249,7 @@ export const itemSyncState = assistantTable(
     externalId: text("external_id"),
     status: text("status").notNull().default("not_synced"),
     lastError: text("last_error"),
+    durationMs: integer("duration_ms"),
     syncedAt: timestamp("synced_at", { withTimezone: true }),
     ...timestamps,
   },
@@ -554,6 +555,7 @@ export const calendarSyncJobs = assistantTable(
     ...timestamps,
   },
   (table) => [
+    uniqueIndex("calendar_sync_jobs_item_provider_uq").on(table.plannerItemId, table.provider),
     index("calendar_sync_jobs_status_idx").on(table.status, table.nextAttemptAt),
     index("calendar_sync_jobs_item_idx").on(table.plannerItemId),
   ],
@@ -613,5 +615,6 @@ export type ActionPlanItemRecord = typeof actionPlanItems.$inferSelect;
 export type ConversationMessage = typeof conversationMessages.$inferSelect;
 export type ReminderDelivery = typeof reminderDeliveries.$inferSelect;
 export type GoogleCalendarConnection = typeof googleCalendarConnections.$inferSelect;
+export type CalendarSyncJob = typeof calendarSyncJobs.$inferSelect;
 export type TaskViewState = typeof taskViewStates.$inferSelect;
 export type AgentAction = typeof agentActions.$inferSelect;

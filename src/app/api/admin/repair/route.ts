@@ -62,6 +62,11 @@ import {
   getCalendarStatus,
   runCalendarWriteTest,
 } from "@/services/calendarDiagnostics";
+import {
+  applyV253CalendarRepair,
+  previewV253CalendarRepair,
+} from "@/services/v253CalendarRepair";
+import { retryCalendarSyncsForUser } from "@/services/calendarSyncRetry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -150,6 +155,24 @@ export async function POST(request: Request) {
       details: result,
     });
     return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 502 });
+  }
+  if (body.action === "calendar_retry_failed" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await retryCalendarSyncsForUser({ userId: owner.id }),
+    });
+  }
+  if (body.action === "v253_calendar_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV253CalendarRepair(owner.id),
+    });
+  }
+  if (body.action === "v253_calendar_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV253CalendarRepair(owner.id),
+    });
   }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {
     const result = await runV242SnoozeProductionProbe({

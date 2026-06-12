@@ -1,7 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { randomUUID } from "crypto";
 
-import { getItemGoogleSyncState, markGoogleCalendarSync } from "@/db/queries/googleCalendar";
+import { getItemCalendarSyncState, markGoogleCalendarSync } from "@/db/queries/googleCalendar";
 import type { PlannerItem } from "@/db/schema";
 import { getEnv, isYandexCalendarConfigured, requireEnv } from "@/lib/env";
 import { logger } from "@/lib/logger";
@@ -14,8 +14,14 @@ type CalDavResponse = {
 
 export type YandexCalendarSyncResult =
   | { status: "disabled" | "skipped" }
-  | { status: "synced"; externalId: string }
-  | { status: "error"; errorClass: YandexCalendarErrorClass; safeMessage: string };
+  | { status: "synced"; externalId: string; durationMs: number }
+  | {
+      status: "pending_retry" | "failed";
+      errorClass: YandexCalendarErrorClass;
+      safeMessage: string;
+      externalId: string | null;
+      durationMs: number;
+    };
 
 export type YandexCalendarErrorClass =
   | "auth_failed"
@@ -70,6 +76,13 @@ type ResolvedCalendarCollection = {
   normalized: boolean;
 };
 
+export type YandexCalendarSyncOptions = {
+  retryFirst?: boolean;
+  totalTimeoutMs?: number;
+};
+
+const YANDEX_PROVIDER = "yandex_calendar";
+
 const parser = new XMLParser({
   ignoreAttributes: false,
   removeNSPrefix: true,
@@ -77,56 +90,92 @@ const parser = new XMLParser({
 
 export async function syncPlannerItemToYandex(
   item: PlannerItem,
+  options: YandexCalendarSyncOptions = {},
 ): Promise<YandexCalendarSyncResult> {
   if (!isYandexCalendarConfigured()) return { status: "disabled" };
   if (item.kind !== "event" && item.kind !== "training") return { status: "skipped" };
   if (!item.startAt) return { status: "skipped" };
 
+  const startedAt = Date.now();
+  const totalController = new AbortController();
+  const totalTimeout = setTimeout(
+    () => totalController.abort(new Error("Calendar total sync timeout")),
+    options.totalTimeoutMs ?? getEnv().CALDAV_TOTAL_SYNC_TIMEOUT_MS,
+  );
+  let href: string | null = null;
   try {
+    const existingSync = await getItemCalendarSyncState(item.id, YANDEX_PROVIDER);
+    if (existingSync?.status === "disabled") return { status: "disabled" };
+    href = existingSync?.externalId ?? await buildNewEventHref(item);
     await markGoogleCalendarSync({
       item,
-      status: "not_synced",
-      provider: "yandex_calendar",
+      externalId: href,
+      status: "syncing",
+      lastError: null,
+      provider: YANDEX_PROVIDER,
     });
-    const existingSync = await getItemGoogleSyncState(item.id);
-    const href =
-      existingSync?.provider === "yandex_calendar" && existingSync.externalId
-        ? existingSync.externalId
-        : await buildNewEventHref(item);
+    const expectedUid = `UID:${item.id}@znambo-telegram-assistant`;
+    if (options.retryFirst) {
+      try {
+        await readCalendarObjectOnce(href, expectedUid, totalController.signal);
+        const durationMs = Date.now() - startedAt;
+        await markGoogleCalendarSync({
+          item,
+          externalId: href,
+          status: "synced",
+          lastError: null,
+          durationMs,
+          provider: YANDEX_PROVIDER,
+        });
+        return { status: "synced", externalId: href, durationMs };
+      } catch (error) {
+        if (classifyYandexCalendarError(error).errorClass !== "read_back_not_found") throw error;
+      }
+    }
     const ics = buildIcs(item, href);
     const headers: Record<string, string> = {
       "content-type": "text/calendar; charset=utf-8",
     };
-    if (!existingSync?.externalId) headers["if-none-match"] = "*";
+    if (!existingSync?.externalId && !options.retryFirst) headers["if-none-match"] = "*";
 
     await caldavRequest(href, {
       method: "PUT",
       headers,
       body: ics,
-    });
-    await readBackCalendarObject(href, `UID:${item.id}@znambo-telegram-assistant`);
+      signal: totalController.signal,
+    }, "create");
+    await readBackCalendarObject(href, expectedUid, totalController.signal);
 
+    const durationMs = Date.now() - startedAt;
     await markGoogleCalendarSync({
       item,
       externalId: href,
       status: "synced",
-      provider: "yandex_calendar",
+      lastError: null,
+      durationMs,
+      provider: YANDEX_PROVIDER,
     });
-    return { status: "synced", externalId: href };
+    return { status: "synced", externalId: href, durationMs };
   } catch (error) {
     const safe = classifyYandexCalendarError(error);
+    const durationMs = Date.now() - startedAt;
+    const status = isRetryableCalendarError(safe.errorClass) ? "pending_retry" : "failed";
     await markGoogleCalendarSync({
       item,
-      status: "error",
+      externalId: href,
+      status,
       lastError: safe.errorClass,
-      provider: "yandex_calendar",
+      durationMs,
+      provider: YANDEX_PROVIDER,
     });
     logger.warn("Yandex Calendar sync failed", {
       itemId: item.id,
       errorClass: safe.errorClass,
       safeMessage: safe.safeMessage,
     });
-    return { status: "error", ...safe };
+    return { status, externalId: href, durationMs, ...safe };
+  } finally {
+    clearTimeout(totalTimeout);
   }
 }
 
@@ -340,8 +389,17 @@ async function caldavRequest(
 ): Promise<Response> {
   const username = requireEnv("YANDEX_CALDAV_USERNAME");
   const password = requireEnv("YANDEX_CALDAV_APP_PASSWORD");
+  const operationTimeoutMs =
+    operation === "read"
+      ? getEnv().CALDAV_READBACK_TIMEOUT_MS
+      : getEnv().CALDAV_REQUEST_TIMEOUT_MS;
+  const requestSignal = AbortSignal.timeout(operationTimeoutMs);
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, requestSignal])
+    : requestSignal;
   const response = await fetch(url, {
     ...init,
+    signal,
     redirect: "manual",
     headers: {
       authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
@@ -355,22 +413,11 @@ async function caldavRequest(
   return response;
 }
 
-async function readBackCalendarObject(url: string, expectedUid: string) {
+async function readBackCalendarObject(url: string, expectedUid: string, signal?: AbortSignal) {
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 6; attempt += 1) {
     try {
-      const response = await caldavRequest(
-        url,
-        { method: "GET", headers: { accept: "text/calendar" } },
-        "read",
-      );
-      const text = await response.text();
-      if (!text.includes(expectedUid)) {
-        throw new YandexCalendarError(
-          "read_back_failed",
-          "CalDAV read-back did not contain the expected UID.",
-        );
-      }
+      await readCalendarObjectOnce(url, expectedUid, signal);
       return;
     } catch (error) {
       lastError = error;
@@ -385,6 +432,21 @@ async function readBackCalendarObject(url: string, expectedUid: string) {
     }
   }
   throw lastError;
+}
+
+async function readCalendarObjectOnce(url: string, expectedUid: string, signal?: AbortSignal) {
+  const response = await caldavRequest(
+    url,
+    { method: "GET", headers: { accept: "text/calendar" }, signal },
+    "read",
+  );
+  const text = await response.text();
+  if (!text.includes(expectedUid)) {
+    throw new YandexCalendarError(
+      "read_back_failed",
+      "CalDAV read-back did not contain the expected UID.",
+    );
+  }
 }
 
 function buildIcs(item: PlannerItem, href: string): string {
@@ -497,6 +559,12 @@ function classifyCalDavHttpError(
   if (operation === "delete" || method === "DELETE") return "delete_failed";
   if (operation === "read" || method === "GET") return "read_back_failed";
   return "write_failed";
+}
+
+export function isRetryableCalendarError(errorClass: YandexCalendarErrorClass) {
+  return ["timeout", "network_error", "read_back_not_found", "read_back_failed"].includes(
+    errorClass,
+  );
 }
 
 function delay(milliseconds: number) {

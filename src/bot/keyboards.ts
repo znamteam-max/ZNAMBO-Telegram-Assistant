@@ -85,7 +85,11 @@ export function entityListKeyboard(refs: EntityRef[], includeDashboardActions = 
   return keyboard;
 }
 
-export function itemMenuKeyboard(itemId: string, campaignGroup?: string | null) {
+export function itemMenuKeyboard(
+  itemId: string,
+  campaignGroup?: string | null,
+  calendarControls = false,
+) {
   const keyboard = new InlineKeyboard()
     .text("✅ Выполнено", `done:${itemId}`)
     .text("⏭ Перенести", `manage:reschedule:${itemId}`)
@@ -98,6 +102,14 @@ export function itemMenuKeyboard(itemId: string, campaignGroup?: string | null) 
     .row()
     .text("📝 Итоги", `item:results:${itemId}`)
     .text("🔗 Напоминания", `entity:item_policies:${itemId}`);
+  if (calendarControls) {
+    keyboard
+      .row()
+      .text("Повторить синхронизацию", `calendar:retry:${itemId}`)
+      .row()
+      .text("Показать safe debug", `calendar:debug:${itemId}`)
+      .text("Отключить sync", `calendar:disable:${itemId}`);
+  }
   if (campaignGroup) keyboard.row().text("📣 Кампания", `entity:open:campaign:${campaignGroup}`);
   return keyboard.row().text("🔙 К плану", "dashboard:refresh");
 }

@@ -37,6 +37,9 @@ const envSchema = z.object({
   YANDEX_CALDAV_APP_PASSWORD: z.string().optional(),
   YANDEX_CALDAV_CALENDAR_URL: z.string().url().optional(),
   YANDEX_CALENDAR_URL: z.string().url().optional(),
+  CALDAV_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+  CALDAV_READBACK_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+  CALDAV_TOTAL_SYNC_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

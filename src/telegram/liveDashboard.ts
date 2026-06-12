@@ -16,6 +16,8 @@ import {
 import { importanceMarker } from "@/domain/importance";
 import type { EntityRef } from "@/domain/entityRefs";
 import { buildUserTimelineView } from "@/services/userTimeline";
+import { listCalendarSyncStatesForUser } from "@/db/queries/googleCalendar";
+import { formatRuItemsRequireDecision } from "@/lib/ruPlural";
 
 import { getBot } from "@/bot/createBot";
 import { entityListKeyboard } from "@/bot/keyboards";
@@ -50,7 +52,14 @@ export async function renderLiveDashboard(params: {
   const local = DateTime.fromJSDate(now, { zone: "utc" }).setZone(params.timezone).setLocale("ru");
   const from = local.startOf("day").toUTC().toJSDate();
   const to = local.endOf("day").toUTC().toJSDate();
-  const timeline = await buildUserTimelineView(params);
+  const [timeline, calendarStates] = await Promise.all([
+    buildUserTimelineView(params),
+    listCalendarSyncStatesForUser(params.userId, 100),
+  ]);
+  const calendarByItemId = new Map<string, (typeof calendarStates)[number]["sync"]>();
+  for (const { sync } of calendarStates) {
+    if (!calendarByItemId.has(sync.plannerItemId)) calendarByItemId.set(sync.plannerItemId, sync);
+  }
   const todayItems = timeline.byBucket.today
     .filter((row) => row.item)
     .map((row) => row.item!)
@@ -121,7 +130,7 @@ export async function renderLiveDashboard(params: {
   if (todayItems.length) {
     pushRows(
       todayItems.map((item) => ({
-        text: formatDashboardItem(item, params.timezone),
+        text: formatDashboardItem(item, params.timezone, calendarByItemId.get(item.id)),
         ref: { type: item.status === "active" ? "planner_item" : "history_item", id: item.id },
       })),
     );
@@ -133,7 +142,7 @@ export async function renderLiveDashboard(params: {
     lines.push("", "Со вчера / Неразобранное:");
     pushRows([
       {
-        text: `${unresolved.length} пунктов требуют решения`,
+        text: formatRuItemsRequireDecision(unresolved.length),
         ref: unresolved[0].entityRef,
       },
     ]);
@@ -291,7 +300,11 @@ export async function refreshDashboardAfterMutation(params: {
   });
 }
 
-function formatDashboardItem(item: PlannerItem, timezone: string) {
+function formatDashboardItem(
+  item: PlannerItem,
+  timezone: string,
+  calendar?: { status: string; lastError: string | null } | null,
+) {
   if (item.status === "completed") return `✅ ${item.title} — завершено`;
   const start = item.startAt ?? item.dueAt;
   const time = start
@@ -306,7 +319,12 @@ function formatDashboardItem(item: PlannerItem, timezone: string) {
     : null;
   const marker = item.kind === "training" ? "🟢" : item.kind === "preparation_task" ? "🟡" : "🔴";
   const important = importanceMarker(getBasePriority({ item }));
-  return `${marker} ${time}${end ? `–${end}` : ""} · ${item.title}${important ? ` · ${important}` : ""}`;
+  const calendarStatus =
+    ["event", "training", "tentative_event"].includes(item.kind) &&
+    ["pending_retry", "failed", "error"].includes(calendar?.status ?? "")
+      ? ` · Календарь: ${calendar?.lastError ?? calendar?.status}, повторю автоматически`
+      : "";
+  return `${marker} ${time}${end ? `–${end}` : ""} · ${item.title}${important ? ` · ${important}` : ""}${calendarStatus}`;
 }
 
 function formatPolicy(policy: ReminderPolicy, timezone: string) {

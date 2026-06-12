@@ -70,14 +70,20 @@ async function renderItemCard(params: {
     ]
       .filter(Boolean)
       .join("\n"),
-    keyboard: itemMenuKeyboard(item.id, campaignGroup || null),
+    keyboard: itemMenuKeyboard(
+      item.id,
+      campaignGroup || null,
+      ["event", "training", "tentative_event"].includes(item.kind),
+    ),
   };
 }
 
 function formatCalendarState(status?: string | null, errorClass?: string | null) {
   if (status === "synced") return "synced";
-  if (status === "error") return `failed (${errorClass ?? "unknown"})`;
-  if (status === "not_synced") return "pending";
+  if (status === "pending_retry") return `${errorClass ?? "pending retry"}, повторю автоматически`;
+  if (status === "failed" || status === "error") return `failed (${errorClass ?? "unknown"})`;
+  if (status === "pending" || status === "not_synced" || status === "syncing") return status;
+  if (status === "disabled") return "disabled";
   return "unknown";
 }
 

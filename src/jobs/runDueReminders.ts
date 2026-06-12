@@ -43,6 +43,7 @@ import { acquireRuntimeLease, releaseRuntimeLease } from "@/db/queries/runtimeLo
 import { syncCompactChat } from "@/telegram/compactChatOrchestrator";
 import type { LiveDashboardTelegramApi } from "@/telegram/liveDashboard";
 import { ensureDailySnapshot } from "@/services/dailyHistory";
+import { runDueCalendarSyncRetries } from "@/services/calendarSyncRetry";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -154,6 +155,13 @@ export async function runDueReminders(params?: {
     }
 
     await scheduleTomorrowDigests(now);
+    try {
+      await runDueCalendarSyncRetries({ now, limit: 3 });
+    } catch (error) {
+      logger.warn("Calendar retry queue failed without blocking reminders", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     await recordRunnerFinished({
       at: new Date(),
       claimed: results.claimed,

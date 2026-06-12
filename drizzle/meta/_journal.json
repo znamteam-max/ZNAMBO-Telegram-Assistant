@@ -43,6 +43,13 @@
       "when": 1780992000000,
       "tag": "0005_transactional_reminder_semantics",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781258400000,
+      "tag": "0006_calendar_sync_resilience",
+      "breakpoints": true
     }
   ]
 }

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   registerBotMessage: vi.fn(),
   deleteMessageSafe: vi.fn(),
   removeKeyboardSafe: vi.fn(),
+  listCalendarSyncStatesForUser: vi.fn(),
 }));
 
 vi.mock("@/db/queries/liveDashboards", () => ({
@@ -31,6 +32,9 @@ vi.mock("@/telegram/messageLifecycle", () => ({
   registerBotMessage: mocks.registerBotMessage,
   deleteMessageSafe: mocks.deleteMessageSafe,
   removeKeyboardSafe: mocks.removeKeyboardSafe,
+}));
+vi.mock("@/db/queries/googleCalendar", () => ({
+  listCalendarSyncStatesForUser: mocks.listCalendarSyncStatesForUser,
 }));
 vi.mock("@/bot/createBot", () => ({
   getBot: () => ({ api: {} }),
@@ -66,6 +70,28 @@ describe("live dashboard lifecycle", () => {
     mocks.listActiveReminderPolicies.mockResolvedValue([]);
     mocks.listLongTermReminderPolicies.mockResolvedValue([]);
     mocks.listLegacyReminderLikeItems.mockResolvedValue([]);
+    mocks.listCalendarSyncStatesForUser.mockResolvedValue([]);
+  });
+
+  it("keeps an event visible and shows pending calendar retry", async () => {
+    mocks.listCalendarSyncStatesForUser.mockResolvedValue([
+      {
+        sync: {
+          plannerItemId: "event-id",
+          status: "pending_retry",
+          lastError: "timeout",
+        },
+      },
+    ]);
+
+    const result = await renderLiveDashboard({
+      userId: "user-id",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-07T08:00:00.000Z"),
+    });
+
+    expect(result.text).toContain("Эфир ВС");
+    expect(result.text).toContain("Календарь: timeout, повторю автоматически");
   });
 
   it("retires the previous dashboard and leaves exactly one new active dashboard", async () => {

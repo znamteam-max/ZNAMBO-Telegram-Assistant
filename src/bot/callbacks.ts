@@ -2,6 +2,14 @@ import type { Bot, InlineKeyboard } from "grammy";
 import { DateTime } from "luxon";
 
 import { renderScheduleViewTool, undoLastActionTool } from "@/agent/jarvisTools";
+import {
+  getItemCalendarSyncState,
+  markGoogleCalendarSync,
+} from "@/db/queries/googleCalendar";
+import {
+  disableCalendarSyncForItem,
+  getCalendarSyncJobForItem,
+} from "@/db/queries/calendarSyncJobs";
 import { confirmPendingActionInDb, cancelPendingAction } from "@/db/queries/pendingActions";
 import {
   cancelPlannerItem,
@@ -17,7 +25,6 @@ import {
   stopRecurringReminders,
 } from "@/db/queries/reminders";
 import { endOfLocalDay, startOfLocalDay } from "@/domain/dateTime";
-import { syncPlannerItemToCalendar } from "@/integrations/calendar";
 import { cancelStoredActionPlan, commitStoredActionPlan } from "@/services/actionPlanCommit";
 import {
   formatCalendarSyncFeedback,
@@ -62,6 +69,7 @@ import {
 } from "@/services/campaignLifecycle";
 import { renderEntityCard } from "@/telegram/entityCards";
 import type { EntityRefType } from "@/domain/entityRefs";
+import { retryCalendarItem } from "@/services/calendarSyncRetry";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -84,6 +92,68 @@ import { formatCommittedPlanSummary, formatCreatedItem } from "./formatters";
 export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery("noop", async (ctx) => {
     await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^calendar:retry:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const item = await getPlannerItemById(owner.id, ctx.match[1]);
+    if (!item) {
+      await ctx.answerCallbackQuery("Событие не найдено");
+      return;
+    }
+    await ctx.answerCallbackQuery("Повторяю синхронизацию");
+    const result = await retryCalendarItem(item);
+    await ctx.reply(
+      result.status === "synced"
+        ? `Календарь синхронизирован: ${item.title}`
+        : `Событие сохранено в JARVIS. Календарь: ${result.errorClass ?? result.status}; повторю автоматически.`,
+    );
+    await refreshAfterCallback(ctx, item.id);
+  });
+
+  bot.callbackQuery(/^calendar:debug:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const item = await getPlannerItemById(owner.id, ctx.match[1]);
+    if (!item) {
+      await ctx.answerCallbackQuery("Событие не найдено");
+      return;
+    }
+    const [sync, job] = await Promise.all([
+      getItemCalendarSyncState(item.id, "yandex_calendar"),
+      getCalendarSyncJobForItem(item.id, "yandex_calendar"),
+    ]);
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      [
+        `itemId: ${item.id}`,
+        `status: ${sync?.status ?? "unknown"}`,
+        `errorClass: ${sync?.lastError ?? "none"}`,
+        `durationMs: ${sync?.durationMs ?? "unknown"}`,
+        `externalIdPresent: ${Boolean(sync?.externalId)}`,
+        `retryJobStatus: ${job?.status ?? "none"}`,
+        `retryAttemptCount: ${job?.attemptCount ?? 0}`,
+      ].join("\n"),
+    );
+  });
+
+  bot.callbackQuery(/^calendar:disable:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const item = await getPlannerItemById(owner.id, ctx.match[1]);
+    if (!item) {
+      await ctx.answerCallbackQuery("Событие не найдено");
+      return;
+    }
+    await Promise.all([
+      markGoogleCalendarSync({
+        item,
+        status: "disabled",
+        lastError: null,
+        provider: "yandex_calendar",
+      }),
+      disableCalendarSyncForItem(item.id, "yandex_calendar"),
+    ]);
+    await ctx.answerCallbackQuery("Синхронизация отключена");
+    await refreshAfterCallback(ctx, item.id);
   });
 
   bot.callbackQuery("tz:ok", async (ctx) => {
@@ -115,10 +185,10 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     }
 
     if (result.status === "created") {
-      const sync = await syncPlannerItemToCalendar(result.item);
-      const syncLine = sync.status === "synced" ? "\nКалендарь: синхронизировано." : "";
+      const calendarResults = await syncItemsToCalendarBestEffort([result.item]);
+      const syncLine = formatCalendarSyncFeedback(calendarResults);
 
-      await ctx.reply(`${formatCreatedItem(result.item, result.reminders.length)}${syncLine}`, {
+      await ctx.reply([formatCreatedItem(result.item, result.reminders.length), syncLine].filter(Boolean).join("\n\n"), {
         reply_markup: result.item.kind === "event" ? afterEventKeyboard(result.item.id) : undefined,
       });
       await refreshAfterCallback(ctx);

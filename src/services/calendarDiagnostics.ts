@@ -1,4 +1,8 @@
-import { getLatestCalendarSyncStateForUser } from "@/db/queries/googleCalendar";
+import {
+  countCalendarSyncStatesForUser,
+  getLatestCalendarSyncStateForUser,
+} from "@/db/queries/googleCalendar";
+import { countPendingCalendarSyncJobsForUser } from "@/db/queries/calendarSyncJobs";
 import { getLatestAuditByAction } from "@/db/queries/audit";
 import { getCalendarProvider, getEnv, isYandexCalendarConfigured } from "@/lib/env";
 import {
@@ -24,9 +28,11 @@ const SAFE_ERROR_CLASSES = new Set<YandexCalendarErrorClass>([
 
 export async function getCalendarStatus(userId: string) {
   const provider = getCalendarProvider();
-  const [latest, latestTestAudit] = await Promise.all([
+  const [latest, latestTestAudit, pendingCalendarRetries, failedCalendarSyncs] = await Promise.all([
     getLatestCalendarSyncStateForUser(userId),
     getLatestAuditByAction({ userId, action: "assistant.calendar_write_test" }),
+    countPendingCalendarSyncJobsForUser(userId),
+    countCalendarSyncStatesForUser({ userId, statuses: ["failed", "error"] }),
   ]);
   const latestTest = latestTestAudit?.details as
     | {
@@ -41,6 +47,8 @@ export async function getCalendarStatus(userId: string) {
     | undefined;
   const errorClass = safeCalendarErrorClass(latest?.sync.lastError);
   const testErrorClass = safeCalendarErrorClass(latestTest?.errorClass);
+  const normalStatus = latest?.sync.status ?? null;
+  const normalFailed = normalStatus ? ["failed", "error", "pending_retry"].includes(normalStatus) : false;
   return {
     provider,
     configured: provider === "yandex" ? isYandexCalendarConfigured() : provider !== "none",
@@ -54,13 +62,23 @@ export async function getCalendarStatus(userId: string) {
           ? "failed"
           : "unknown",
     write:
-      latestTest?.ok === true || latest?.sync.status === "synced"
+      latest?.sync.status === "synced"
         ? "ok"
-        : latestTest || latest?.sync.status === "error"
+        : normalFailed
           ? "failed"
-          : "unknown",
-    lastWriteStatus: latestTest?.ok === true ? "verified" : latestTest ? "failed" : latest?.sync.status ?? "unknown",
-    lastWriteErrorClass: latestTest?.ok === true ? null : testErrorClass ?? errorClass,
+          : latestTest?.ok === true
+            ? "ok"
+            : latestTest
+              ? "failed"
+              : "unknown",
+    lastWriteStatus: normalStatus ?? (latestTest?.ok === true ? "verified" : latestTest ? "failed" : "unknown"),
+    lastWriteErrorClass: normalFailed ? errorClass : latestTest?.ok === true ? null : testErrorClass ?? errorClass,
+    lastNormalSyncStatus: normalStatus,
+    lastNormalSyncErrorClass: errorClass,
+    lastNormalSyncDurationMs: latest?.sync.durationMs ?? null,
+    pendingCalendarRetries,
+    failedCalendarSyncs,
+    lastCalendarTestStatus: latestTest?.ok === true ? "passed" : latestTest ? "failed" : "not_run",
     lastSyncedAt: latest?.sync.syncedAt ?? null,
     lastItemTitle: latest?.item.title ?? null,
     calendarUrlSource: latestTest?.diagnostics?.calendarUrlSource ?? null,

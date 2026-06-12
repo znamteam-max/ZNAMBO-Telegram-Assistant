@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "../client";
 import {
@@ -62,6 +62,15 @@ export async function getItemGoogleSyncState(plannerItemId: string) {
   return syncState ?? null;
 }
 
+export async function getItemCalendarSyncState(plannerItemId: string, provider: string) {
+  const [syncState] = await getDb()
+    .select()
+    .from(itemSyncState)
+    .where(and(eq(itemSyncState.plannerItemId, plannerItemId), eq(itemSyncState.provider, provider)))
+    .limit(1);
+  return syncState ?? null;
+}
+
 export async function getLatestCalendarSyncStateForUser(userId: string) {
   const [syncState] = await getDb()
     .select({ sync: itemSyncState, item: plannerItems })
@@ -83,11 +92,29 @@ export async function listCalendarSyncStatesForUser(userId: string, limit = 100)
     .limit(limit);
 }
 
+export async function countCalendarSyncStatesForUser(params: {
+  userId: string;
+  statuses: string[];
+}) {
+  const [result] = await getDb()
+    .select({ count: count() })
+    .from(itemSyncState)
+    .innerJoin(plannerItems, eq(itemSyncState.plannerItemId, plannerItems.id))
+    .where(
+      and(
+        eq(plannerItems.userId, params.userId),
+        inArray(itemSyncState.status, params.statuses),
+      ),
+    );
+  return Number(result?.count ?? 0);
+}
+
 export async function markGoogleCalendarSync(params: {
   item: PlannerItem;
   externalId?: string | null;
-  status: "synced" | "error" | "not_synced";
+  status: "disabled" | "pending" | "syncing" | "synced" | "pending_retry" | "failed" | "error" | "not_synced";
   lastError?: string | null;
+  durationMs?: number | null;
   provider?: string;
 }) {
   const now = new Date();
@@ -99,6 +126,7 @@ export async function markGoogleCalendarSync(params: {
       externalId: params.externalId,
       status: params.status,
       lastError: params.lastError?.slice(0, 1000),
+      durationMs: params.durationMs,
       syncedAt: params.status === "synced" ? now : null,
     })
     .onConflictDoUpdate({
@@ -107,6 +135,7 @@ export async function markGoogleCalendarSync(params: {
         externalId: params.externalId,
         status: params.status,
         lastError: params.lastError?.slice(0, 1000),
+        durationMs: params.durationMs,
         syncedAt: params.status === "synced" ? now : null,
         updatedAt: now,
       },
