@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { itemMenuKeyboard, itemMoreKeyboard, navigationKeyboard } from "@/bot/keyboards";
+import {
+  entityListKeyboard,
+  externalCalendarDeleteKeyboard,
+  itemMenuKeyboard,
+  itemMoreKeyboard,
+  navigationKeyboard,
+} from "@/bot/keyboards";
 import type { PlannerItem } from "@/db/schema";
 import { parseCalendarQueryResponse } from "@/integrations/yandexCalendar";
 import { resetEnvCacheForTests } from "@/lib/env";
@@ -41,6 +47,18 @@ describe("V2.6.0 Plan UI and editing", () => {
     expect(navigationKeyboard().keyboard.flat().map((button) => button.text)).toEqual(
       expect.arrayContaining(["🏠 План", "➕ Добавить", "✅ Задачи", "🔔 Напоминания", "⚙️ Настройки"]),
     );
+  });
+
+  it("keeps external event callback data within Telegram's 64-byte limit", () => {
+    const id = "11111111-2222-3333-4444-555555555555";
+    const callbacks = [
+      ...entityListKeyboard([{ type: "external_calendar_event", id }]).inline_keyboard.flat(),
+      ...externalCalendarDeleteKeyboard(id).inline_keyboard.flat(),
+    ]
+      .map((button) => button.callback_data)
+      .filter((value): value is string => Boolean(value));
+    expect(callbacks.length).toBeGreaterThan(0);
+    expect(Math.max(...callbacks.map((value) => Buffer.byteLength(value, "utf8")))).toBeLessThanOrEqual(64);
   });
 
   it("interprets a bare same-day evening hour in the future", () => {

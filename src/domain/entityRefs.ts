@@ -17,5 +17,6 @@ export function plannerItemRef(id: string): EntityRef {
 }
 
 export function entityRefCallback(ref: EntityRef) {
-  return `entity:open:${ref.type}:${ref.id}`;
+  const type = ref.type === "external_calendar_event" ? "external" : ref.type;
+  return `entity:open:${type}:${ref.id}`;
 }

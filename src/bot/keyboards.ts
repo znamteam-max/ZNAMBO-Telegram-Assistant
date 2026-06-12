@@ -209,7 +209,7 @@ export function externalCalendarDeleteKeyboard(eventId: string) {
     .text("Удалить везде", `external:delete_everywhere:${eventId}`)
     .row()
     .text("Скрыть в JARVIS", `external:hide:${eventId}`)
-    .text("Отмена", `entity:open:external_calendar_event:${eventId}`);
+    .text("Отмена", `entity:open:external:${eventId}`);
 }
 
 export function eventReactionKeyboard(itemId: string, kind = "event") {

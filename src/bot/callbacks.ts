@@ -1142,13 +1142,16 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   });
 
   bot.callbackQuery(
-    /^entity:open:(planner_item|reminder_policy|campaign|campaign_item|external_calendar_event|history_item|legacy_orphan):(.+)$/,
+    /^entity:open:(planner_item|reminder_policy|campaign|campaign_item|external|history_item|legacy_orphan):(.+)$/,
     async (ctx) => {
       const owner = requireOwner(ctx);
       const card = await renderEntityCard({
         userId: owner.id,
         timezone: owner.timezone,
-        ref: { type: ctx.match[1] as EntityRefType, id: ctx.match[2] },
+        ref: {
+          type: (ctx.match[1] === "external" ? "external_calendar_event" : ctx.match[1]) as EntityRefType,
+          id: ctx.match[2],
+        },
       });
       await ctx.answerCallbackQuery(card ? "Открываю" : "Запись не найдена");
       if (card) await editOrReply(ctx, card.text, card.keyboard);
