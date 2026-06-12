@@ -1,6 +1,6 @@
 # Personal Telegram Daily Assistant
 
-Current application version: `2.5.4.1`.
+Current application version: `2.6.0`.
 
 Canonical cross-chat handoff after each deployment: [`ZNAMBO_PROJECT_HANDOFF.md`](./ZNAMBO_PROJECT_HANDOFF.md).
 
@@ -50,11 +50,11 @@ Postgres
 - Policy reconciler that recreates a missing next occurrence/reminder idempotently before each runner claim.
 - Catch-up without bursts, interval-grid scheduling, inclusive window ends and user/policy quiet hours.
 - Scheduler observability through `/cronhealth`, `/policydebug` and safe `/api/health` fields.
-- Unified Plan Dashboard with today, tomorrow, the next seven days, conflicts, importance and unresolved work; it retires the previous dashboard after mutations.
+- Unified Plan Dashboard with current, today, tomorrow, the next seven days, conflicts, editable importance and unresolved work; normal rows stay free of urgency-dot noise.
 - Telegram message registry for deleting or disabling stale reminder cards, item menus and dashboards.
 - External minute scheduler support through cron-job.org or the optional Cloudflare Worker project.
 - Google Calendar OAuth, encrypted refresh token storage and event sync.
-- Yandex Calendar sync via CalDAV with write/read-back verification. Calendar failure does not block DB records or Telegram reminders.
+- Yandex Calendar two-way support via CalDAV: deterministic outbound sync plus bounded inbound import of external and recurring events. Calendar failure does not block DB records or Telegram reminders.
 - Vitest coverage for allowlist, idempotency middleware, date conversion, reminder policy repair/reconciliation, catch-up, interval drift, pending action double-click safety, oversized media, agenda ordering, calendar failure preservation and V2 planner acceptance cases.
 
 ## Prerequisites

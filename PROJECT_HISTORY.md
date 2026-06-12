@@ -1,5 +1,46 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## Update 2026-06-12 - V2.6.0 Plan UI and Yandex Inbound Calendar
+
+Implemented in the release working tree:
+
+```text
+clean Plan rows without red/green/yellow urgency circles
+separate current-event section and editable none/star/fire/auto importance
+compact item-card menu with technical actions under More
+in-place callback card updates where Telegram permits editing
+persistent Telegram bottom navigation
+time-range parsing with preserved endAt
+same-day bare-hour PM disambiguation
+rename without quotes and full old/new compound-edit preview
+CalDAV REPORT inbound import, ICS parsing and weekly recurrence expansion
+external Yandex event cache merged into Plan without creating local planner items
+external event cards, local hide and CalDAV delete-everywhere actions
+/calendar_sync and /calendar_import_status
+bounded 15-minute background import that cannot block reminders
+```
+
+Production database rollout:
+
+```text
+drizzle/0007_yandex_inbound_calendar.sql applied idempotently
+assistant.external_calendar_events exists
+assistant.calendar_import_state exists
+external calendar unique/start/UID indexes exist
+```
+
+Local validation:
+
+```text
+npm test -> 48 files, 174 tests passed
+npm run lint -> passed
+npx tsc --noEmit -> passed
+npm run build -> passed
+git diff --check -> passed
+```
+
+No secrets were written to project history.
+
 ## Update 2026-06-12 - V2.5.4.1 Item Card Edit Sessions
 
 - Fixed the production bug where a reply to an opened item card edit was intercepted by the global

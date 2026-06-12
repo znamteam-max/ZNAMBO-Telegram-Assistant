@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
 
-import type { PlannerItem, ReminderPolicy } from "@/db/schema";
+import { listVisibleExternalCalendarEvents } from "@/db/queries/externalCalendarEvents";
+import type { ExternalCalendarEvent, PlannerItem, ReminderPolicy } from "@/db/schema";
 import { listVisibleActivePlanItems } from "@/db/queries/items";
 import { listActiveReminderPolicies } from "@/db/queries/reminderPolicies";
 import type { EntityRef } from "@/domain/entityRefs";
@@ -35,13 +36,15 @@ export async function buildUserTimelineView(params: {
   timezone: string;
   now?: Date;
 }) {
-  const [items, policies] = await Promise.all([
+  const [items, policies, externalEvents] = await Promise.all([
     listVisibleActivePlanItems(params.userId, 300),
     listActiveReminderPolicies(params.userId, 300),
+    listVisibleExternalCalendarEvents({ userId: params.userId, limit: 500 }),
   ]);
   return buildUserTimelineViewFromData({
     items,
     policies,
+    externalEvents,
     timezone: params.timezone,
     now: params.now,
   });
@@ -50,12 +53,19 @@ export async function buildUserTimelineView(params: {
 export function buildUserTimelineViewFromData(params: {
   items: PlannerItem[];
   policies: ReminderPolicy[];
+  externalEvents?: ExternalCalendarEvent[];
   timezone: string;
   now?: Date;
 }) {
   const now = params.now ?? new Date();
   const rows: UserTimelineRow[] = [
     ...params.items.map((item) => buildItemRow(item, now, params.timezone)),
+    ...(params.externalEvents ?? []).map((event) =>
+      buildItemRow(externalEventAsPlannerItem(event), now, params.timezone, {
+        type: "external_calendar_event",
+        id: event.id,
+      }),
+    ),
     ...groupCampaignPolicies(params.policies).map((policy) =>
       buildPolicyRow(policy, now, params.timezone),
     ),
@@ -85,7 +95,12 @@ export function buildUserTimelineViewFromData(params: {
   };
 }
 
-function buildItemRow(item: PlannerItem, now: Date, timezone: string): UserTimelineRow {
+function buildItemRow(
+  item: PlannerItem,
+  now: Date,
+  timezone: string,
+  entityRef?: EntityRef,
+): UserTimelineRow {
   const anchor = item.startAt ?? item.dueAt;
   const unresolvedPast =
     item.status === "active" &&
@@ -100,7 +115,7 @@ function buildItemRow(item: PlannerItem, now: Date, timezone: string): UserTimel
     anchor &&
     isTomorrow(anchor, now, item.timezone || timezone);
   return {
-    entityRef: {
+    entityRef: entityRef ?? {
       type: classification === "history" ? "history_item" : "planner_item",
       id: item.id,
     },
@@ -109,6 +124,43 @@ function buildItemRow(item: PlannerItem, now: Date, timezone: string): UserTimel
     classification,
     editable: true,
     item,
+  };
+}
+
+function externalEventAsPlannerItem(event: ExternalCalendarEvent): PlannerItem {
+  return {
+    id: event.id,
+    userId: event.userId,
+    pendingActionId: null,
+    kind: "event",
+    status: "active",
+    title: event.summary,
+    description: event.description,
+    location: event.location,
+    timezone: event.timezone,
+    startAt: event.startAt,
+    endAt: event.endAt,
+    dueAt: null,
+    completedAt: null,
+    cancelledAt: null,
+    archivedAt: null,
+    category: "calendar_external",
+    visibility: "active",
+    sourcePolicyId: null,
+    priority: 3,
+    source: "yandex_external",
+    metadata: {
+      ...event.metadata,
+      externalEventId: event.id,
+      calendarObjectUrl: event.calendarObjectUrl,
+      calendarUid: event.uid,
+      calendarEtag: event.etag,
+      isRecurring: event.isRecurring,
+      recurrenceRule: event.recurrenceRule,
+      recurrenceId: event.recurrenceId,
+    },
+    createdAt: event.createdAt,
+    updatedAt: event.updatedAt,
   };
 }
 

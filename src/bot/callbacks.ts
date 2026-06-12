@@ -23,7 +23,13 @@ import {
   listManageableItems,
   markPlannerItemCompleted,
   setPlannerItemManualPriority,
+  updatePlannerItemDetails,
 } from "@/db/queries/items";
+import {
+  deleteExternalCalendarEventCache,
+  getExternalCalendarEventById,
+  hideExternalCalendarEvent,
+} from "@/db/queries/externalCalendarEvents";
 import { deleteMemoryForUser } from "@/db/queries/memories";
 import {
   ackReminderForToday,
@@ -79,6 +85,7 @@ import type { EntityRefType } from "@/domain/entityRefs";
 import { retryCalendarItem } from "@/services/calendarSyncRetry";
 import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
 import { startItemEditSession } from "@/services/itemEditSessions";
+import { deleteYandexCalendarObject } from "@/integrations/yandexCalendar";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -88,6 +95,8 @@ import {
   campaignCompletionGuardKeyboard,
   entityListKeyboard,
   itemMenuKeyboard,
+  itemMoreKeyboard,
+  externalCalendarDeleteKeyboard,
   oneTimeReminderMenuKeyboard,
   policyFrequencyKeyboard,
   priorityEditorKeyboard,
@@ -1088,7 +1097,30 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^item:priority:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    await sendPolicyEditorMessage(ctx, "Выбери приоритет 1-5:", priorityEditorKeyboard("item", ctx.match[1]));
+    await sendPolicyEditorMessage(ctx, "Выбери видимую важность:", priorityEditorKeyboard("item", ctx.match[1]));
+  });
+
+  bot.callbackQuery(/^item:set_importance:(.+):(none|important|very_important|auto)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = ctx.match[2];
+    const priority = mode === "very_important" ? 5 : mode === "important" ? 4 : 3;
+    const updated = await updatePlannerItemDetails({
+      userId: owner.id,
+      itemId: ctx.match[1],
+      priority,
+      metadata: {
+        basePriority: priority,
+        importanceMode: mode === "important" || mode === "very_important" ? "manual" : mode,
+      },
+    });
+    await ctx.answerCallbackQuery(updated ? "Важность обновлена" : "Запись не найдена");
+    if (updated) await updatePoliciesPriorityForItem({ userId: owner.id, itemId: updated.id, priority });
+    await refreshAfterCallback(ctx, updated?.id);
+  });
+
+  bot.callbackQuery(/^item:more:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await editOrReply(ctx, "Дополнительные действия", itemMoreKeyboard(ctx.match[1]));
   });
 
   bot.callbackQuery(/^item:set_priority:(.+):([1-5])$/, async (ctx) => {
@@ -1110,7 +1142,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   });
 
   bot.callbackQuery(
-    /^entity:open:(planner_item|reminder_policy|campaign|campaign_item|history_item|legacy_orphan):(.+)$/,
+    /^entity:open:(planner_item|reminder_policy|campaign|campaign_item|external_calendar_event|history_item|legacy_orphan):(.+)$/,
     async (ctx) => {
       const owner = requireOwner(ctx);
       const card = await renderEntityCard({
@@ -1119,9 +1151,50 @@ export function registerCallbacks(bot: Bot<BotContext>) {
         ref: { type: ctx.match[1] as EntityRefType, id: ctx.match[2] },
       });
       await ctx.answerCallbackQuery(card ? "Открываю" : "Запись не найдена");
-      if (card) await ctx.reply(card.text, { reply_markup: card.keyboard });
+      if (card) await editOrReply(ctx, card.text, card.keyboard);
     },
   );
+
+  bot.callbackQuery(/^external:delete_prompt:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await editOrReply(
+      ctx,
+      "Удалить событие из Яндекс.Календаря тоже?",
+      externalCalendarDeleteKeyboard(ctx.match[1]),
+    );
+  });
+
+  bot.callbackQuery(/^external:hide:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const hidden = await hideExternalCalendarEvent(owner.id, ctx.match[1]);
+    await ctx.answerCallbackQuery(hidden ? "Скрыто в JARVIS" : "Событие не найдено");
+    await refreshAfterCallback(ctx);
+  });
+
+  bot.callbackQuery(/^external:delete_everywhere:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const event = await getExternalCalendarEventById(owner.id, ctx.match[1]);
+    if (!event) {
+      await ctx.answerCallbackQuery("Событие не найдено");
+      return;
+    }
+    await deleteYandexCalendarObject(event.calendarObjectUrl);
+    await deleteExternalCalendarEventCache(owner.id, event.id);
+    await ctx.answerCallbackQuery("Удалено из Яндекс.Календаря");
+    await refreshAfterCallback(ctx);
+  });
+
+  bot.callbackQuery(/^external:(edit|recurring_info):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const event = await getExternalCalendarEventById(owner.id, ctx.match[2]);
+    await ctx.answerCallbackQuery();
+    if (!event) return;
+    await ctx.reply(
+      event.isRecurring
+        ? "Это повторяющееся событие. Сейчас поддерживается изменение или удаление всей серии; изменение одного повтора будет добавлено отдельно."
+        : "Для внешнего события доступны удаление в Яндекс.Календаре и скрытие в JARVIS. Редактирование содержимого безопаснее выполнить в Яндекс.Календаре; после /calendar_sync План обновится.",
+    );
+  });
 
   bot.callbackQuery(/^entity:item_policies:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
@@ -1229,6 +1302,18 @@ async function sendPolicyEditorMessage(
     messageId: sent.message_id,
     purpose: "policy_editor",
   });
+}
+
+async function editOrReply(ctx: BotContext, text: string, keyboard: InlineKeyboard) {
+  if (ctx.callbackQuery?.message) {
+    try {
+      await ctx.editMessageText(text, { reply_markup: keyboard });
+      return;
+    } catch {
+      // Telegram rejects edits when the message is no longer editable or unchanged.
+    }
+  }
+  await ctx.reply(text, { reply_markup: keyboard });
 }
 
 async function refreshAfterCallback(ctx: BotContext, relatedItemId?: string | null) {

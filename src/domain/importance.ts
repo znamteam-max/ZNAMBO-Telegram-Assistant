@@ -26,6 +26,19 @@ export function importanceMarker(priority: number) {
   return "";
 }
 
+export function visibleImportanceMarker(entry: TimelineEntry) {
+  if (importanceMode(entry) !== "manual") return "";
+  return importanceMarker(entry.item?.priority ?? Number(entry.policy?.metadata?.basePriority ?? 3));
+}
+
+export function visibleImportanceLabel(entry: TimelineEntry) {
+  const mode = importanceMode(entry);
+  if (mode === "none") return "Без значка";
+  if (mode === "auto") return "Авто";
+  if (mode === "ask_later") return "Уточнить позже";
+  return importanceLabel(entry.item?.priority ?? Number(entry.policy?.metadata?.basePriority ?? 3));
+}
+
 export function urgencyExplanation(boost: number) {
   if (boost >= 2) return "срочность повышена: время наступило или осталось до 3 часов";
   if (boost === 1) return "срочность повышена: осталось менее суток";

@@ -10,7 +10,7 @@ import { updatePlannerItemDetails } from "@/db/queries/items";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
 
-import { parseRussianDateTime } from "./russianDateTime";
+import { parseRussianDateTime, parseRussianTimeRange } from "./russianDateTime";
 
 export type ItemEditReminderMutation = {
   policyType: "nag_until_ack";
@@ -25,6 +25,7 @@ export type ItemEditMutation = {
   title?: string;
   kind?: string;
   scheduledForLocal?: string;
+  endsAtLocal?: string;
   reminderPolicy?: ItemEditReminderMutation;
   changedFields: string[];
   warnings: string[];
@@ -49,27 +50,38 @@ export function parseItemEditMutation(params: {
   const item = params.item;
   const timezone = item.timezone || params.timezone;
   const anchor = item.startAt ?? item.dueAt;
-  const title = parseQuotedTitle(params.text);
-  const dateTime = parseRussianDateTime({
+  const title = parseRenamedTitle(params.text);
+  const timeRange = parseRussianTimeRange({
     text: params.text,
     timezone,
     now,
     baseDate: anchor,
   });
+  const dateTime = timeRange
+    ? null
+    : parseRussianDateTime({
+        text: params.text,
+        timezone,
+        now,
+        baseDate: anchor,
+      });
+  const scheduledLocal = timeRange?.startLocal ?? dateTime?.local ?? null;
   const reminderPolicy = parseReminderMutation({
     text: params.text,
     timezone,
-    dateTimeLocal: dateTime?.local ?? null,
+    dateTimeLocal: scheduledLocal,
     item,
     now,
   });
-  const kind = title ? inferKind({ title, currentKind: item.kind }) : null;
+  const kind =
+    (title ? inferKind({ title, currentKind: item.kind }) : null) ??
+    (timeRange && ["task", "preparation_task"].includes(item.kind) ? "event" : null);
   const changedFields: string[] = [];
-  const warnings = [...(dateTime?.warnings ?? [])];
+  const warnings = [...(timeRange?.warnings ?? dateTime?.warnings ?? [])];
 
   if (title && title !== item.title) changedFields.push("title");
   if (kind && kind !== item.kind) changedFields.push("kind");
-  if (dateTime) changedFields.push("schedule");
+  if (scheduledLocal) changedFields.push("schedule");
   if (reminderPolicy) changedFields.push("reminder_policy");
   if (dateTime?.usedNextWeek) warnings.push("weekday_today_time_passed_used_next_week");
 
@@ -77,11 +89,17 @@ export function parseItemEditMutation(params: {
     itemId: item.id,
     ...(title ? { title } : {}),
     ...(kind && kind !== item.kind ? { kind } : {}),
-    ...(dateTime ? { scheduledForLocal: dateTime.local.toISO({ suppressMilliseconds: true }) ?? undefined } : {}),
+    ...(scheduledLocal
+      ? { scheduledForLocal: scheduledLocal.toISO({ suppressMilliseconds: true }) ?? undefined }
+      : {}),
+    ...(timeRange
+      ? { endsAtLocal: timeRange.endLocal.toISO({ suppressMilliseconds: true }) ?? undefined }
+      : {}),
     ...(reminderPolicy ? { reminderPolicy } : {}),
     changedFields: [...new Set(changedFields)],
     warnings: [...new Set(warnings)],
-    pastConfirmationRequired: dateTime?.pastConfirmationRequired ?? false,
+    pastConfirmationRequired:
+      timeRange?.pastConfirmationRequired ?? dateTime?.pastConfirmationRequired ?? false,
   };
 }
 
@@ -157,11 +175,20 @@ export function formatItemEditPreview(params: {
   mutation: ItemEditMutation;
   timezone: string;
 }) {
-  const lines = ["Проверяю изменение карточки:", "", `Запись: ${params.item.title}`];
-  if (params.mutation.title) lines.push(`Название: ${params.mutation.title}`);
-  if (params.mutation.scheduledForLocal) {
-    lines.push(`Время: ${formatLocal(params.mutation.scheduledForLocal, params.timezone)}`);
-  }
+  const lines = [
+    "Проверяю изменение:",
+    "",
+    "Было:",
+    formatItemVariant({
+      title: params.item.title,
+      startAt: params.item.startAt ?? params.item.dueAt,
+      endAt: params.item.endAt,
+      timezone: params.item.timezone || params.timezone,
+    }),
+    "",
+    "Станет:",
+    formatMutationVariant(params),
+  ];
   if (params.mutation.reminderPolicy) {
     lines.push(
       `Напоминания: каждый час с ${params.mutation.reminderPolicy.activeWindowStart}, пока не отметишь готово.`,
@@ -184,15 +211,12 @@ export function formatItemEditApplied(params: {
   timezone: string;
   calendarFeedback?: string | null;
 }) {
-  const lines = ["Готово, обновил запись:", `• ${params.item.title}`];
-  const anchor = params.item.startAt ?? params.item.dueAt;
-  if (anchor) {
-    lines.push(
-      `• Время: ${DateTime.fromJSDate(anchor, { zone: "utc" })
-        .setZone(params.item.timezone || params.timezone)
-        .toFormat("dd.LL HH:mm")}`,
-    );
-  }
+  const lines = ["Готово:", formatItemVariant({
+    title: params.item.title,
+    startAt: params.item.startAt ?? params.item.dueAt,
+    endAt: params.item.endAt,
+    timezone: params.item.timezone || params.timezone,
+  })];
   if (params.mutation.reminderPolicy) {
     lines.push("• Напоминание: каждый час, пока не сделаешь.");
   }
@@ -200,11 +224,18 @@ export function formatItemEditApplied(params: {
   return lines.join("\n");
 }
 
-function parseQuotedTitle(text: string) {
-  const match = text.match(
+function parseRenamedTitle(text: string) {
+  const quoted = text.match(
     /(?:изменить|измени|переименуй|переименовать|назови|назвать)(?:\s+\S+){0,4}?\s+на\s+["«]([^"»]+)["»]/i,
   );
-  return match?.[1]?.trim() || null;
+  if (quoted?.[1]) return quoted[1].trim();
+  const unquoted = text.match(
+    /^(?:изменить|измени|переименуй|переименовать|назови|назвать)(?:\s+(?:название|имя))?\s+(?:на|в)?\s*(.+)$/i,
+  );
+  if (!unquoted?.[1]) return null;
+  return unquoted[1]
+    .split(/,\s*(?:время|поставь|перенеси|на\s+(?:сегодня|завтра|понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)|напом)/i)[0]
+    ?.trim() || null;
 }
 
 function parseReminderMutation(params: {
@@ -272,8 +303,9 @@ function buildItemUpdate(params: {
   const eventLike = ["event", "training", "tentative_event"].includes(kind);
   if (eventLike) {
     update.startAt = startAt;
-    update.endAt =
-      oldDurationMs && oldDurationMs > 0
+    update.endAt = params.mutation.endsAtLocal
+      ? DateTime.fromISO(params.mutation.endsAtLocal, { zone: params.timezone }).toUTC().toJSDate()
+      : oldDurationMs && oldDurationMs > 0
         ? new Date(startAt.getTime() + oldDurationMs)
         : DateTime.fromJSDate(startAt, { zone: "utc" }).plus({ minutes: 60 }).toJSDate();
     update.dueAt = null;
@@ -351,8 +383,38 @@ async function upsertNagUntilAckPolicy(params: {
   };
 }
 
-function formatLocal(value: string, timezone: string) {
-  return DateTime.fromISO(value, { zone: timezone }).toFormat("dd.LL HH:mm");
+function formatItemVariant(params: {
+  title: string;
+  startAt: Date | null;
+  endAt: Date | null;
+  timezone: string;
+}) {
+  if (!params.startAt) return `${params.title} — без времени`;
+  const start = DateTime.fromJSDate(params.startAt, { zone: "utc" }).setZone(params.timezone);
+  const end = params.endAt
+    ? DateTime.fromJSDate(params.endAt, { zone: "utc" }).setZone(params.timezone)
+    : null;
+  return `${params.title} — ${start.toFormat("dd.LL HH:mm")}${end ? `–${end.toFormat("HH:mm")}` : ""}`;
+}
+
+function formatMutationVariant(params: {
+  item: PlannerItem;
+  mutation: ItemEditMutation;
+  timezone: string;
+}) {
+  const timezone = params.item.timezone || params.timezone;
+  const start = params.mutation.scheduledForLocal
+    ? DateTime.fromISO(params.mutation.scheduledForLocal, { zone: timezone }).toUTC().toJSDate()
+    : params.item.startAt ?? params.item.dueAt;
+  const end = params.mutation.endsAtLocal
+    ? DateTime.fromISO(params.mutation.endsAtLocal, { zone: timezone }).toUTC().toJSDate()
+    : params.item.endAt;
+  return formatItemVariant({
+    title: params.mutation.title ?? params.item.title,
+    startAt: start,
+    endAt: end,
+    timezone,
+  });
 }
 
 function toItemSnapshot(item: PlannerItem) {

@@ -50,6 +50,13 @@
       "when": 1781258400000,
       "tag": "0006_calendar_sync_resilience",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781265600000,
+      "tag": "0007_yandex_inbound_calendar",
+      "breakpoints": true
     }
   ]
 }

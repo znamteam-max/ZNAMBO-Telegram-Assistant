@@ -1,4 +1,4 @@
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard, Keyboard } from "grammy";
 
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { entityRefCallback, type EntityRef } from "@/domain/entityRefs";
@@ -158,30 +158,58 @@ export function repeatPolicyDeleteKeyboard(policyId: string, itemId?: string | n
 export function itemMenuKeyboard(
   itemId: string,
   campaignGroup?: string | null,
-  calendarControls = false,
+  calendarStatus?: string | null,
 ) {
   const keyboard = new InlineKeyboard()
     .text("✅ Выполнено", `done:${itemId}`)
-    .text("🕘 Изменить время", `manage:reschedule:${itemId}`)
+    .text("🕘 Время", `manage:reschedule:${itemId}`)
     .row()
     .text("✏️ Изменить", `manage:edit:${itemId}`)
-    .text("🗑 Удалить", `manage:delete:${itemId}`)
+    .text("🔔 Напоминание", `item:remind:${itemId}`)
     .row()
-    .text("🔔 Добавить напоминание", `item:remind:${itemId}`)
     .text("⭐ Важность", `item:priority:${itemId}`)
-    .row()
-    .text("📝 Итоги", `item:results:${itemId}`)
-    .text("🔗 Напоминания", `entity:item_policies:${itemId}`);
-  if (calendarControls) {
-    keyboard
-      .row()
-      .text("Повторить синхронизацию", `calendar:retry:${itemId}`)
-      .row()
-      .text("Показать safe debug", `calendar:debug:${itemId}`)
-      .text("Отключить sync", `calendar:disable:${itemId}`);
+    .text("🗑 Удалить", `manage:delete:${itemId}`);
+  if (["failed", "error", "pending_retry"].includes(calendarStatus ?? "")) {
+    keyboard.row().text("Повторить sync", `calendar:retry:${itemId}`);
   }
   if (campaignGroup) keyboard.row().text("📣 Кампания", `entity:open:campaign:${campaignGroup}`);
-  return keyboard.row().text("🔙 К плану", "dashboard:refresh");
+  return keyboard
+    .row()
+    .text("↩️ К плану", "dashboard:refresh")
+    .text("⚙️ Ещё", `item:more:${itemId}`);
+}
+
+export function itemMoreKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("Календарь / повторить sync", `calendar:retry:${itemId}`)
+    .row()
+    .text("Safe debug", `calendar:debug:${itemId}`)
+    .text("Отключить sync", `calendar:disable:${itemId}`)
+    .row()
+    .text("История / Итоги", `item:results:${itemId}`)
+    .text("Напоминания", `entity:item_policies:${itemId}`)
+    .row()
+    .text("Назад", `entity:open:planner_item:${itemId}`)
+    .text("План", "dashboard:refresh");
+}
+
+export function externalCalendarEventKeyboard(eventId: string, recurring = false) {
+  const keyboard = new InlineKeyboard()
+    .text("🕘 Время", `external:edit:${eventId}`)
+    .text("✏️ Изменить", `external:edit:${eventId}`)
+    .row()
+    .text("🗑 Удалить", `external:delete_prompt:${eventId}`)
+    .text("Скрыть в JARVIS", `external:hide:${eventId}`);
+  if (recurring) keyboard.row().text("Повторяющаяся серия", `external:recurring_info:${eventId}`);
+  return keyboard.row().text("↩️ К плану", "dashboard:refresh");
+}
+
+export function externalCalendarDeleteKeyboard(eventId: string) {
+  return new InlineKeyboard()
+    .text("Удалить везде", `external:delete_everywhere:${eventId}`)
+    .row()
+    .text("Скрыть в JARVIS", `external:hide:${eventId}`)
+    .text("Отмена", `entity:open:external_calendar_event:${eventId}`);
 }
 
 export function eventReactionKeyboard(itemId: string, kind = "event") {
@@ -339,6 +367,17 @@ export function reminderPolicyCardKeyboard(policy: ReminderPolicy) {
 }
 
 export function priorityEditorKeyboard(target: "item" | "policy", id: string) {
+  if (target === "item") {
+    return new InlineKeyboard()
+      .text("Без значка", `item:set_importance:${id}:none`)
+      .row()
+      .text("⭐ Важно", `item:set_importance:${id}:important`)
+      .text("🔥 Очень важно", `item:set_importance:${id}:very_important`)
+      .row()
+      .text("Авто", `item:set_importance:${id}:auto`)
+      .row()
+      .text("Назад", `entity:open:planner_item:${id}`);
+  }
   const keyboard = new InlineKeyboard();
   for (const [priority, label] of [
     [1, "Низкая"],
@@ -432,6 +471,19 @@ export function startKeyboard(calendarLink?: { label: string; url: string }) {
   }
 
   return keyboard;
+}
+
+export function navigationKeyboard() {
+  return new Keyboard()
+    .text("🏠 План")
+    .text("➕ Добавить")
+    .row()
+    .text("✅ Задачи")
+    .text("🔔 Напоминания")
+    .row()
+    .text("⚙️ Настройки")
+    .resized()
+    .persistent();
 }
 
 export function memoryDeleteKeyboard(memoryId: string) {

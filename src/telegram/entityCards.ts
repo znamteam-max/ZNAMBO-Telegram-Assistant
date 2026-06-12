@@ -2,17 +2,19 @@ import { DateTime } from "luxon";
 
 import {
   campaignCardKeyboard,
+  externalCalendarEventKeyboard,
   itemMenuKeyboard,
   reminderPolicyCardKeyboard,
 } from "@/bot/keyboards";
 import { getPlannerItemById, listCampaignItems } from "@/db/queries/items";
+import { getExternalCalendarEventById } from "@/db/queries/externalCalendarEvents";
 import {
   getReminderPolicyById,
   listReminderPoliciesForCampaign,
   listReminderPoliciesForItem,
 } from "@/db/queries/reminderPolicies";
 import type { EntityRef } from "@/domain/entityRefs";
-import { importanceLabel, importanceMode, urgencyExplanation } from "@/domain/importance";
+import { importanceLabel, urgencyExplanation, visibleImportanceLabel } from "@/domain/importance";
 import {
   getBasePriority,
   getEffectivePriority,
@@ -40,6 +42,7 @@ export async function renderEntityCard(params: {
 }) {
   if (params.ref.type === "reminder_policy") return renderPolicyCard(params);
   if (params.ref.type === "campaign") return renderCampaignCard(params);
+  if (params.ref.type === "external_calendar_event") return renderExternalCalendarEventCard(params);
   return renderItemCard(params);
 }
 
@@ -60,7 +63,6 @@ async function renderItemCard(params: {
       calendarProvider === "yandex" ? "yandex_calendar" : "google_calendar",
     ),
   ]);
-  const base = getBasePriority({ item });
   const effective = getEffectivePriority({ item }, now, params.timezone);
   const boost = getUrgencyBoost({ item }, now, params.timezone);
   const when = item.startAt ?? item.dueAt;
@@ -72,7 +74,7 @@ async function renderItemCard(params: {
       `Статус: ${item.status}`,
       `Тип: ${itemKindLabels[item.kind] ?? item.kind}`,
       `Когда: ${formatDate(when, item.timezone) || "без времени"}`,
-      `Важность: ${importanceLabel(base)} (${importanceMode({ item })})`,
+      `Важность: ${visibleImportanceLabel({ item })}`,
       `Сейчас: ${importanceLabel(effective)}; ${urgencyExplanation(boost)}`,
       `Напоминания: ${policies.filter((policy) => policy.status === "active").length}`,
       ["event", "training", "tentative_event"].includes(item.kind)
@@ -88,8 +90,32 @@ async function renderItemCard(params: {
     keyboard: itemMenuKeyboard(
       item.id,
       campaignGroup || null,
-      ["event", "training", "tentative_event"].includes(item.kind),
+      calendar?.status ?? null,
     ),
+  };
+}
+
+async function renderExternalCalendarEventCard(params: {
+  userId: string;
+  timezone: string;
+  ref: EntityRef;
+}) {
+  const event = await getExternalCalendarEventById(params.userId, params.ref.id);
+  if (!event) return null;
+  return {
+    text: [
+      event.summary,
+      "",
+      "Статус: external synced",
+      `Когда: ${formatDate(event.startAt, event.timezone)}${event.endAt ? `–${DateTime.fromJSDate(event.endAt, { zone: "utc" }).setZone(event.timezone).toFormat("HH:mm")}` : ""}`,
+      event.location ? `Место: ${event.location}` : null,
+      `Календарь: Яндекс · ${event.calendarLabel} · external`,
+      "Источник: создано в Яндекс.Календаре",
+      event.isRecurring ? "Повторение: серия событий" : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    keyboard: externalCalendarEventKeyboard(event.id, event.isRecurring),
   };
 }
 

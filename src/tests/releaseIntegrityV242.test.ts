@@ -8,9 +8,9 @@ import {
   RUNNER_LOCK_ENABLED,
 } from "@/lib/version";
 
-describe("V2.5.4.1 release integrity constants", () => {
+describe("V2.6.0 release integrity constants", () => {
   it("reports the active scheduler and interval implementation versions", () => {
-    expect(APP_VERSION).toBe("2.5.4.1");
+    expect(APP_VERSION).toBe("2.6.0");
     expect(POLICY_ENGINE_VERSION).toBe("2.5.3");
     expect(INTERVAL_ALGORITHM_VERSION).toBe("anchor-grid-v2");
     expect(RECONCILER_ENABLED).toBe(true);

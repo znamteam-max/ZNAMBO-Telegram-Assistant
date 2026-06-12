@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { randomUUID } from "crypto";
+import { DateTime } from "luxon";
 
 import { getItemCalendarSyncState, markGoogleCalendarSync } from "@/db/queries/googleCalendar";
 import type { PlannerItem } from "@/db/schema";
@@ -68,7 +69,7 @@ class YandexCalendarError extends Error {
   }
 }
 
-type CalDavOperation = "authorization" | "create" | "read" | "delete";
+type CalDavOperation = "authorization" | "create" | "read" | "delete" | "query";
 
 type ResolvedCalendarCollection = {
   url: string;
@@ -79,6 +80,22 @@ type ResolvedCalendarCollection = {
 export type YandexCalendarSyncOptions = {
   retryFirst?: boolean;
   totalTimeoutMs?: number;
+};
+
+export type YandexCalendarExternalEvent = {
+  calendarObjectUrl: string;
+  etag: string | null;
+  uid: string;
+  summary: string;
+  description: string | null;
+  location: string | null;
+  startAt: Date;
+  endAt: Date | null;
+  timezone: string;
+  isRecurring: boolean;
+  recurrenceRule: string | null;
+  recurrenceId: string;
+  exdates: string[];
 };
 
 const YANDEX_PROVIDER = "yandex_calendar";
@@ -260,6 +277,215 @@ export async function runYandexCalendarTest(): Promise<YandexCalendarTestResult>
     }
     return { ok: false, errorClass: testError, calendarObjectUrl, diagnostics, steps };
   }
+}
+
+export async function queryYandexCalendarWindow(params: {
+  from: Date;
+  to: Date;
+  timezone?: string;
+}): Promise<YandexCalendarExternalEvent[]> {
+  const collection = await resolveCalendarCollection();
+  const response = await caldavRequest(
+    collection.url,
+    {
+      method: "REPORT",
+      headers: {
+        "content-type": "application/xml; charset=utf-8",
+        depth: "1",
+      },
+      body: calendarQueryBody(params.from, params.to),
+    },
+    "query",
+  );
+  const xml = await response.text();
+  return parseCalendarQueryResponse({
+    xml,
+    from: params.from,
+    to: params.to,
+    timezone: params.timezone ?? "Europe/Moscow",
+  });
+}
+
+export async function deleteYandexCalendarObject(calendarObjectUrl: string) {
+  await caldavRequest(calendarObjectUrl, { method: "DELETE" }, "delete");
+}
+
+export async function updateYandexCalendarObject(params: {
+  calendarObjectUrl: string;
+  uid: string;
+  summary: string;
+  description?: string | null;
+  location?: string | null;
+  startAt: Date;
+  endAt?: Date | null;
+  etag?: string | null;
+}) {
+  const headers: Record<string, string> = {
+    "content-type": "text/calendar; charset=utf-8",
+  };
+  if (params.etag) headers["if-match"] = params.etag;
+  await caldavRequest(
+    params.calendarObjectUrl,
+    {
+      method: "PUT",
+      headers,
+      body: buildExternalIcs(params),
+    },
+    "create",
+  );
+  await readBackCalendarObject(params.calendarObjectUrl, `UID:${params.uid}`);
+}
+
+export function parseCalendarQueryResponse(params: {
+  xml: string;
+  from: Date;
+  to: Date;
+  timezone: string;
+}): YandexCalendarExternalEvent[] {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = parser.parse(params.xml) as Record<string, unknown>;
+  } catch {
+    throw new YandexCalendarError("parse_error", "Calendar query response could not be parsed.");
+  }
+  const multistatus = parsed.multistatus as Record<string, unknown> | undefined;
+  const responses = toArray(
+    multistatus?.response as Record<string, unknown> | Record<string, unknown>[] | undefined,
+  );
+  const events: YandexCalendarExternalEvent[] = [];
+  for (const response of responses) {
+    const prop = firstProp(response);
+    const calendarData = prop?.["calendar-data"];
+    if (typeof calendarData !== "string") continue;
+    const href = typeof response.href === "string" ? toAbsoluteCalDavUrl(response.href) : null;
+    if (!href) continue;
+    const etag = typeof prop?.getetag === "string" ? prop.getetag : null;
+    for (const event of parseIcsEvents(calendarData, params.timezone)) {
+      events.push(
+        ...expandCalendarEvent({
+          event: { ...event, calendarObjectUrl: href, etag },
+          from: params.from,
+          to: params.to,
+        }),
+      );
+    }
+  }
+  return events;
+}
+
+export function parseIcsEvents(ics: string, fallbackTimezone = "Europe/Moscow") {
+  const lines = unfoldIcsLines(ics);
+  const results: Array<Omit<YandexCalendarExternalEvent, "calendarObjectUrl" | "etag">> = [];
+  let current: Record<string, Array<{ params: Record<string, string>; value: string }>> | null = null;
+  for (const line of lines) {
+    if (line === "BEGIN:VEVENT") {
+      current = {};
+      continue;
+    }
+    if (line === "END:VEVENT") {
+      if (current) {
+        const eventProperties = current;
+        const uid = firstIcsValue(eventProperties, "UID");
+        const start = parseIcsDateProperty(firstIcsProperty(eventProperties, "DTSTART"), fallbackTimezone);
+        if (uid && start) {
+          const end = parseIcsDateProperty(firstIcsProperty(eventProperties, "DTEND"), fallbackTimezone);
+          const recurrenceRule = firstIcsValue(eventProperties, "RRULE");
+          results.push({
+            uid,
+            summary: unescapeIcsText(firstIcsValue(eventProperties, "SUMMARY") || "Без названия"),
+            description: nullableIcsText(firstIcsValue(eventProperties, "DESCRIPTION")),
+            location: nullableIcsText(firstIcsValue(eventProperties, "LOCATION")),
+            startAt: start.date,
+            endAt: end?.date ?? null,
+            timezone: start.timezone,
+            isRecurring: Boolean(recurrenceRule),
+            recurrenceRule: recurrenceRule || null,
+            recurrenceId:
+              parseIcsDateProperty(firstIcsProperty(eventProperties, "RECURRENCE-ID"), fallbackTimezone)
+                ?.date.toISOString() ?? "",
+            exdates: (eventProperties.EXDATE ?? [])
+              .flatMap((property) => property.value.split(","))
+              .map((value) =>
+                parseIcsDateProperty(
+                  { params: propertyParamsFor(eventProperties, "EXDATE"), value },
+                  fallbackTimezone,
+                )?.date.toISOString(),
+              )
+              .filter((value): value is string => Boolean(value)),
+          });
+        }
+      }
+      current = null;
+      continue;
+    }
+    if (!current) continue;
+    const property = parseIcsLine(line);
+    if (!property) continue;
+    current[property.name] ??= [];
+    current[property.name].push({ params: property.params, value: property.value });
+  }
+  return results;
+}
+
+function expandCalendarEvent(params: {
+  event: YandexCalendarExternalEvent;
+  from: Date;
+  to: Date;
+}) {
+  const { event } = params;
+  if (event.recurrenceId) {
+    return isWithinWindow(event.startAt, params.from, params.to) ? [event] : [];
+  }
+  if (!event.recurrenceRule) {
+    return isWithinWindow(event.startAt, params.from, params.to) ? [event] : [];
+  }
+  const rule = parseRrule(event.recurrenceRule);
+  if (rule.FREQ !== "WEEKLY") {
+    return isWithinWindow(event.startAt, params.from, params.to) ? [event] : [];
+  }
+  const interval = Math.max(1, Number(rule.INTERVAL ?? 1));
+  const until = rule.UNTIL ? parseIcsDateValue(rule.UNTIL, event.timezone)?.date ?? null : null;
+  const count = Math.max(0, Number(rule.COUNT ?? 0));
+  const weekdays = new Set(
+    (rule.BYDAY ?? weekdayCode(event.startAt, event.timezone))
+      .split(",")
+      .map((value) => value.replace(/^[+-]?\d+/, "")),
+  );
+  const duration = event.endAt ? event.endAt.getTime() - event.startAt.getTime() : null;
+  const exdates = new Set(event.exdates);
+  const occurrences: YandexCalendarExternalEvent[] = [];
+  let generated = 0;
+  let cursor = DateTime.fromJSDate(event.startAt, { zone: "utc" }).setZone(event.timezone);
+  const limit = DateTime.fromJSDate(params.to, { zone: "utc" }).setZone(event.timezone);
+  while (cursor <= limit && generated < 1000) {
+    const weeks = Math.floor(
+      cursor.startOf("day").diff(
+        DateTime.fromJSDate(event.startAt, { zone: "utc" }).setZone(event.timezone).startOf("week"),
+        "weeks",
+      ).weeks,
+    );
+    const occurrence = cursor.toUTC().toJSDate();
+    const eligible =
+      weeks % interval === 0 &&
+      weekdays.has(weekdayCode(occurrence, event.timezone)) &&
+      (!until || occurrence <= until);
+    if (eligible) {
+      generated += 1;
+      if ((!count || generated <= count) && !exdates.has(occurrence.toISOString())) {
+        if (isWithinWindow(occurrence, params.from, params.to)) {
+          occurrences.push({
+            ...event,
+            startAt: occurrence,
+            endAt: duration && duration > 0 ? new Date(occurrence.getTime() + duration) : null,
+            recurrenceId: occurrence.toISOString(),
+          });
+        }
+      }
+    }
+    if ((count && generated >= count) || (until && occurrence > until)) break;
+    cursor = cursor.plus({ days: 1 });
+  }
+  return occurrences;
 }
 
 export function classifyYandexCalendarError(error: unknown): {
@@ -499,6 +725,37 @@ function buildTestIcs(id: string, start: Date, end: Date): string {
   ].join("\r\n");
 }
 
+function buildExternalIcs(params: {
+  calendarObjectUrl: string;
+  uid: string;
+  summary: string;
+  description?: string | null;
+  location?: string | null;
+  startAt: Date;
+  endAt?: Date | null;
+}) {
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//ZNAMBO Telegram Assistant//RU",
+    "CALSCALE:GREGORIAN",
+    "BEGIN:VEVENT",
+    `UID:${params.uid}`,
+    `DTSTAMP:${formatIcsDate(new Date())}`,
+    `DTSTART:${formatIcsDate(params.startAt)}`,
+    `DTEND:${formatIcsDate(params.endAt ?? new Date(params.startAt.getTime() + 60 * 60 * 1000))}`,
+    `SUMMARY:${escapeIcsText(params.summary)}`,
+    params.description ? `DESCRIPTION:${escapeIcsText(params.description)}` : null,
+    params.location ? `LOCATION:${escapeIcsText(params.location)}` : null,
+    `URL:${escapeIcsText(params.calendarObjectUrl)}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "",
+  ]
+    .filter(Boolean)
+    .join("\r\n");
+}
+
 function firstProp(response: Record<string, unknown> | undefined) {
   const propstat = toArray(
     response?.propstat as Record<string, unknown> | Record<string, unknown>[] | undefined,
@@ -561,7 +818,9 @@ function classifyCalDavHttpError(
     return "caldav_url_not_found";
   }
   if (operation === "delete" || method === "DELETE") return "delete_failed";
-  if (operation === "read" || method === "GET") return "read_back_failed";
+  if (operation === "read" || operation === "query" || method === "GET" || method === "REPORT") {
+    return "read_back_failed";
+  }
   return "write_failed";
 }
 
@@ -606,4 +865,115 @@ function calendarListBody(): string {
     <D:resourcetype />
   </D:prop>
 </D:propfind>`;
+}
+
+function calendarQueryBody(from: Date, to: Date): string {
+  return `<?xml version="1.0" encoding="utf-8" ?>
+<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop>
+    <D:getetag />
+    <C:calendar-data />
+  </D:prop>
+  <C:filter>
+    <C:comp-filter name="VCALENDAR">
+      <C:comp-filter name="VEVENT">
+        <C:time-range start="${formatIcsDate(from)}" end="${formatIcsDate(to)}" />
+      </C:comp-filter>
+    </C:comp-filter>
+  </C:filter>
+</C:calendar-query>`;
+}
+
+function unfoldIcsLines(ics: string) {
+  return ics.replace(/\r?\n[ \t]/g, "").split(/\r?\n/);
+}
+
+function parseIcsLine(line: string) {
+  const separator = line.indexOf(":");
+  if (separator <= 0) return null;
+  const left = line.slice(0, separator);
+  const value = line.slice(separator + 1);
+  const [nameRaw, ...rawParams] = left.split(";");
+  const params: Record<string, string> = {};
+  for (const raw of rawParams) {
+    const [key, ...parts] = raw.split("=");
+    if (key && parts.length) params[key.toUpperCase()] = parts.join("=").replace(/^"|"$/g, "");
+  }
+  return { name: nameRaw.toUpperCase(), params, value };
+}
+
+function firstIcsProperty(
+  event: Record<string, Array<{ params: Record<string, string>; value: string }>>,
+  name: string,
+) {
+  return event[name]?.[0] ?? null;
+}
+
+function firstIcsValue(
+  event: Record<string, Array<{ params: Record<string, string>; value: string }>>,
+  name: string,
+) {
+  return firstIcsProperty(event, name)?.value ?? "";
+}
+
+function propertyParamsFor(
+  event: Record<string, Array<{ params: Record<string, string>; value: string }>>,
+  name: string,
+) {
+  return firstIcsProperty(event, name)?.params ?? {};
+}
+
+function parseIcsDateProperty(
+  property: { params: Record<string, string>; value: string } | null,
+  fallbackTimezone: string,
+) {
+  if (!property) return null;
+  return parseIcsDateValue(property.value, property.params.TZID ?? fallbackTimezone);
+}
+
+function parseIcsDateValue(value: string, timezone: string) {
+  let date: DateTime;
+  if (/^\d{8}$/.test(value)) {
+    date = DateTime.fromFormat(value, "yyyyLLdd", { zone: timezone }).startOf("day");
+  } else if (/Z$/.test(value)) {
+    date = DateTime.fromFormat(value, "yyyyLLdd'T'HHmmss'Z'", { zone: "utc" });
+  } else {
+    date = DateTime.fromFormat(value, "yyyyLLdd'T'HHmmss", { zone: timezone });
+  }
+  if (!date.isValid) return null;
+  return { date: date.toUTC().toJSDate(), timezone };
+}
+
+function nullableIcsText(value: string) {
+  const text = unescapeIcsText(value);
+  return text || null;
+}
+
+function unescapeIcsText(value: string) {
+  return value
+    .replace(/\\n/gi, "\n")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\")
+    .trim();
+}
+
+function parseRrule(value: string) {
+  return Object.fromEntries(
+    value
+      .split(";")
+      .map((part) => part.split("="))
+      .filter((entry) => entry.length === 2)
+      .map(([key, ruleValue]) => [key.toUpperCase(), ruleValue.toUpperCase()]),
+  ) as Record<string, string>;
+}
+
+function weekdayCode(date: Date, timezone: string) {
+  return ["MO", "TU", "WE", "TH", "FR", "SA", "SU"][
+    DateTime.fromJSDate(date, { zone: "utc" }).setZone(timezone).weekday - 1
+  ]!;
+}
+
+function isWithinWindow(value: Date, from: Date, to: Date) {
+  return value >= from && value <= to;
 }

@@ -814,3 +814,25 @@ build passed
 ```
 
 No secrets were written to chat or project history.
+### Turn: V2.6.0 Plan UI and Yandex inbound import implementation
+
+The attached V2.6.0 brief was implemented as a major release rather than another parser hotfix.
+Plan rows were cleaned up, item-card actions were simplified, persistent navigation was added,
+time ranges and unquoted renames were fixed, and external Yandex Calendar events became a separate
+CalDAV-backed cache merged into the canonical Plan.
+
+The production Neon migration for `external_calendar_events` and `calendar_import_state` was
+applied and verified without exposing credentials. A direct local full import smoke did not finish
+within the timeout because direct Neon connections from this PC remain unstable; final import
+acceptance is therefore performed through the deployed Vercel runtime.
+
+Validation before deployment:
+
+```text
+48 test files, 174 tests passed
+lint passed
+TypeScript passed
+build passed
+```
+
+No secrets were written to chat or project history.

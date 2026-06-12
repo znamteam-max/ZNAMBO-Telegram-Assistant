@@ -258,6 +258,60 @@ export const itemSyncState = assistantTable(
   ],
 );
 
+export const externalCalendarEvents = assistantTable(
+  "external_calendar_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull().default("yandex"),
+    calendarLabel: text("calendar_label").notNull().default("Личный"),
+    calendarObjectUrl: text("calendar_object_url").notNull(),
+    uid: text("uid").notNull(),
+    etag: text("etag"),
+    summary: text("summary").notNull(),
+    description: text("description"),
+    location: text("location"),
+    startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+    endAt: timestamp("end_at", { withTimezone: true }),
+    timezone: text("timezone").notNull().default("Europe/Moscow"),
+    isRecurring: boolean("is_recurring").notNull().default(false),
+    recurrenceRule: text("recurrence_rule"),
+    recurrenceId: text("recurrence_id").notNull().default(""),
+    exdates: jsonb("exdates").$type<string[]>().notNull().default(emptyArrayJson),
+    source: text("source").notNull().default("yandex_external"),
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("external_calendar_events_user_object_recurrence_uq").on(
+      table.userId,
+      table.calendarObjectUrl,
+      table.recurrenceId,
+    ),
+    index("external_calendar_events_user_start_idx").on(table.userId, table.startAt),
+    index("external_calendar_events_user_uid_idx").on(table.userId, table.uid),
+  ],
+);
+
+export const calendarImportState = assistantTable("calendar_import_state", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull().default("yandex"),
+  lastImportAt: timestamp("last_import_at", { withTimezone: true }),
+  importedEventsCount: integer("imported_events_count").notNull().default(0),
+  recurringEventsCount: integer("recurring_events_count").notNull().default(0),
+  externalEventsVisible: integer("external_events_visible").notNull().default(0),
+  possibleDuplicates: integer("possible_duplicates").notNull().default(0),
+  lastImportErrorClass: text("last_import_error_class"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
+  ...timestamps,
+});
+
 export const reminders = assistantTable(
   "reminders",
   {
@@ -618,3 +672,5 @@ export type GoogleCalendarConnection = typeof googleCalendarConnections.$inferSe
 export type CalendarSyncJob = typeof calendarSyncJobs.$inferSelect;
 export type TaskViewState = typeof taskViewStates.$inferSelect;
 export type AgentAction = typeof agentActions.$inferSelect;
+export type ExternalCalendarEvent = typeof externalCalendarEvents.$inferSelect;
+export type CalendarImportState = typeof calendarImportState.$inferSelect;

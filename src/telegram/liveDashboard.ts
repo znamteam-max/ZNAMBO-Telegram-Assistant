@@ -13,7 +13,7 @@ import {
   compareTimelineEntries,
   getBasePriority,
 } from "@/domain/timelineClassification";
-import { importanceMarker } from "@/domain/importance";
+import { importanceMarker, visibleImportanceMarker } from "@/domain/importance";
 import type { EntityRef } from "@/domain/entityRefs";
 import { buildUserTimelineView } from "@/services/userTimeline";
 import { listCalendarSyncStatesForUser } from "@/db/queries/googleCalendar";
@@ -74,8 +74,19 @@ export async function renderLiveDashboard(params: {
     .map((row) => row.item!)
     .slice(0, 5);
   const pastTodayIds = new Set(pastTodayItems.map((item) => item.id));
+  const currentItems = itemRows
+    .filter((row) => row.classification === "now" && row.item)
+    .map((row) => row.item!)
+    .slice(0, 5);
+  const currentIds = new Set(currentItems.map((item) => item.id));
   const todayItems = itemRows
-    .filter((row) => row.dateBucket === "today" && row.item && !pastTodayIds.has(row.item.id))
+    .filter(
+      (row) =>
+        row.dateBucket === "today" &&
+        row.item &&
+        !pastTodayIds.has(row.item.id) &&
+        !currentIds.has(row.item.id),
+    )
     .map((row) => row.item!)
     .slice(0, 8);
   const tomorrowItems = itemRows
@@ -91,7 +102,7 @@ export async function renderLiveDashboard(params: {
     .map((row) => row.item!)
     .slice(0, 10);
   const scheduledIds = new Set(
-    [...todayItems, ...tomorrowItems, ...soonItems].map((item) => item.id),
+    [...currentItems, ...todayItems, ...tomorrowItems, ...soonItems].map((item) => item.id),
   );
   const importantItems = allItems
     .filter(
@@ -181,10 +192,20 @@ export async function renderLiveDashboard(params: {
         calendarByItemId.get(item.id),
         includeDate,
       ),
-      ref: { type: "planner_item" as const, id: item.id },
+      ref: {
+        type:
+          item.source === "yandex_external"
+            ? ("external_calendar_event" as const)
+            : ("planner_item" as const),
+        id: item.id,
+      },
       item,
     }));
 
+  if (currentItems.length) {
+    lines.push("", "Сейчас / идёт:");
+    pushRows(itemRowsFor(currentItems));
+  }
   lines.push("", "Сегодня:");
   if (todayItems.length) {
     pushRows(itemRowsFor(todayItems));
@@ -385,7 +406,7 @@ export async function refreshDashboardAfterMutation(params: {
   });
 }
 
-function formatDashboardItem(
+export function formatDashboardItem(
   item: PlannerItem,
   timezone: string,
   calendar?: { status: string; lastError: string | null } | null,
@@ -403,14 +424,14 @@ function formatDashboardItem(
         .setZone(item.timezone || timezone)
         .toFormat("HH:mm")
     : null;
-  const marker = item.kind === "training" ? "🟢" : item.kind === "preparation_task" ? "🟡" : "🔴";
-  const important = importanceMarker(getBasePriority({ item })).split(" ")[0];
+  const important =
+    item.source === "yandex_external" ? "" : visibleImportanceMarker({ item }).split(" ")[0];
   const calendarStatus =
     ["event", "training", "tentative_event"].includes(item.kind) &&
     ["pending_retry", "failed", "error"].includes(calendar?.status ?? "")
       ? ` · Календарь: ${calendar?.lastError ?? calendar?.status}, повторю автоматически`
       : "";
-  return `${time}${end ? `–${end}` : ""} · ${important ? `${important} ` : ""}${marker} ${item.title}${calendarStatus}`;
+  return `${time}${end ? `–${end}` : ""} · ${important ? `${important} ` : ""}${item.title}${calendarStatus}`;
 }
 
 function formatPolicy(policy: ReminderPolicy, timezone: string) {

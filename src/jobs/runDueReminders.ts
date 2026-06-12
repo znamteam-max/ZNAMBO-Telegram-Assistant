@@ -44,6 +44,7 @@ import { syncCompactChat } from "@/telegram/compactChatOrchestrator";
 import type { LiveDashboardTelegramApi } from "@/telegram/liveDashboard";
 import { ensureDailySnapshot } from "@/services/dailyHistory";
 import { runDueCalendarSyncRetries } from "@/services/calendarSyncRetry";
+import { runDueYandexCalendarImports } from "@/services/yandexCalendarImport";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -159,6 +160,13 @@ export async function runDueReminders(params?: {
       await runDueCalendarSyncRetries({ now, limit: 3 });
     } catch (error) {
       logger.warn("Calendar retry queue failed without blocking reminders", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      await runDueYandexCalendarImports({ now, minimumIntervalMinutes: 15, limit: 3 });
+    } catch (error) {
+      logger.warn("Calendar inbound import failed without blocking reminders", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

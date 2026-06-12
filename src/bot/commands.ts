@@ -65,12 +65,17 @@ import {
   previewV254ProductionRepair,
 } from "@/services/v254ProductionRepair";
 import { detectPlanConflicts } from "@/services/planConflicts";
+import {
+  getSafeCalendarImportStatus,
+  importYandexCalendarForUser,
+} from "@/services/yandexCalendarImport";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
 import {
   calendarConnectKeyboard,
   memoryDeleteKeyboard,
+  navigationKeyboard,
   reminderPolicyRepairKeyboard,
   startKeyboard,
 } from "./keyboards";
@@ -98,6 +103,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       ].join("\n"),
       { reply_markup: startKeyboard(calendarLink) },
     );
+    await ctx.reply("Быстрая навигация включена.", { reply_markup: navigationKeyboard() });
   });
 
   bot.command("help", async (ctx) => {
@@ -126,6 +132,8 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/calendardebug — безопасная диагностика календаря",
         "/calendar_test — реальный create/read/delete тест Яндекс.Календаря",
         "/calendar_retry_failed — повторить неудачные синхронизации календаря",
+        "/calendar_sync — импортировать события из Яндекс.Календаря",
+        "/calendar_import_status — безопасный статус последнего импорта",
         "/admin_repair_v253_calendar preview|apply — repair timeout-синхронизаций",
         "/admin_repair_v254 preview|apply — безопасный repair списка после ошибочного удаления",
         "/admin_state_v252 — безопасный production state",
@@ -263,6 +271,52 @@ export function registerCommands(bot: Bot<BotContext>) {
     }
   });
 
+  bot.command("calendar_sync", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const result = await importYandexCalendarForUser({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    await replyAndRecord(
+      ctx,
+      result.ok
+        ? [
+            "Импортировал события из Яндекс.Календаря:",
+            `• новых: ${result.created}`,
+            `• обновлено: ${result.updated}`,
+            `• скрытых/удалённых: ${result.hidden}`,
+            `• повторяющихся: ${result.recurring}`,
+            `• связанных с JARVIS без дубля: ${result.skippedLinked}`,
+            "",
+            "План обновлён.",
+          ].join("\n")
+        : `Импорт не выполнен. Безопасный класс ошибки: ${result.errorClass ?? "unknown"}.`,
+    );
+    if (ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+
+  bot.command("calendar_import_status", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const status = await getSafeCalendarImportStatus(owner.id);
+    await replyAndRecord(
+      ctx,
+      [
+        `lastImportAt: ${status.lastImportAt ?? "never"}`,
+        `importedEventsCount: ${status.importedEventsCount}`,
+        `recurringEventsCount: ${status.recurringEventsCount}`,
+        `externalEventsVisible: ${status.externalEventsVisible}`,
+        `possibleDuplicates: ${status.possibleDuplicates}`,
+        `lastImportErrorClass: ${status.lastImportErrorClass ?? "none"}`,
+      ].join("\n"),
+    );
+  });
+
   bot.command("today", async (ctx) =>
     replyJarvisTool(ctx, await renderCommandSchedule(ctx, "today")),
   );
@@ -281,6 +335,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       chatId: ctx.chat.id,
       timezone: owner.timezone,
     });
+    await ctx.reply("Навигация", { reply_markup: navigationKeyboard() });
   });
   bot.command("plan", async (ctx) => {
     const owner = requireOwner(ctx);
@@ -290,6 +345,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       chatId: ctx.chat.id,
       timezone: owner.timezone,
     });
+    await ctx.reply("Навигация", { reply_markup: navigationKeyboard() });
   });
   bot.command("reminders", async (ctx) => {
     const owner = requireOwner(ctx);

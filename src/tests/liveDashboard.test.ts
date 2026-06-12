@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   removeKeyboardSafe: vi.fn(),
   listCalendarSyncStatesForUser: vi.fn(),
   rememberTaskView: vi.fn(),
+  listVisibleExternalCalendarEvents: vi.fn(),
 }));
 
 vi.mock("@/db/queries/liveDashboards", () => ({
@@ -36,6 +37,9 @@ vi.mock("@/telegram/messageLifecycle", () => ({
 }));
 vi.mock("@/db/queries/googleCalendar", () => ({
   listCalendarSyncStatesForUser: mocks.listCalendarSyncStatesForUser,
+}));
+vi.mock("@/db/queries/externalCalendarEvents", () => ({
+  listVisibleExternalCalendarEvents: mocks.listVisibleExternalCalendarEvents,
 }));
 vi.mock("@/bot/createBot", () => ({
   getBot: () => ({ api: {} }),
@@ -75,6 +79,7 @@ describe("live dashboard lifecycle", () => {
     mocks.listLongTermReminderPolicies.mockResolvedValue([]);
     mocks.listLegacyReminderLikeItems.mockResolvedValue([]);
     mocks.listCalendarSyncStatesForUser.mockResolvedValue([]);
+    mocks.listVisibleExternalCalendarEvents.mockResolvedValue([]);
     mocks.rememberTaskView.mockResolvedValue({ id: "view-id" });
   });
 

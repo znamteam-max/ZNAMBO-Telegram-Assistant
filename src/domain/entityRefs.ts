@@ -3,6 +3,7 @@ export type EntityRefType =
   | "reminder_policy"
   | "campaign"
   | "campaign_item"
+  | "external_calendar_event"
   | "history_item"
   | "legacy_orphan";
 

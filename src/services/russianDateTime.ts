@@ -76,6 +76,13 @@ export type RussianDateTimeParseResult = {
   warnings: string[];
 };
 
+export type RussianTimeRangeParseResult = {
+  startLocal: DateTime;
+  endLocal: DateTime;
+  pastConfirmationRequired: boolean;
+  warnings: string[];
+};
+
 export function parseRussianDateTime(params: {
   text: string;
   timezone: string;
@@ -131,13 +138,24 @@ export function parseRussianDateTime(params: {
     source = "time_only";
   }
 
-  const local = date.set({
+  let local = date.set({
     hour: clock.hour,
     minute: clock.minute,
     second: 0,
     millisecond: 0,
   });
   const explicitTodayInText = explicitToday || containsWord(textWithoutQuotes, WORDS.today);
+  if (
+    explicitTodayInText &&
+    clock.source === "bare" &&
+    clock.hour >= 1 &&
+    clock.hour <= 11 &&
+    local <= nowLocal &&
+    local.plus({ hours: 12 }) > nowLocal
+  ) {
+    local = local.plus({ hours: 12 });
+    warnings.push("ambiguous_hour_assumed_pm");
+  }
 
   return {
     local,
@@ -146,6 +164,51 @@ export function parseRussianDateTime(params: {
     pastConfirmationRequired: explicitTodayInText && local <= nowLocal,
     usedNextWeek,
     warnings,
+  };
+}
+
+export function parseRussianTimeRange(params: {
+  text: string;
+  timezone: string;
+  now?: Date;
+  baseDate?: Date | null;
+}): RussianTimeRangeParseResult | null {
+  const normalized = normalizeRussian(params.text);
+  const match =
+    normalized.match(
+      /(?:\u0441|from)\s+(\d{1,2}(?:[.:]\d{2})?(?:\s+(?:\u0443\u0442\u0440\u0430|\u0434\u043d\u044f|\u0432\u0435\u0447\u0435\u0440\u0430|\u043d\u043e\u0447\u0438))?)\s+(?:\u0434\u043e|to)\s+(\d{1,2}(?:[.:]\d{2})?(?:\s+(?:\u0443\u0442\u0440\u0430|\u0434\u043d\u044f|\u0432\u0435\u0447\u0435\u0440\u0430|\u043d\u043e\u0447\u0438))?)/i,
+    ) ??
+    normalized.match(
+      /(?:^|[^\d])(\d{1,2}[.:]\d{2})\s*[-\u2013\u2014]\s*(\d{1,2}[.:]\d{2})(?=$|[^\d])/i,
+    );
+  if (!match) return null;
+  const date = parseRussianDateTime({
+    ...params,
+    text: `${normalized} \u0432 ${match[1]}`,
+  });
+  if (!date) return null;
+  const endClock = parseStandaloneClock(match[2]);
+  if (!endClock) return null;
+  let endLocal = date.local.set({
+    hour: endClock.hour,
+    minute: endClock.minute,
+    second: 0,
+    millisecond: 0,
+  });
+  if (
+    date.warnings.includes("ambiguous_hour_assumed_pm") &&
+    endClock.source === "bare" &&
+    endClock.hour >= 1 &&
+    endClock.hour <= 11
+  ) {
+    endLocal = endLocal.plus({ hours: 12 });
+  }
+  if (endLocal <= date.local) endLocal = endLocal.plus({ days: 1 });
+  return {
+    startLocal: date.local,
+    endLocal,
+    pastConfirmationRequired: date.pastConfirmationRequired,
+    warnings: date.warnings,
   };
 }
 
@@ -197,28 +260,47 @@ function parseClockTime(text: string) {
   const withMinutes = sanitized.match(
     /(?:^|[^\d])(?:\u0432|\u0432\u043e|\u043a|\u043d\u0430|\u0441)?\s*(\d{1,2})[.:](\d{2})(?=$|[^\d])/i,
   );
-  if (withMinutes) return normalizeClock(Number(withMinutes[1]), Number(withMinutes[2]), sanitized);
+  if (withMinutes) return normalizeClock(Number(withMinutes[1]), Number(withMinutes[2]), sanitized, "explicit");
 
   const dayPart = sanitized.match(
     /(?:^|[^\d])(\d{1,2})\s*(?:\u0447\u0430\u0441(?:\u0430|\u043e\u0432)?\s*)?(\u0443\u0442\u0440\u0430|\u0432\u0435\u0447\u0435\u0440\u0430|\u0434\u043d\u044f|\u043d\u043e\u0447\u0438)(?=$|[^\u0430-\u044fa-z])/i,
   );
-  if (dayPart) return normalizeClock(Number(dayPart[1]), 0, dayPart[2]);
+  if (dayPart) return normalizeClock(Number(dayPart[1]), 0, dayPart[2], "explicit");
 
   const bare = sanitized.match(
     /(?:^|[^\d])(?:\u0432|\u0432\u043e|\u043a|\u043d\u0430|\u0441)\s+(\d{1,2})(?!\s*[.:]\d|\d)(?=$|[^\d])/i,
   );
-  if (bare) return normalizeClock(Number(bare[1]), 0, sanitized);
+  if (bare) return normalizeClock(Number(bare[1]), 0, sanitized, "bare");
   return null;
 }
 
-function normalizeClock(hourInput: number, minuteInput: number, context: string) {
+function normalizeClock(
+  hourInput: number,
+  minuteInput: number,
+  context: string,
+  source: "explicit" | "bare",
+) {
   if (!Number.isFinite(hourInput) || !Number.isFinite(minuteInput)) return null;
   let hour = Math.max(0, Math.min(23, hourInput));
   const minute = Math.max(0, Math.min(59, minuteInput));
-  if (/(\u0432\u0435\u0447\u0435\u0440\u0430|\u0434\u043d\u044f)/i.test(context) && hour < 12) hour += 12;
-  if (/\u043d\u043e\u0447\u0438/i.test(context) && hour === 12) hour = 0;
-  if (/\u0443\u0442\u0440\u0430/i.test(context) && hour === 12) hour = 0;
-  return { hour, minute, source: "explicit" as const };
+  if (/(?:^|\s)(?:\u0432\u0435\u0447\u0435\u0440\u0430|\u0434\u043d\u044f)(?:$|\s)/i.test(context) && hour < 12) {
+    hour += 12;
+  }
+  if (/(?:^|\s)\u043d\u043e\u0447\u0438(?:$|\s)/i.test(context) && hour === 12) hour = 0;
+  if (/(?:^|\s)\u0443\u0442\u0440\u0430(?:$|\s)/i.test(context) && hour === 12) hour = 0;
+  return { hour, minute, source };
+}
+
+function parseStandaloneClock(value: string) {
+  const normalized = value.trim();
+  const match = normalized.match(/^(\d{1,2})(?:[.:](\d{2}))?(?:\s+(.+))?$/);
+  if (!match) return null;
+  return normalizeClock(
+    Number(match[1]),
+    Number(match[2] ?? 0),
+    match[3] ?? normalized,
+    match[2] ? "explicit" : "bare",
+  );
 }
 
 function containsWord(text: string, word: string) {

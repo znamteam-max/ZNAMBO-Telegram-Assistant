@@ -15,10 +15,15 @@ import { handleJarvisTurn } from "@/agent/jarvisPipeline";
 import { getEnv } from "@/lib/env";
 import { handleIncomingUserMessage } from "./messagePipeline";
 import { replyAndRecord } from "./reply";
+import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
+import { renderTaskViewTool } from "@/agent/jarvisTools";
+import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
+import { navigationKeyboard } from "./keyboards";
 
 export function registerMessageHandlers(bot: Bot<BotContext>) {
   bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
+    if (await handleNavigationText(ctx, ctx.message.text)) return;
     await handleNaturalText(ctx, ctx.message.text);
   });
 
@@ -64,6 +69,53 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
       await replyAndRecord(ctx, toUserMessage(error));
     }
   });
+}
+
+async function handleNavigationText(ctx: BotContext, text: string) {
+  const owner = requireOwner(ctx);
+  if (text === "🏠 План") {
+    if (ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+    return true;
+  }
+  if (text === "➕ Добавить") {
+    await replyAndRecord(ctx, "Напиши или надиктуй новое дело, встречу или напоминание.");
+    return true;
+  }
+  if (text === "✅ Задачи") {
+    const result = await renderTaskViewTool({
+      userId: owner.id,
+      timezone: owner.timezone,
+      sourceMessageId: ctx.dbMessageId,
+    });
+    await replyAndRecord(
+      ctx,
+      result.reply,
+      result.replyMarkup ? { reply_markup: result.replyMarkup } : undefined,
+    );
+    return true;
+  }
+  if (text === "🔔 Напоминания") {
+    const center = await renderReminderControlCenter({
+      userId: owner.id,
+      timezone: owner.timezone,
+      scope: "active",
+    });
+    await replyAndRecord(ctx, center.text, { reply_markup: center.keyboard });
+    return true;
+  }
+  if (text === "⚙️ Настройки") {
+    await ctx.reply(`Часовой пояс: ${owner.timezone}\nДля смены: /settings Europe/Moscow`, {
+      reply_markup: navigationKeyboard(),
+    });
+    return true;
+  }
+  return false;
 }
 
 async function handleNaturalText(ctx: BotContext, text: string) {
