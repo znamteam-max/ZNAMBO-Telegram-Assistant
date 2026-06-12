@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   replyAndRecord: vi.fn(),
   writeAudit: vi.fn(),
   buildJarvisContext: vi.fn(),
+  handleExternalCalendarEditTurn: vi.fn(),
 }));
 
 vi.mock("@/bot/context", () => ({
@@ -33,12 +34,17 @@ vi.mock("@/db/queries/audit", () => ({
   writeAudit: mocks.writeAudit,
 }));
 
+vi.mock("@/bot/externalCalendarEditFlow", () => ({
+  handleExternalCalendarEditTurn: mocks.handleExternalCalendarEditTurn,
+}));
+
 import { handleJarvisTurn } from "@/agent/jarvisPipeline";
 import type { BotContext } from "@/bot/context";
 
 describe("Jarvis mandatory AI guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.handleExternalCalendarEditTurn.mockResolvedValue(false);
     mocks.buildJarvisContext.mockResolvedValue({
       activeContext: "context",
       contextError: null,

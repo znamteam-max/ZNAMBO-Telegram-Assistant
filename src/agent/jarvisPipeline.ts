@@ -20,6 +20,7 @@ import { listItemsByIds } from "@/db/queries/taskViewStates";
 import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
 import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
 import { handleItemEditTurn } from "@/bot/itemEditFlow";
+import { handleExternalCalendarEditTurn } from "@/bot/externalCalendarEditFlow";
 import {
   campaignCompletionGuardKeyboard,
   conflictKeyboard,
@@ -83,6 +84,12 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
   };
 
   try {
+    const externalCalendarEditHandled = await handleExternalCalendarEditTurn(ctx, text, timezone);
+    if (externalCalendarEditHandled) {
+      trace.finalAction = "external_calendar_edit_session_handled";
+      trace.toolCallsExecuted = ["external_calendar_edit_session"];
+      return;
+    }
     const itemEditHandled = await handleItemEditTurn(ctx, text, timezone);
     if (itemEditHandled) {
       trace.finalAction = "item_edit_session_handled";

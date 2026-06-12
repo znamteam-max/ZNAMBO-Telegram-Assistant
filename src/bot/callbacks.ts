@@ -109,6 +109,7 @@ import {
 } from "./keyboards";
 import { formatCommittedPlanSummary, formatCreatedItem } from "./formatters";
 import { cancelItemEditPreview, confirmItemEditPreview } from "./itemEditFlow";
+import { startExternalCalendarEditSession } from "./externalCalendarEditFlow";
 
 export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery("noop", async (ctx) => {
@@ -1187,15 +1188,29 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await refreshAfterCallback(ctx);
   });
 
-  bot.callbackQuery(/^external:(edit|recurring_info):(.+)$/, async (ctx) => {
+  bot.callbackQuery(/^external:edit:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
-    const event = await getExternalCalendarEventById(owner.id, ctx.match[2]);
+    const event = await getExternalCalendarEventById(owner.id, ctx.match[1]);
     await ctx.answerCallbackQuery();
     if (!event) return;
+    if (!event.isRecurring) {
+      await startExternalCalendarEditSession({
+        userId: owner.id,
+        eventId: event.id,
+        sourceTelegramMessageId: ctx.callbackQuery.message?.message_id,
+      });
+    }
     await ctx.reply(
       event.isRecurring
         ? "Это повторяющееся событие. Сейчас поддерживается изменение или удаление всей серии; изменение одного повтора будет добавлено отдельно."
-        : "Для внешнего события доступны удаление в Яндекс.Календаре и скрытие в JARVIS. Редактирование содержимого безопаснее выполнить в Яндекс.Календаре; после /calendar_sync План обновится.",
+        : `Что изменить в «${event.summary}»? Напиши новое название и/или время одним сообщением.`,
+    );
+  });
+
+  bot.callbackQuery(/^external:recurring_info:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      "Это повторяющаяся серия. Сейчас можно удалить всю серию или скрыть её в JARVIS. Изменение отдельного повтора пока не поддерживается.",
     );
   });
 

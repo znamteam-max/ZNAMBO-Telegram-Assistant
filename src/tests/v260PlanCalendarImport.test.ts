@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   entityListKeyboard,
@@ -8,7 +8,10 @@ import {
   navigationKeyboard,
 } from "@/bot/keyboards";
 import type { PlannerItem } from "@/db/schema";
-import { parseCalendarQueryResponse } from "@/integrations/yandexCalendar";
+import {
+  parseCalendarQueryResponse,
+  updateYandexCalendarObject,
+} from "@/integrations/yandexCalendar";
 import { resetEnvCacheForTests } from "@/lib/env";
 import { parseItemEditMutation } from "@/services/itemEditMutations";
 import { parseRussianDateTime, parseRussianTimeRange } from "@/services/russianDateTime";
@@ -102,6 +105,9 @@ describe("V2.6.0 Plan UI and editing", () => {
 describe("V2.6.0 Yandex inbound calendar parsing", () => {
   afterEach(() => {
     delete process.env.YANDEX_CALDAV_URL;
+    delete process.env.YANDEX_CALDAV_USERNAME;
+    delete process.env.YANDEX_CALDAV_APP_PASSWORD;
+    vi.unstubAllGlobals();
     resetEnvCacheForTests();
   });
 
@@ -142,6 +148,40 @@ END:VCALENDAR
       }),
     );
     expect(new Set(events.map((event) => event.recurrenceId)).size).toBe(3);
+  });
+
+  it("updates a non-recurring external event at the same object URL", async () => {
+    process.env.YANDEX_CALDAV_USERNAME = "calendar-user";
+    process.env.YANDEX_CALDAV_APP_PASSWORD = "calendar-password";
+    resetEnvCacheForTests();
+    const objectUrl = "https://caldav.example.test/calendar/external.ics";
+    const calls: Array<{ url: string; method: string; ifMatch?: string }> = [];
+    let body = "";
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({
+        url,
+        method: String(init?.method),
+        ifMatch: (init?.headers as Record<string, string> | undefined)?.["if-match"],
+      });
+      if (init?.method === "PUT") {
+        body = String(init.body);
+        return new Response(null, { status: 204 });
+      }
+      return new Response(body, { status: 200 });
+    }));
+
+    await updateYandexCalendarObject({
+      calendarObjectUrl: objectUrl,
+      uid: "external-event",
+      etag: "\"etag-1\"",
+      summary: "Updated event",
+      startAt: new Date("2026-06-15T09:00:00.000Z"),
+      endAt: new Date("2026-06-15T10:00:00.000Z"),
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([objectUrl, objectUrl]);
+    expect(calls.map((call) => call.method)).toEqual(["PUT", "GET"]);
+    expect(calls[0].ifMatch).toBe("\"etag-1\"");
   });
 });
 
