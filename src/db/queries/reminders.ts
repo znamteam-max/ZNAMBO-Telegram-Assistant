@@ -196,6 +196,23 @@ export async function cancelItemReminderChains(userId: string, plannerItemIds: s
     );
 }
 
+export async function cancelPendingRemindersForPolicy(params: {
+  userId: string;
+  policyId: string;
+  from?: Date;
+}) {
+  const conditions = [
+    eq(reminders.userId, params.userId),
+    eq(reminders.policyId, params.policyId),
+    inArray(reminders.status, ["pending", "claimed"]),
+  ];
+  if (params.from) conditions.push(gte(reminders.scheduledAt, params.from));
+  await getDb()
+    .update(reminders)
+    .set({ status: "cancelled", updatedAt: new Date() })
+    .where(and(...conditions));
+}
+
 export async function cancelLegacyRemindersWithoutPolicy(userId: string, plannerItemIds: string[]) {
   if (!plannerItemIds.length) return;
   await getDb()

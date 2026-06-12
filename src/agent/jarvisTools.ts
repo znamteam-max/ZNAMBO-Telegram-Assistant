@@ -10,10 +10,16 @@ import {
   listVisibleActivePlanItems,
   listYesterdayCarryCandidates,
   markPlannerItemCompleted,
+  restorePlannerItemSnapshot,
   restorePlannerItemStatus,
   updatePlannerItemSchedule,
 } from "@/db/queries/items";
-import { cancelItemReminders, restoreReminderState } from "@/db/queries/reminders";
+import {
+  cancelItemReminders,
+  cancelPendingRemindersForPolicy,
+  restoreReminderState,
+} from "@/db/queries/reminders";
+import { updateReminderPolicy } from "@/db/queries/reminderPolicies";
 import { listItemsByIds, type TaskViewScope } from "@/db/queries/taskViewStates";
 import { getAgentActionById, updateAgentAction } from "@/db/queries/agentActions";
 import type { PlannerItem, TaskViewState } from "@/db/schema";
@@ -600,14 +606,45 @@ export async function undoLastActionTool(params: ToolParams): Promise<JarvisTool
   const action = await loadLatestUndoableAgentAction(params.userId);
   const undoItems = (action?.undoPayload?.items ?? []) as Array<{
     id?: string;
+    kind?: string;
     status?: string;
+    title?: string;
+    description?: string | null;
+    location?: string | null;
+    timezone?: string;
+    startAt?: string | null;
+    endAt?: string | null;
+    dueAt?: string | null;
     completedAt?: string | null;
+    cancelledAt?: string | null;
+    archivedAt?: string | null;
+    category?: string | null;
+    visibility?: string | null;
+    priority?: number;
+    metadata?: Record<string, unknown>;
   }>;
   const undoReminders = (action?.undoPayload?.reminders ?? []) as Array<{
     id?: string;
     status?: string;
     scheduledAt?: string;
   }>;
+  const undoPolicies = (action?.undoPayload?.reminderPolicies ?? []) as Array<{
+    id?: string;
+    title?: string;
+    category?: string;
+    policyType?: string;
+    status?: string;
+    startsAt?: string | null;
+    endsAt?: string | null;
+    nextFireAt?: string | null;
+    recurrenceRule?: string | null;
+    intervalMinutes?: number | null;
+    requireAck?: boolean;
+    catchUpMode?: string;
+    onWindowEnd?: string;
+    metadata?: Record<string, unknown>;
+  }>;
+  const createdPolicyIds = (action?.undoPayload?.createdPolicyIds ?? []) as string[];
 
   if (!action || !undoItems.length) {
     const restoredPolicy = await undoLastReminderPolicyEdit(params.userId);
@@ -629,12 +666,34 @@ export async function undoLastActionTool(params: ToolParams): Promise<JarvisTool
   const restored: PlannerItem[] = [];
   for (const item of undoItems) {
     if (!item.id || !item.status) continue;
-    const restoredItem = await restorePlannerItemStatus({
-      userId: params.userId,
-      itemId: item.id,
-      status: item.status,
-      completedAt: item.completedAt ? new Date(item.completedAt) : null,
-    });
+    const restoredItem =
+      item.title && item.kind && item.timezone
+        ? await restorePlannerItemSnapshot({
+            userId: params.userId,
+            itemId: item.id,
+            kind: item.kind,
+            status: item.status,
+            title: item.title,
+            description: item.description,
+            location: item.location,
+            timezone: item.timezone,
+            startAt: parseUndoDate(item.startAt),
+            endAt: parseUndoDate(item.endAt),
+            dueAt: parseUndoDate(item.dueAt),
+            completedAt: parseUndoDate(item.completedAt),
+            cancelledAt: parseUndoDate(item.cancelledAt),
+            archivedAt: parseUndoDate(item.archivedAt),
+            category: item.category,
+            visibility: item.visibility,
+            priority: item.priority,
+            metadata: item.metadata,
+          })
+        : await restorePlannerItemStatus({
+            userId: params.userId,
+            itemId: item.id,
+            status: item.status,
+            completedAt: item.completedAt ? new Date(item.completedAt) : null,
+          });
     if (restoredItem) restored.push(restoredItem);
   }
   for (const reminder of undoReminders) {
@@ -647,6 +706,37 @@ export async function undoLastActionTool(params: ToolParams): Promise<JarvisTool
       status: reminder.status,
       scheduledAt,
     });
+  }
+  for (const policy of undoPolicies) {
+    if (!policy.id) continue;
+    await updateReminderPolicy({
+      userId: params.userId,
+      policyId: policy.id,
+      status: policy.status,
+      title: policy.title,
+      category: policy.category,
+      policyType: policy.policyType,
+      startsAt: parseUndoDate(policy.startsAt),
+      endsAt: parseUndoDate(policy.endsAt),
+      nextFireAt: parseUndoDate(policy.nextFireAt),
+      recurrenceRule: policy.recurrenceRule,
+      intervalMinutes: policy.intervalMinutes,
+      requireAck: policy.requireAck,
+      catchUpMode: policy.catchUpMode,
+      onWindowEnd: policy.onWindowEnd,
+      metadata: policy.metadata,
+    });
+  }
+  for (const policyId of createdPolicyIds) {
+    if (typeof policyId !== "string") continue;
+    await updateReminderPolicy({
+      userId: params.userId,
+      policyId,
+      status: "cancelled",
+      nextFireAt: null,
+      metadata: { cancelledByUndo: true },
+    });
+    await cancelPendingRemindersForPolicy({ userId: params.userId, policyId });
   }
   await updateAgentAction({
     userId: params.userId,
@@ -671,10 +761,18 @@ export async function undoLastActionTool(params: ToolParams): Promise<JarvisTool
     reply: [
       `Откатил последнее действие: ${action.actionType}.`,
       ...restored.map((item) => `- ${item.title}`),
-      "Напоминания, которые уже были отменены при удалении, нужно будет поставить заново, если они еще нужны.",
+      action.actionType === "item_edit_apply"
+        ? "Вернул предыдущие поля записи и связанных правил напоминаний."
+        : "Напоминания, которые уже были отменены при удалении, нужно будет поставить заново, если они еще нужны.",
     ].join("\n"),
     affectedItemIds: restored.map((item) => item.id),
   };
+}
+
+function parseUndoDate(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 export function parseDisplayIndexSelection(text: string): number[] {

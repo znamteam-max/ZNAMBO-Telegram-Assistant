@@ -9,15 +9,43 @@ Last updated: 2026-06-12
 ## Current Production
 
 ```text
-Application version: 2.5.4
+Application version: 2.5.4.1
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 8fd00ad51014977fb0e7ac346b1b08e7519d33ef
+Validated application deployment commit: pending V2.5.4.1 rollout
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
 Reconciler: enabled
 Runner lock: enabled
 Production scheduler: cron-job.org
+```
+
+## Latest Deployment - V2.5.4.1
+
+V2.5.4.1 fixes item-card edit context. The bot no longer treats a natural-language reply to a
+specific opened card as a global numbered-list operation.
+
+Implemented:
+
+- `manage:edit` and `manage:reschedule` create active item edit sessions in `assistant.agent_actions`.
+- Natural-language replies inside an active edit session run before Jarvis hard-management routing.
+- Compound item edits support title rename, date/time move, event-like kind inference, hourly
+  `nag_until_ack` reminders until done, preview confirmation, calendar best-effort sync, dashboard
+  refresh, conflict hints, and Undo.
+- Russian date parsing handles Monday/Tuesday forms, explicit `15.06`, `10.20`, and past same-day
+  confirmation.
+- Slash commands clear stale edit sessions so `/dashboard` and `/plan` render the requested view.
+- The dashboard moves active same-day past items out of upcoming Today and into unresolved.
+
+## V2.5.4.1 Production Acceptance
+
+```text
+Production URL: https://znambo-telegram-assistant.vercel.app
+Validated runtime commit: pending GitHub/Vercel rollout
+Local tests: 47 files, 166 tests passed
+Lint: passed
+TypeScript: passed
+Build: passed
 ```
 
 ## Latest Deployment - V2.5.4

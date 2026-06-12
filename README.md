@@ -1,6 +1,6 @@
 # Personal Telegram Daily Assistant
 
-Current application version: `2.5.4`.
+Current application version: `2.5.4.1`.
 
 Canonical cross-chat handoff after each deployment: [`ZNAMBO_PROJECT_HANDOFF.md`](./ZNAMBO_PROJECT_HANDOFF.md).
 

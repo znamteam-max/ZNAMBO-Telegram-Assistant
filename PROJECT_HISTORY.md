@@ -1,5 +1,30 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## Update 2026-06-12 - V2.5.4.1 Item Card Edit Sessions
+
+- Fixed the production bug where a reply to an opened item card edit was intercepted by the global
+  `reschedule_by_indices` guard and asked for a list number.
+- Added active item edit sessions stored in `assistant.agent_actions` without a new migration.
+- `manage:edit` and `manage:reschedule` now bind the next natural-language reply to the selected
+  planner item.
+- Added compound item mutation support for title rename, date/time move, event-like kind inference,
+  `nag_until_ack` hourly reminders, preview confirmation, calendar best-effort sync, dashboard
+  refresh, conflict hints, and Undo.
+- Fixed Russian date parsing for `на понедельник 8 утра`, `в понедельник в 8`,
+  `во вторник к 10.20`, `15.06 на 8 утра`, and past same-day confirmation.
+- Slash commands clear stale edit sessions so `/dashboard`, `/plan`, and other commands render
+  their requested view instead of continuing an old card edit.
+- The live dashboard now moves active same-day past items out of upcoming `Сегодня` and into the
+  unresolved section.
+- Local validation: 47 test files and 166 tests passed; lint and build passed.
+- No secrets were written to project history.
+
+Production rollout:
+
+```text
+pending GitHub/Vercel rollout
+```
+
 ## Update 2026-06-12 - V2.5.4 Unified Plan UX
 
 - Replaced the today-only dashboard with one canonical Plan showing today, tomorrow, soon,

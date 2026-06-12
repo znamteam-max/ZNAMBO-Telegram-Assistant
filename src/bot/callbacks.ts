@@ -78,6 +78,7 @@ import { renderEntityCard } from "@/telegram/entityCards";
 import type { EntityRefType } from "@/domain/entityRefs";
 import { retryCalendarItem } from "@/services/calendarSyncRetry";
 import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
+import { startItemEditSession } from "@/services/itemEditSessions";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -98,6 +99,7 @@ import {
   undoActionKeyboard,
 } from "./keyboards";
 import { formatCommittedPlanSummary, formatCreatedItem } from "./formatters";
+import { cancelItemEditPreview, confirmItemEditPreview } from "./itemEditFlow";
 
 export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery("noop", async (ctx) => {
@@ -436,21 +438,51 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   });
 
   bot.callbackQuery(/^manage:reschedule:(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
+    const owner = requireOwner(ctx);
+    const item = await getPlannerItemById(owner.id, ctx.match[1]);
+    await ctx.answerCallbackQuery(item ? "Жду новое время" : "Не найдено");
+    if (!item) {
+      await ctx.reply("Не нашёл эту запись.");
+      return;
+    }
+    await startItemEditSession({
+      userId: owner.id,
+      itemId: item.id,
+      mode: "time",
+      sourceMessageId: ctx.dbMessageId,
+      sourceTelegramMessageId: ctx.callbackQuery?.message?.message_id ?? null,
+    });
     await ctx.reply(
-      "Напиши новое время для этой задачи одним сообщением. Например: перенеси на завтра 11:30.",
+      `Меняю время у «${item.title}». Напиши новое время одним сообщением: «на понедельник в 8 утра» или «15.06 на 8 утра».`,
     );
   });
 
   bot.callbackQuery(/^manage:edit:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const item = await getPlannerItemById(owner.id, ctx.match[1]);
-    await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery(item ? "Жду правку" : "Не найдено");
+    if (item) {
+      await startItemEditSession({
+        userId: owner.id,
+        itemId: item.id,
+        mode: "general",
+        sourceMessageId: ctx.dbMessageId,
+        sourceTelegramMessageId: ctx.callbackQuery?.message?.message_id ?? null,
+      });
+    }
     await ctx.reply(
       item
-        ? `Что изменить в «${item.title}»? Напиши одним сообщением, например: «перенеси на 15:00 и напомни за 30 минут».`
+        ? `Что изменить в «${item.title}»? Напиши одним сообщением, например: «Изменить на "Новый текст", поставь на понедельник в 8 утра, напоминай раз в час, пока не сделаю».`
         : "Не нашёл эту запись.",
     );
+  });
+
+  bot.callbackQuery(/^item_edit:confirm:(.+)$/, async (ctx) => {
+    await confirmItemEditPreview(ctx, ctx.match[1]);
+  });
+
+  bot.callbackQuery(/^item_edit:cancel:(.+)$/, async (ctx) => {
+    await cancelItemEditPreview(ctx, ctx.match[1]);
   });
 
   bot.callbackQuery(/^manage:delete:(.+)$/, async (ctx) => {

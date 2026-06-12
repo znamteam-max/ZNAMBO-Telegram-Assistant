@@ -128,6 +128,14 @@ export function safeMutationPreviewKeyboard(actionId: string) {
     .text("Открыть список", "tasks:open");
 }
 
+export function itemEditPreviewKeyboard(actionId: string) {
+  return new InlineKeyboard()
+    .text("Применить", `item_edit:confirm:${actionId}`)
+    .text("Отмена", `item_edit:cancel:${actionId}`)
+    .row()
+    .text("Открыть план", "dashboard:refresh");
+}
+
 export function conflictKeyboard(firstItemId: string, secondItemId: string) {
   return new InlineKeyboard()
     .text("Оставить оба", "conflict:keep")

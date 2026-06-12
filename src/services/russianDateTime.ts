@@ -1,0 +1,230 @@
+import { DateTime } from "luxon";
+
+const RU_CHARS = "\\u0430-\\u044f\\u0451";
+
+const WORDS = {
+  today: "\u0441\u0435\u0433\u043e\u0434\u043d\u044f",
+  tomorrow: "\u0437\u0430\u0432\u0442\u0440\u0430",
+  afterTomorrow: "\u043f\u043e\u0441\u043b\u0435\u0437\u0430\u0432\u0442\u0440\u0430",
+} as const;
+
+const WEEKDAYS: Array<{ aliases: string[]; weekday: number }> = [
+  {
+    aliases: [
+      "\u043f\u043e\u043d\u0435\u0434\u0435\u043b\u044c\u043d\u0438\u043a",
+      "\u043f\u043e\u043d\u0435\u0434\u0435\u043b\u044c\u043d\u0438\u043a\u0443",
+      "\u043f\u043d",
+    ],
+    weekday: 1,
+  },
+  {
+    aliases: [
+      "\u0432\u0442\u043e\u0440\u043d\u0438\u043a",
+      "\u0432\u0442\u043e\u0440\u043d\u0438\u043a\u0443",
+      "\u0432\u0442",
+    ],
+    weekday: 2,
+  },
+  {
+    aliases: [
+      "\u0441\u0440\u0435\u0434\u0430",
+      "\u0441\u0440\u0435\u0434\u0443",
+      "\u0441\u0440",
+    ],
+    weekday: 3,
+  },
+  {
+    aliases: [
+      "\u0447\u0435\u0442\u0432\u0435\u0440\u0433",
+      "\u0447\u0435\u0442\u0432\u0435\u0440\u0433\u0443",
+      "\u0447\u0442",
+    ],
+    weekday: 4,
+  },
+  {
+    aliases: [
+      "\u043f\u044f\u0442\u043d\u0438\u0446\u0430",
+      "\u043f\u044f\u0442\u043d\u0438\u0446\u0443",
+      "\u043f\u0442",
+    ],
+    weekday: 5,
+  },
+  {
+    aliases: [
+      "\u0441\u0443\u0431\u0431\u043e\u0442\u0430",
+      "\u0441\u0443\u0431\u0431\u043e\u0442\u0443",
+      "\u0441\u0431",
+    ],
+    weekday: 6,
+  },
+  {
+    aliases: [
+      "\u0432\u043e\u0441\u043a\u0440\u0435\u0441\u0435\u043d\u044c\u0435",
+      "\u0432\u043e\u0441\u043a\u0440\u0435\u0441\u0435\u043d\u0438\u044e",
+      "\u0432\u0441",
+    ],
+    weekday: 7,
+  },
+];
+
+export type RussianDateTimeParseResult = {
+  local: DateTime;
+  source: "explicit_date" | "weekday" | "relative_day" | "base_date" | "time_only";
+  explicitToday: boolean;
+  pastConfirmationRequired: boolean;
+  usedNextWeek: boolean;
+  warnings: string[];
+};
+
+export function parseRussianDateTime(params: {
+  text: string;
+  timezone: string;
+  now?: Date;
+  baseDate?: Date | null;
+}): RussianDateTimeParseResult | null {
+  const timezone = params.timezone;
+  const nowLocal = DateTime.fromJSDate(params.now ?? new Date(), { zone: "utc" }).setZone(timezone);
+  const text = normalizeRussian(params.text);
+  const textWithoutQuotes = stripQuotedText(text);
+  const explicitDate = parseExplicitDate(textWithoutQuotes, nowLocal);
+  const relative = parseRelativeDay(textWithoutQuotes, nowLocal);
+  const weekday = parseWeekday(textWithoutQuotes);
+  const time = parseClockTime(textWithoutQuotes);
+  const warnings: string[] = [];
+
+  if (!explicitDate && !relative && !weekday && !time) return null;
+  if ((explicitDate || relative || weekday) && !time) warnings.push("time_missing_default_08_00");
+
+  const clock = time ?? { hour: 8, minute: 0, source: "default" as const };
+  let date: DateTime;
+  let source: RussianDateTimeParseResult["source"];
+  let explicitToday = false;
+  let usedNextWeek = false;
+
+  if (explicitDate) {
+    date = explicitDate;
+    source = "explicit_date";
+  } else if (relative) {
+    date = relative.date;
+    source = "relative_day";
+    explicitToday = relative.kind === "today";
+  } else if (weekday) {
+    const diffRaw = weekday.weekday - nowLocal.weekday;
+    let daysAhead = diffRaw < 0 ? diffRaw + 7 : diffRaw;
+    const candidate = nowLocal.plus({ days: daysAhead }).set({
+      hour: clock.hour,
+      minute: clock.minute,
+      second: 0,
+      millisecond: 0,
+    });
+    if (daysAhead === 0 && candidate <= nowLocal && !containsWord(textWithoutQuotes, WORDS.today)) {
+      daysAhead = 7;
+      usedNextWeek = true;
+    }
+    date = nowLocal.plus({ days: daysAhead });
+    source = "weekday";
+  } else if (params.baseDate) {
+    date = DateTime.fromJSDate(params.baseDate, { zone: "utc" }).setZone(timezone);
+    source = "base_date";
+  } else {
+    date = nowLocal;
+    source = "time_only";
+  }
+
+  const local = date.set({
+    hour: clock.hour,
+    minute: clock.minute,
+    second: 0,
+    millisecond: 0,
+  });
+  const explicitTodayInText = explicitToday || containsWord(textWithoutQuotes, WORDS.today);
+
+  return {
+    local,
+    source,
+    explicitToday: explicitTodayInText,
+    pastConfirmationRequired: explicitTodayInText && local <= nowLocal,
+    usedNextWeek,
+    warnings,
+  };
+}
+
+function normalizeRussian(text: string) {
+  return text.toLowerCase().replace(/\u0451/g, "\u0435").replace(/\s+/g, " ").trim();
+}
+
+function stripQuotedText(text: string) {
+  return text.replace(/["\u00ab][^"\u00bb]+["\u00bb]/g, " ");
+}
+
+function parseExplicitDate(text: string, nowLocal: DateTime) {
+  const match = text.match(/\b(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?\b/);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const rawYear = match[3] ? Number(match[3]) : nowLocal.year;
+  const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+  let date = DateTime.fromObject({ year, month, day }, { zone: nowLocal.zoneName ?? "utc" });
+  if (!date.isValid) return null;
+  if (!match[3] && date.endOf("day") < nowLocal) date = date.plus({ years: 1 });
+  return date;
+}
+
+function parseRelativeDay(text: string, nowLocal: DateTime) {
+  if (containsWord(text, WORDS.afterTomorrow)) {
+    return { kind: "after_tomorrow", date: nowLocal.plus({ days: 2 }) };
+  }
+  if (containsWord(text, WORDS.tomorrow)) return { kind: "tomorrow", date: nowLocal.plus({ days: 1 }) };
+  if (containsWord(text, WORDS.today)) return { kind: "today", date: nowLocal };
+  return null;
+}
+
+function parseWeekday(text: string) {
+  for (const entry of WEEKDAYS) {
+    if (entry.aliases.some((alias) => containsWord(text, alias))) return { weekday: entry.weekday };
+  }
+  return null;
+}
+
+function parseClockTime(text: string) {
+  const sanitized = text.replace(
+    /\b(\d{1,2})[./-](\d{1,2})(?:[./-]\d{2,4})?\b/g,
+    (match, _day: string, month: string) => {
+      const monthNumber = Number(month);
+      return monthNumber >= 1 && monthNumber <= 12 ? " " : match;
+    },
+  );
+  const withMinutes = sanitized.match(
+    /(?:^|[^\d])(?:\u0432|\u0432\u043e|\u043a|\u043d\u0430|\u0441)?\s*(\d{1,2})[.:](\d{2})(?=$|[^\d])/i,
+  );
+  if (withMinutes) return normalizeClock(Number(withMinutes[1]), Number(withMinutes[2]), sanitized);
+
+  const dayPart = sanitized.match(
+    /(?:^|[^\d])(\d{1,2})\s*(?:\u0447\u0430\u0441(?:\u0430|\u043e\u0432)?\s*)?(\u0443\u0442\u0440\u0430|\u0432\u0435\u0447\u0435\u0440\u0430|\u0434\u043d\u044f|\u043d\u043e\u0447\u0438)(?=$|[^\u0430-\u044fa-z])/i,
+  );
+  if (dayPart) return normalizeClock(Number(dayPart[1]), 0, dayPart[2]);
+
+  const bare = sanitized.match(
+    /(?:^|[^\d])(?:\u0432|\u0432\u043e|\u043a|\u043d\u0430|\u0441)\s+(\d{1,2})(?!\s*[.:]\d|\d)(?=$|[^\d])/i,
+  );
+  if (bare) return normalizeClock(Number(bare[1]), 0, sanitized);
+  return null;
+}
+
+function normalizeClock(hourInput: number, minuteInput: number, context: string) {
+  if (!Number.isFinite(hourInput) || !Number.isFinite(minuteInput)) return null;
+  let hour = Math.max(0, Math.min(23, hourInput));
+  const minute = Math.max(0, Math.min(59, minuteInput));
+  if (/(\u0432\u0435\u0447\u0435\u0440\u0430|\u0434\u043d\u044f)/i.test(context) && hour < 12) hour += 12;
+  if (/\u043d\u043e\u0447\u0438/i.test(context) && hour === 12) hour = 0;
+  if (/\u0443\u0442\u0440\u0430/i.test(context) && hour === 12) hour = 0;
+  return { hour, minute, source: "explicit" as const };
+}
+
+function containsWord(text: string, word: string) {
+  return new RegExp(`(^|[^${RU_CHARS}a-z])${escapeRegex(word)}($|[^${RU_CHARS}a-z])`, "i").test(text);
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

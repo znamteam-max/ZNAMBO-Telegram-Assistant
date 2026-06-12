@@ -386,6 +386,92 @@ export async function updatePlannerItemSchedule(params: {
   return item ?? null;
 }
 
+export async function updatePlannerItemDetails(params: {
+  userId: string;
+  itemId: string;
+  kind?: string;
+  title?: string;
+  timezone?: string;
+  startAt?: Date | null;
+  endAt?: Date | null;
+  dueAt?: Date | null;
+  category?: string | null;
+  visibility?: string | null;
+  priority?: number;
+  metadata?: Record<string, unknown>;
+}): Promise<PlannerItem | null> {
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({
+      ...(params.kind !== undefined ? { kind: params.kind } : {}),
+      ...(params.title !== undefined ? { title: params.title } : {}),
+      ...(params.timezone !== undefined ? { timezone: params.timezone } : {}),
+      ...(params.startAt !== undefined ? { startAt: params.startAt } : {}),
+      ...(params.endAt !== undefined ? { endAt: params.endAt } : {}),
+      ...(params.dueAt !== undefined ? { dueAt: params.dueAt } : {}),
+      ...(params.category !== undefined ? { category: params.category } : {}),
+      ...(params.visibility !== undefined ? { visibility: params.visibility } : {}),
+      ...(params.priority !== undefined
+        ? { priority: Math.max(1, Math.min(5, params.priority)) }
+        : {}),
+      ...(params.metadata
+        ? {
+            metadata: sql`${plannerItems.metadata} || ${JSON.stringify(params.metadata)}::jsonb`,
+          }
+        : {}),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.id, params.itemId)))
+    .returning();
+  return item ?? null;
+}
+
+export async function restorePlannerItemSnapshot(params: {
+  userId: string;
+  itemId: string;
+  kind: string;
+  status: string;
+  title: string;
+  description?: string | null;
+  location?: string | null;
+  timezone: string;
+  startAt?: Date | null;
+  endAt?: Date | null;
+  dueAt?: Date | null;
+  completedAt?: Date | null;
+  cancelledAt?: Date | null;
+  archivedAt?: Date | null;
+  category?: string | null;
+  visibility?: string | null;
+  priority?: number;
+  metadata?: Record<string, unknown>;
+}): Promise<PlannerItem | null> {
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({
+      kind: params.kind,
+      status: params.status,
+      title: params.title,
+      description: params.description ?? null,
+      location: params.location ?? null,
+      timezone: params.timezone,
+      startAt: params.startAt ?? null,
+      endAt: params.endAt ?? null,
+      dueAt: params.dueAt ?? null,
+      completedAt: params.completedAt ?? null,
+      cancelledAt: params.cancelledAt ?? null,
+      archivedAt: params.archivedAt ?? null,
+      category: params.category ?? null,
+      visibility: params.visibility ?? "active",
+      priority: Math.max(1, Math.min(5, params.priority ?? 3)),
+      metadata: params.metadata ?? {},
+      updatedAt: new Date(),
+    })
+    .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.id, params.itemId)))
+    .returning();
+  return item ?? null;
+}
+
 export async function updatePlannerItemPriority(params: {
   userId: string;
   itemId: string;

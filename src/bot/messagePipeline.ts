@@ -41,10 +41,30 @@ import {
   postCreateTriageKeyboard,
 } from "./keyboards";
 import { replyAndRecord } from "./reply";
+import { handleItemEditTurn } from "./itemEditFlow";
 
 export async function handleIncomingUserMessage(ctx: BotContext, text: string, timezone: string) {
   const owner = requireOwner(ctx);
   const now = new Date();
+  const itemEditHandled = await handleItemEditTurn(ctx, text, timezone);
+  if (itemEditHandled) {
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.decision_trace",
+      entityType: "telegram_message",
+      entityId: ctx.dbMessageId,
+      details: {
+        pipelineUsed: "legacy_v2",
+        preRouterIntent: null,
+        finalIntent: "item_edit_session",
+        fallbackUsed: false,
+        createItemAttempted: false,
+        createItemBlockedByValidator: true,
+        finalAction: "item_edit_session_handled",
+      },
+    });
+    return;
+  }
   const hardIntent = detectHardManagementIntent(text);
   if (hardIntent) {
     try {

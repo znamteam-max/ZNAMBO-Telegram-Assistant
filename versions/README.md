@@ -23,3 +23,4 @@ Version index:
 - `V2.5.3.md` - canonical timeline, production repair and deterministic CalDAV object lifecycle.
 - `V2.5.3.1.md` - resilient normal CalDAV sync and retry queue.
 - `V2.5.4.md` - unified plan UX, safe numbered mutations, triage and conflict detection.
+- `V2.5.4.1.md` - item-card edit sessions, compound edits and Russian date fixes.

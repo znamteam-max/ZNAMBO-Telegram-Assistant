@@ -19,6 +19,7 @@ import { listManageableItems } from "@/db/queries/items";
 import { listItemsByIds } from "@/db/queries/taskViewStates";
 import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
 import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
+import { handleItemEditTurn } from "@/bot/itemEditFlow";
 import {
   campaignCompletionGuardKeyboard,
   conflictKeyboard,
@@ -82,6 +83,14 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
   };
 
   try {
+    const itemEditHandled = await handleItemEditTurn(ctx, text, timezone);
+    if (itemEditHandled) {
+      trace.finalAction = "item_edit_session_handled";
+      trace.toolCallsExecuted = ["item_edit_session"];
+      trace.updatedItemIds = [];
+      return;
+    }
+
     if (isAllowedDeterministicIntent(preRouterIntent?.intent)) {
       const handled = await handleHardManagementIntent({ ctx, text, timezone, now });
       if (!handled) throw new Error("Deterministic management intent was not handled");

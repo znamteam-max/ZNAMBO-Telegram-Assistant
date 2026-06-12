@@ -65,8 +65,17 @@ export async function renderLiveDashboard(params: {
     (row) => row.item && !["history", "hidden"].includes(row.dateBucket),
   );
   const allItems = itemRows.map((row) => row.item!);
+  const isPastActiveItem = (item: PlannerItem) => {
+    const anchor = item.startAt ?? item.dueAt;
+    return Boolean(anchor && anchor < now && item.status === "active");
+  };
+  const pastTodayItems = itemRows
+    .filter((row) => row.dateBucket === "today" && row.item && isPastActiveItem(row.item))
+    .map((row) => row.item!)
+    .slice(0, 5);
+  const pastTodayIds = new Set(pastTodayItems.map((item) => item.id));
   const todayItems = itemRows
-    .filter((row) => row.dateBucket === "today")
+    .filter((row) => row.dateBucket === "today" && row.item && !pastTodayIds.has(row.item.id))
     .map((row) => row.item!)
     .slice(0, 8);
   const tomorrowItems = itemRows
@@ -85,7 +94,9 @@ export async function renderLiveDashboard(params: {
     [...todayItems, ...tomorrowItems, ...soonItems].map((item) => item.id),
   );
   const importantItems = allItems
-    .filter((item) => !scheduledIds.has(item.id) && getBasePriority({ item }) >= 4)
+    .filter(
+      (item) => !scheduledIds.has(item.id) && !pastTodayIds.has(item.id) && getBasePriority({ item }) >= 4,
+    )
     .slice(0, 5);
   const longTermItems = itemRows
     .filter(
@@ -97,10 +108,13 @@ export async function renderLiveDashboard(params: {
     )
     .map((row) => row.item!)
     .slice(0, 5);
-  const unresolvedItems = timeline.byBucket.unresolvedPast
+  const unresolvedItems = [
+    ...pastTodayItems,
+    ...timeline.byBucket.unresolvedPast
     .filter((row) => row.item)
     .map((row) => row.item!)
-    .slice(0, 5);
+    .filter((item) => !pastTodayIds.has(item.id)),
+  ].slice(0, 5);
   const conflicts = detectPlanConflicts(allItems);
   const displayPolicies = timeline.policies;
   const nagging = displayPolicies

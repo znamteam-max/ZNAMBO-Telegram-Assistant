@@ -1,5 +1,37 @@
 # ZNAMBO Telegram Assistant Chat History
 
+## 2026-06-12 - V2.5.4.1 item edit session rollout work
+
+User reported the V2.5.4 production bug where editing an opened orthodontist item card ignored
+the card context and the bot asked for a list number. User also asked to keep one post-deploy file
+with all change information.
+
+Implemented locally:
+
+- active item edit sessions via existing `assistant.agent_actions`;
+- edit/reschedule callbacks that bind the next message to the selected item;
+- item edit flow before Jarvis hard-management routing;
+- compound title/date/reminder mutation preview and apply;
+- hourly `nag_until_ack` reminders from the parsed start time until done;
+- slash-command session clearing;
+- dashboard past-today classification;
+- undo support for item edits and reminder policy snapshots;
+- V2.5.4.1 release documentation.
+
+Validation before deployment:
+
+```text
+npm test -> 47 files, 166 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+Production rollout:
+
+```text
+pending GitHub/Vercel rollout
+```
+
 ## 2026-06-12 - V2.5.4 implementation continued after emergency release
 
 User asked to continue after the emergency release.

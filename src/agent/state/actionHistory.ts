@@ -25,17 +25,19 @@ export async function loadLatestUndoableAgentAction(userId: string) {
   let latestDelete = null;
   let latestCleanup = null;
   let latestReset = null;
+  let latestItemEdit = null;
   try {
     latestDelete = await getLatestAgentAction({ userId, actionType: "delete_by_indices" });
     latestCleanup = await getLatestAgentAction({ userId, actionType: "cleanup_garbage" });
     latestReset = await getLatestAgentAction({ userId, actionType: "reset_active_plan" });
+    latestItemEdit = await getLatestAgentAction({ userId, actionType: "item_edit_apply" });
   } catch (error) {
     logger.warn("Agent action load failed", {
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
-  return [latestDelete, latestCleanup, latestReset]
+  return [latestDelete, latestCleanup, latestReset, latestItemEdit]
     .filter((action) => action?.status === "completed")
     .sort((left, right) => right!.createdAt.getTime() - left!.createdAt.getTime())[0] ?? null;
 }

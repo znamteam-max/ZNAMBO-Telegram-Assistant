@@ -51,8 +51,8 @@ export async function updateAgentAction(params: {
     .update(agentActions)
     .set({
       status: params.status,
-      output: params.output ?? {},
-      undoPayload: params.undoPayload ?? {},
+      ...(params.output !== undefined ? { output: params.output } : {}),
+      ...(params.undoPayload !== undefined ? { undoPayload: params.undoPayload } : {}),
     })
     .where(and(eq(agentActions.userId, params.userId), eq(agentActions.id, params.actionId)))
     .returning();
@@ -70,6 +70,27 @@ export async function getLatestAgentAction(params: {
     .select()
     .from(agentActions)
     .where(and(...conditions))
+    .orderBy(desc(agentActions.createdAt))
+    .limit(1);
+
+  return row ?? null;
+}
+
+export async function getLatestAgentActionByStatus(params: {
+  userId: string;
+  actionType: string;
+  status: string;
+}): Promise<AgentAction | null> {
+  const [row] = await getDb()
+    .select()
+    .from(agentActions)
+    .where(
+      and(
+        eq(agentActions.userId, params.userId),
+        eq(agentActions.actionType, params.actionType),
+        eq(agentActions.status, params.status),
+      ),
+    )
     .orderBy(desc(agentActions.createdAt))
     .limit(1);
 

@@ -99,6 +99,51 @@ describe("live dashboard lifecycle", () => {
     expect(result.text).toContain("Календарь: timeout, повторю автоматически");
   });
 
+  it("moves same-day past active items out of Today and into Unresolved", async () => {
+    mocks.listRecentRangeItems.mockResolvedValue([
+      {
+        id: "past-run",
+        status: "active",
+        kind: "event",
+        title: "Красочный забег",
+        timezone: "Europe/Moscow",
+        startAt: new Date("2026-06-07T07:00:00.000Z"),
+        endAt: new Date("2026-06-07T08:00:00.000Z"),
+        dueAt: null,
+        priority: 3,
+        visibility: "active",
+        metadata: {},
+      },
+      {
+        id: "future-training",
+        status: "active",
+        kind: "training",
+        title: "Тренировка Z2",
+        timezone: "Europe/Moscow",
+        startAt: new Date("2026-06-07T19:00:00.000Z"),
+        endAt: null,
+        dueAt: null,
+        priority: 3,
+        visibility: "active",
+        metadata: {},
+      },
+    ]);
+
+    const result = await renderLiveDashboard({
+      userId: "user-id",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-07T10:00:00.000Z"),
+    });
+
+    const todayStart = result.text.indexOf("Сегодня:");
+    const unresolvedStart = result.text.indexOf("Неразобранное:");
+    expect(todayStart).toBeGreaterThanOrEqual(0);
+    expect(unresolvedStart).toBeGreaterThan(todayStart);
+    expect(result.text.slice(todayStart, unresolvedStart)).not.toContain("Красочный забег");
+    expect(result.text.slice(todayStart, unresolvedStart)).toContain("Тренировка Z2");
+    expect(result.text.slice(unresolvedStart)).toContain("Красочный забег");
+  });
+
   it("retires the previous dashboard and leaves exactly one new active dashboard", async () => {
     const api = {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 11 }),
