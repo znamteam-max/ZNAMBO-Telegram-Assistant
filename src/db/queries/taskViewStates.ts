@@ -5,6 +5,7 @@ import { plannerItems, taskViewStates, type PlannerItem, type TaskViewState } fr
 
 export type TaskViewScope =
   | "current"
+  | "dashboard"
   | "today"
   | "tomorrow"
   | "week"

@@ -452,6 +452,8 @@ export async function restorePlannerItemStatus(params: {
     .set({
       status: params.status,
       completedAt: params.completedAt ?? null,
+      cancelledAt: null,
+      archivedAt: null,
       updatedAt: new Date(),
     })
     .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.id, params.itemId)))

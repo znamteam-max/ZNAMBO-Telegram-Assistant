@@ -1,7 +1,13 @@
 import type { Bot, InlineKeyboard } from "grammy";
 import { DateTime } from "luxon";
 
-import { renderScheduleViewTool, undoLastActionTool } from "@/agent/jarvisTools";
+import {
+  cancelNumberedMutationTool,
+  confirmNumberedMutationTool,
+  renderScheduleViewTool,
+  renderTaskViewTool,
+  undoLastActionTool,
+} from "@/agent/jarvisTools";
 import {
   getItemCalendarSyncState,
   markGoogleCalendarSync,
@@ -14,6 +20,7 @@ import { confirmPendingActionInDb, cancelPendingAction } from "@/db/queries/pend
 import {
   cancelPlannerItem,
   getPlannerItemById,
+  listManageableItems,
   markPlannerItemCompleted,
   setPlannerItemManualPriority,
 } from "@/db/queries/items";
@@ -70,11 +77,11 @@ import {
 import { renderEntityCard } from "@/telegram/entityCards";
 import type { EntityRefType } from "@/domain/entityRefs";
 import { retryCalendarItem } from "@/services/calendarSyncRetry";
+import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
 import {
-  afterEventKeyboard,
   beforeEventReminderMenuKeyboard,
   intervalReminderMenuKeyboard,
   campaignCompletionGuardKeyboard,
@@ -83,7 +90,10 @@ import {
   oneTimeReminderMenuKeyboard,
   policyFrequencyKeyboard,
   priorityEditorKeyboard,
+  postCreateTriageKeyboard,
+  conflictKeyboard,
   reminderPolicyMenuKeyboard,
+  repeatPolicyDeleteKeyboard,
   scheduleReminderMenuKeyboard,
   undoActionKeyboard,
 } from "./keyboards";
@@ -168,6 +178,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   });
 
   bot.callbackQuery(/^pa:ok:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
     const pendingActionId = ctx.match[1];
     await ctx.answerCallbackQuery("Сохраняю");
     let result;
@@ -189,8 +200,18 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       const syncLine = formatCalendarSyncFeedback(calendarResults);
 
       await ctx.reply([formatCreatedItem(result.item, result.reminders.length), syncLine].filter(Boolean).join("\n\n"), {
-        reply_markup: result.item.kind === "event" ? afterEventKeyboard(result.item.id) : undefined,
+        reply_markup: postCreateTriageKeyboard([result.item]),
       });
+      const allItems = await listManageableItems(owner.id, 300);
+      const conflict = detectPlanConflicts(allItems).find(
+        (entry) => entry.first.id === result.item.id || entry.second.id === result.item.id,
+      );
+      if (conflict) {
+        await ctx.reply(
+          ["⚠️ Накладка", "", formatConflictLine(conflict, owner.timezone), "", "Что делаем?"].join("\n"),
+          { reply_markup: conflictKeyboard(conflict.first.id, conflict.second.id) },
+        );
+      }
       await refreshAfterCallback(ctx);
       return;
     }
@@ -237,7 +258,21 @@ export function registerCallbacks(bot: Bot<BotContext>) {
         ]
           .filter(Boolean)
           .join("\n\n"),
+        result.items.length
+          ? { reply_markup: postCreateTriageKeyboard(result.items) }
+          : undefined,
       );
+      const allItems = await listManageableItems(owner.id, 300);
+      const createdIds = new Set(result.items.map((item) => item.id));
+      const conflict = detectPlanConflicts(allItems).find(
+        (entry) => createdIds.has(entry.first.id) || createdIds.has(entry.second.id),
+      );
+      if (conflict) {
+        await ctx.reply(
+          ["⚠️ Накладка", "", formatConflictLine(conflict, owner.timezone), "", "Что делаем?"].join("\n"),
+          { reply_markup: conflictKeyboard(conflict.first.id, conflict.second.id) },
+        );
+      }
       await refreshAfterCallback(ctx);
       return;
     }
@@ -325,6 +360,37 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       sourceMessageId: ctx.dbMessageId,
     });
     await ctx.reply(result.reply);
+    if (result.affectedItemIds.length) await refreshAfterCallback(ctx);
+  });
+
+  bot.callbackQuery(/^safe_mutation:(confirm|cancel):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = ctx.match[1];
+    const result =
+      mode === "confirm"
+        ? await confirmNumberedMutationTool({
+            userId: owner.id,
+            timezone: owner.timezone,
+            sourceMessageId: ctx.dbMessageId,
+            actionId: ctx.match[2],
+          })
+        : await cancelNumberedMutationTool({
+            userId: owner.id,
+            timezone: owner.timezone,
+            sourceMessageId: ctx.dbMessageId,
+            actionId: ctx.match[2],
+          });
+    await ctx.answerCallbackQuery(mode === "confirm" ? "Применяю" : "Отменено");
+    await ctx.reply(result.reply, result.replyMarkup ? { reply_markup: result.replyMarkup } : undefined);
+    if (mode === "confirm") {
+      const tasks = await renderTaskViewTool({
+        userId: owner.id,
+        timezone: owner.timezone,
+        sourceMessageId: ctx.dbMessageId,
+      });
+      await ctx.reply(tasks.reply, { reply_markup: tasks.replyMarkup });
+      await refreshAfterCallback(ctx);
+    }
   });
 
   bot.callbackQuery(/^pa:no:(.+)$/, async (ctx) => {
@@ -389,6 +455,20 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^manage:delete:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
+    const policies = await listReminderPoliciesForItem(owner.id, ctx.match[1]);
+    const repeatPolicy = policies.find(
+      (policy) =>
+        policy.status === "active" &&
+        ["recurring", "long_term", "interval_window", "nag_until_ack"].includes(policy.policyType),
+    );
+    if (repeatPolicy) {
+      await ctx.answerCallbackQuery("Нужно выбрать");
+      await ctx.reply(
+        "Удалить только правило напоминания или всю задачу вместе с правилом?",
+        { reply_markup: repeatPolicyDeleteKeyboard(repeatPolicy.id, ctx.match[1]) },
+      );
+      return;
+    }
     const item = await cancelPlannerItem(owner.id, ctx.match[1]);
     if (item) await cancelItemReminders(owner.id, item.id);
     if (item) await stopPoliciesForItem(owner.id, item.id);
@@ -404,6 +484,101 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await ctx.answerCallbackQuery(item ? "Удалено" : "Не найдено");
     if (!item) await ctx.reply("Не нашёл эту запись.");
     await refreshAfterCallback(ctx, item?.id);
+  });
+
+  bot.callbackQuery(/^policy:cancel_rule:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const updated = await editReminderPolicy({
+      userId: owner.id,
+      policyId: ctx.match[1],
+      status: "cancelled",
+    });
+    await ctx.answerCallbackQuery(updated ? "Правило удалено" : "Не найдено");
+    await refreshAfterCallback(ctx, updated?.itemId);
+  });
+
+  bot.callbackQuery(/^policy:cancel_all:(.+):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const policy = await editReminderPolicy({
+      userId: owner.id,
+      policyId: ctx.match[1],
+      status: "cancelled",
+    });
+    const item = await cancelPlannerItem(owner.id, ctx.match[2]);
+    if (item) await cancelItemReminders(owner.id, item.id);
+    if (item) await stopPoliciesForItem(owner.id, item.id);
+    await ctx.answerCallbackQuery(policy || item ? "Удалено" : "Не найдено");
+    await refreshAfterCallback(ctx, item?.id);
+  });
+
+  bot.callbackQuery("tasks:open", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const result = await renderTaskViewTool({
+      userId: owner.id,
+      timezone: owner.timezone,
+      sourceMessageId: ctx.dbMessageId,
+    });
+    await ctx.answerCallbackQuery();
+    await ctx.reply(result.reply, { reply_markup: result.replyMarkup });
+  });
+
+  bot.callbackQuery("tasks:delete_help", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Напиши номера из текущего списка, например: «удалить 5, 6, 7». Сначала покажу preview.");
+  });
+
+  bot.callbackQuery("tasks:done_help", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Напиши номера из текущего списка, например: «готово 2 и 4».");
+  });
+
+  bot.callbackQuery("tasks:review_old", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Открываю старое и неразобранное. Используй /review или /history для подробного разбора.");
+  });
+
+  bot.callbackQuery("tasks:archive", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Архив и завершённые записи доступны в /history.");
+  });
+
+  bot.callbackQuery("reminders:add", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Напиши правило одним сообщением: что напоминать, когда и нужно ли повторять до подтверждения.");
+  });
+
+  bot.callbackQuery("triage:done", async (ctx) => {
+    await ctx.answerCallbackQuery("Оставил как есть");
+  });
+
+  bot.callbackQuery(/^triage:(priority|reminders):(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (ctx.match[1] === "priority") {
+      await ctx.reply("Открой нужный пункт по номеру и выбери «Важность».");
+      return;
+    }
+    await ctx.reply("Открой нужный пункт по номеру и выбери «Добавить напоминание».");
+  });
+
+  bot.callbackQuery("conflict:keep", async (ctx) => {
+    await ctx.answerCallbackQuery("Оставил оба");
+  });
+
+  bot.callbackQuery(/^conflict:open:(.+):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const cards = await Promise.all(
+      [ctx.match[1], ctx.match[2]].map((id) =>
+        renderEntityCard({
+          userId: owner.id,
+          timezone: owner.timezone,
+          ref: { type: "planner_item", id },
+        }),
+      ),
+    );
+    await ctx.answerCallbackQuery();
+    for (const card of cards) {
+      if (card) await ctx.reply(card.text, { reply_markup: card.keyboard });
+    }
   });
 
   bot.callbackQuery("manage:bulk_time", async (ctx) => {

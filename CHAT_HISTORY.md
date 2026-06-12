@@ -1,5 +1,30 @@
 # ZNAMBO Telegram Assistant Chat History
 
+## 2026-06-12 - V2.5.4 implementation continued after emergency release
+
+User asked to continue after the emergency release.
+
+Implemented in the working tree:
+
+- unified `/plan` and `/dashboard` based on the canonical timeline;
+- tomorrow/soon/conflict/important/long-term/unresolved sections;
+- safe numbered mutation preview bound to the latest concrete view;
+- no immediate delete for mixed `delete + update`;
+- post-create triage, conflict cards, clearer item cards, and reminder empty-state navigation;
+- repeat-policy deletion scope choice and owner-only V2.5.4 repair;
+- dedicated regressions for the exact `5,6,7,8 ... 10.00-11.00` incident.
+
+Checks before production rollout:
+
+```text
+npm test -> 46 files, 157 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+No secrets were stored. After deployment the only cross-chat attachment remains
+`ZNAMBO_PROJECT_HANDOFF.md`.
+
 ## 2026-06-12 - V2.5.3.1 normal CalDAV sync resilience
 
 User reported that `/calendar_test` passed while normal event sync could still time out and asked

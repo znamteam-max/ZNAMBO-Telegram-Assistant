@@ -1,6 +1,6 @@
 # Personal Telegram Daily Assistant
 
-Current application version: `2.5.3`.
+Current application version: `2.5.4`.
 
 Canonical cross-chat handoff after each deployment: [`ZNAMBO_PROJECT_HANDOFF.md`](./ZNAMBO_PROJECT_HANDOFF.md).
 
@@ -39,7 +39,7 @@ Postgres
 
 - Next.js App Router API routes for Telegram, reminders, calendar integrations, health and export.
 - Drizzle/Postgres schema and migrations for users, messages, conversation history, action plans, action plan items, planner items, reminders, reminder deliveries, memory facts, summaries, Google Calendar connections, sync state and audit log.
-- grammY bot with `/start`, `/dashboard`, `/today`, `/tomorrow`, `/week`, `/tasks`, `/reminders`, `/longterm`, `/cleanup_chat`, `/settings`, `/calendar`, `/remindertest`, `/export`, `/forget`.
+- grammY bot with `/start`, `/plan`, `/dashboard`, `/today`, `/tomorrow`, `/week`, `/tasks`, `/reminders`, `/longterm`, `/cleanup_chat`, `/settings`, `/calendar`, `/remindertest`, `/export`, `/forget`.
 - Jarvis Mode agent loop before planner capture: plan views, numbered task view state, delete/done by displayed indices, yesterday review, cleanup and undo.
 - Smart commit mode: `confirm_all`, `auto_low_risk`, `auto_all_with_undo`.
 - Multi-action `ActionPlan` instead of a single mechanical pending action.
@@ -50,7 +50,7 @@ Postgres
 - Policy reconciler that recreates a missing next occurrence/reminder idempotently before each runner claim.
 - Catch-up without bursts, interval-grid scheduling, inclusive window ends and user/policy quiet hours.
 - Scheduler observability through `/cronhealth`, `/policydebug` and safe `/api/health` fields.
-- Live Plan Dashboard that retires the previous dashboard and sends one current bottom-most control center after mutations.
+- Unified Plan Dashboard with today, tomorrow, the next seven days, conflicts, importance and unresolved work; it retires the previous dashboard after mutations.
 - Telegram message registry for deleting or disabling stale reminder cards, item menus and dashboards.
 - External minute scheduler support through cron-job.org or the optional Cloudflare Worker project.
 - Google Calendar OAuth, encrypted refresh token storage and event sync.

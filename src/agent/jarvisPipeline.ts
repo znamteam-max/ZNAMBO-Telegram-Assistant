@@ -19,7 +19,12 @@ import { listManageableItems } from "@/db/queries/items";
 import { listItemsByIds } from "@/db/queries/taskViewStates";
 import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
 import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
-import { campaignCompletionGuardKeyboard, entityListKeyboard } from "@/bot/keyboards";
+import {
+  campaignCompletionGuardKeyboard,
+  conflictKeyboard,
+  entityListKeyboard,
+} from "@/bot/keyboards";
+import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
 import { detectHardManagementIntent } from "./hardManagementIntent";
@@ -311,6 +316,20 @@ async function executeAgentProposal(params: {
     const calendarResults = await syncItemsToCalendarBestEffort(updateResult.updatedItems);
     const calendarFeedback = formatCalendarSyncFeedback(calendarResults);
     if (calendarFeedback) await replyAndRecord(params.ctx, calendarFeedback);
+    if (updateResult.updatedItems.length) {
+      const updatedIds = new Set(updateResult.updatedItems.map((item) => item.id));
+      const allItems = await listManageableItems(owner.id, 300);
+      const conflict = detectPlanConflicts(allItems).find(
+        (entry) => updatedIds.has(entry.first.id) || updatedIds.has(entry.second.id),
+      );
+      if (conflict) {
+        await replyAndRecord(
+          params.ctx,
+          ["⚠️ Накладка", "", formatConflictLine(conflict, params.timezone), "", "Что делаем?"].join("\n"),
+          { reply_markup: conflictKeyboard(conflict.first.id, conflict.second.id) },
+        );
+      }
+    }
     if (params.execution.reminderPolicies.length) {
       const policyResult = await executePolicyProposals({
         execution: params.execution,

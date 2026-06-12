@@ -1,3 +1,5 @@
+import { DateTime } from "luxon";
+
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { listVisibleActivePlanItems } from "@/db/queries/items";
 import { listActiveReminderPolicies } from "@/db/queries/reminderPolicies";
@@ -10,6 +12,7 @@ import {
 
 export type TimelineDateBucket =
   | "today"
+  | "tomorrow"
   | "soon"
   | "unresolved_past"
   | "campaigns"
@@ -71,6 +74,7 @@ export function buildUserTimelineViewFromData(params: {
     policies: rows.filter((row) => row.policy).map((row) => row.policy!),
     byBucket: {
       today: rows.filter((row) => row.dateBucket === "today"),
+      tomorrow: rows.filter((row) => row.dateBucket === "tomorrow"),
       soon: rows.filter((row) => row.dateBucket === "soon"),
       unresolvedPast: rows.filter((row) => row.dateBucket === "unresolved_past"),
       campaigns: rows.filter((row) => row.dateBucket === "campaigns"),
@@ -91,17 +95,27 @@ function buildItemRow(item: PlannerItem, now: Date, timezone: string): UserTimel
   const classification = unresolvedPast
     ? "unresolved_past"
     : classifyTimelineItem({ item }, now, timezone);
+  const tomorrow =
+    !unresolvedPast &&
+    anchor &&
+    isTomorrow(anchor, now, item.timezone || timezone);
   return {
     entityRef: {
       type: classification === "history" ? "history_item" : "planner_item",
       id: item.id,
     },
     status: item.status,
-    dateBucket: bucketForClassification(classification),
+    dateBucket: tomorrow ? "tomorrow" : bucketForClassification(classification),
     classification,
     editable: true,
     item,
   };
+}
+
+function isTomorrow(value: Date, now: Date, timezone: string) {
+  const localNow = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
+  const localValue = DateTime.fromJSDate(value, { zone: "utc" }).setZone(timezone);
+  return localValue.hasSame(localNow.plus({ days: 1 }), "day");
 }
 
 function buildPolicyRow(policy: ReminderPolicy, now: Date, timezone: string): UserTimelineRow {

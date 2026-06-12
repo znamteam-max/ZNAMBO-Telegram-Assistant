@@ -19,3 +19,7 @@ Version index:
 - `V2.4.1.md` - policy reconciliation, interval reliability, scheduler health and production legacy repair.
 - `V2.4.2.md` - transactional reminder semantics, runner lease and anchored interval grid.
 - `V2.5.1.md` - compact control UX, priority routing, night temporal semantics and daily history.
+- `V2.5.2.md` - universal editability, temporal safety and campaign guards.
+- `V2.5.3.md` - canonical timeline, production repair and deterministic CalDAV object lifecycle.
+- `V2.5.3.1.md` - resilient normal CalDAV sync and retry queue.
+- `V2.5.4.md` - unified plan UX, safe numbered mutations, triage and conflict detection.

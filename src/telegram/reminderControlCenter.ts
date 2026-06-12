@@ -15,6 +15,7 @@ import {
 import { importanceLabel, importanceMarker, urgencyExplanation } from "@/domain/importance";
 import {
   entityListKeyboard,
+  reminderEmptyKeyboard,
   reminderPolicyCardKeyboard,
 } from "@/bot/keyboards";
 import { buildUserTimelineView } from "@/services/userTimeline";
@@ -27,37 +28,61 @@ export async function renderReminderControlCenter(params: {
 }) {
   const now = params.now ?? new Date();
   const scope = params.scope?.toLowerCase() || "active";
+  const timeline = scope === "paused" ? null : await buildUserTimelineView(params);
   const policies =
     scope === "paused"
       ? await listReminderPoliciesByStatus(params.userId, "paused", 100)
-      : (await buildUserTimelineView(params)).policies;
+      : timeline!.policies;
   const filtered = groupCampaignPolicies(policies)
     .filter((policy) => policyMatchesScope(policy, scope, now, params.timezone))
     .sort((a, b) =>
       compareTimelineEntries({ policy: a }, { policy: b }, now, params.timezone),
     );
-  const title = scope === "paused" ? "Напоминания на паузе" : "Центр напоминаний";
+  const title = scope === "paused" ? "Напоминания на паузе" : "Правила напоминаний";
+  const futureItems =
+    timeline?.items.filter((item) => {
+      const anchor = item.startAt ?? item.dueAt;
+      return item.status === "active" && Boolean(anchor && anchor > now);
+    }) ?? [];
+  const taskCount = futureItems.filter((item) =>
+    ["task", "preparation_task", "recurring_task"].includes(item.kind),
+  ).length;
+  const eventCount = futureItems.length - taskCount;
   const lines = [
     title,
     "",
+    scope === "paused"
+      ? null
+      : "Здесь только повторяющиеся правила: каждый час, раз в неделю или перед событием.\nОбычные встречи и задачи смотри в /plan или /tasks.",
+    scope === "paused" ? null : "",
     ...(filtered.length
       ? filtered.map(
           (policy, index) =>
             `${index + 1}. ${formatPolicyLine(policy, now, params.timezone)}`,
         )
-      : ["Подходящих политик нет."]),
-  ];
+      : [
+          "Активных правил напоминаний нет.",
+          "",
+          "Но в плане есть:",
+          `• будущих событий: ${eventCount}`,
+          `• задач: ${taskCount}`,
+          "",
+          "Открыть план?",
+        ]),
+  ].filter((line): line is string => line !== null);
   return {
     text: lines.join("\n"),
     policies: filtered,
-    keyboard: entityListKeyboard(
-      filtered.map((policy) => {
-        const campaignGroup = String(policy.metadata?.campaignGroup ?? "");
-        return campaignGroup
-          ? { type: "campaign" as const, id: campaignGroup }
-          : { type: "reminder_policy" as const, id: policy.id };
-      }),
-    ),
+    keyboard: filtered.length
+      ? entityListKeyboard(
+          filtered.map((policy) => {
+            const campaignGroup = String(policy.metadata?.campaignGroup ?? "");
+            return campaignGroup
+              ? { type: "campaign" as const, id: campaignGroup }
+              : { type: "reminder_policy" as const, id: policy.id };
+          }),
+        )
+      : reminderEmptyKeyboard(),
   };
 }
 
@@ -117,7 +142,7 @@ function formatPolicyLine(policy: ReminderPolicy, now: Date, timezone: string) {
         .setZone(policy.timezone || timezone)
         .toFormat("dd.LL HH:mm")
     : "нет следующего";
-  const marker = importanceMarker(getBasePriority({ policy }));
+  const marker = importanceMarker(getBasePriority({ policy })).split(" ")[0];
   return `${marker ? `${marker} · ` : ""}${policy.title}\n   ${policy.policyType} · ${next}`;
 }
 

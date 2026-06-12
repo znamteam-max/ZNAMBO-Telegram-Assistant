@@ -85,6 +85,68 @@ export function entityListKeyboard(refs: EntityRef[], includeDashboardActions = 
   return keyboard;
 }
 
+export function taskListKeyboard(refs: EntityRef[]) {
+  const keyboard = entityListKeyboard(refs);
+  return keyboard
+    .row()
+    .text("🗑 Удалить выбранные", "tasks:delete_help")
+    .text("🧭 Разобрать старое", "tasks:review_old")
+    .row()
+    .text("🗄 Архив", "tasks:archive")
+    .text("✅ Готово", "tasks:done_help")
+    .row()
+    .text("📋 План", "dashboard:refresh");
+}
+
+export function reminderEmptyKeyboard() {
+  return new InlineKeyboard()
+    .text("📋 План", "dashboard:refresh")
+    .text("🧾 Задачи", "tasks:open")
+    .row()
+    .text("➕ Добавить напоминание", "reminders:add");
+}
+
+export function postCreateTriageKeyboard(items: PlannerItem[]) {
+  const keyboard = new InlineKeyboard();
+  for (const [index, item] of items.slice(0, 8).entries()) {
+    keyboard.text(String(index + 1), `entity:open:planner_item:${item.id}`);
+    if ((index + 1) % 4 === 0) keyboard.row();
+  }
+  if (items.length % 4 !== 0) keyboard.row();
+  return keyboard
+    .text("⭐ Приоритеты", `triage:priority:${items[0]?.id ?? "none"}`)
+    .text("🔔 Напоминания", `triage:reminders:${items[0]?.id ?? "none"}`)
+    .row()
+    .text("Оставить как есть", "triage:done");
+}
+
+export function safeMutationPreviewKeyboard(actionId: string) {
+  return new InlineKeyboard()
+    .text("Да, применить", `safe_mutation:confirm:${actionId}`)
+    .text("Отмена", `safe_mutation:cancel:${actionId}`)
+    .row()
+    .text("Открыть список", "tasks:open");
+}
+
+export function conflictKeyboard(firstItemId: string, secondItemId: string) {
+  return new InlineKeyboard()
+    .text("Оставить оба", "conflict:keep")
+    .row()
+    .text("Перенести первое", `manage:reschedule:${firstItemId}`)
+    .text("Перенести второе", `manage:reschedule:${secondItemId}`)
+    .row()
+    .text("Открыть оба", `conflict:open:${firstItemId}:${secondItemId}`);
+}
+
+export function repeatPolicyDeleteKeyboard(policyId: string, itemId?: string | null) {
+  const keyboard = new InlineKeyboard().text(
+    "Только правило",
+    `policy:cancel_rule:${policyId}`,
+  );
+  if (itemId) keyboard.row().text("Задачу и правило", `policy:cancel_all:${policyId}:${itemId}`);
+  return keyboard.row().text("Отмена", `policy:open:${policyId}`);
+}
+
 export function itemMenuKeyboard(
   itemId: string,
   campaignGroup?: string | null,
@@ -92,13 +154,13 @@ export function itemMenuKeyboard(
 ) {
   const keyboard = new InlineKeyboard()
     .text("✅ Выполнено", `done:${itemId}`)
-    .text("⏭ Перенести", `manage:reschedule:${itemId}`)
+    .text("🕘 Изменить время", `manage:reschedule:${itemId}`)
     .row()
     .text("✏️ Изменить", `manage:edit:${itemId}`)
     .text("🗑 Удалить", `manage:delete:${itemId}`)
     .row()
-    .text("🔔 Напомнить", `item:remind:${itemId}`)
-    .text("⭐ Приоритет", `item:priority:${itemId}`)
+    .text("🔔 Добавить напоминание", `item:remind:${itemId}`)
+    .text("⭐ Важность", `item:priority:${itemId}`)
     .row()
     .text("📝 Итоги", `item:results:${itemId}`)
     .text("🔗 Напоминания", `entity:item_policies:${itemId}`);

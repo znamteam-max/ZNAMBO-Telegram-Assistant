@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   deleteMessageSafe: vi.fn(),
   removeKeyboardSafe: vi.fn(),
   listCalendarSyncStatesForUser: vi.fn(),
+  rememberTaskView: vi.fn(),
 }));
 
 vi.mock("@/db/queries/liveDashboards", () => ({
@@ -38,6 +39,9 @@ vi.mock("@/db/queries/googleCalendar", () => ({
 }));
 vi.mock("@/bot/createBot", () => ({
   getBot: () => ({ api: {} }),
+}));
+vi.mock("@/agent/state/taskViewState", () => ({
+  rememberTaskView: mocks.rememberTaskView,
 }));
 
 import {
@@ -71,6 +75,7 @@ describe("live dashboard lifecycle", () => {
     mocks.listLongTermReminderPolicies.mockResolvedValue([]);
     mocks.listLegacyReminderLikeItems.mockResolvedValue([]);
     mocks.listCalendarSyncStatesForUser.mockResolvedValue([]);
+    mocks.rememberTaskView.mockResolvedValue({ id: "view-id" });
   });
 
   it("keeps an event visible and shows pending calendar retry", async () => {
@@ -194,12 +199,66 @@ describe("live dashboard lifecycle", () => {
       now: new Date("2026-06-09T05:00:00.000Z"),
     });
 
-    expect(result.text).toContain("Скоро:");
+    expect(result.text).toContain("Ближайшие правила:");
     expect(result.text).toContain("Записаться к Дрик");
-    expect(result.text).toContain("Долгосрочные:");
+    expect(result.text).toContain("Долгосрочные правила:");
     expect(result.text).toContain("Заменить зеркало");
     expect(result.text.indexOf("Записаться к Дрик")).toBeLessThan(
-      result.text.indexOf("Долгосрочные:"),
+      result.text.indexOf("Долгосрочные правила:"),
+    );
+  });
+
+  it("shows tomorrow and soon items when today is empty and saves the same item order", async () => {
+    mocks.listRecentRangeItems.mockResolvedValue([
+      {
+        id: "tomorrow-item",
+        status: "active",
+        kind: "task",
+        title: "Рекап Дня на ЧМ-26",
+        timezone: "Europe/Moscow",
+        startAt: new Date("2026-06-13T04:00:00.000Z"),
+        endAt: null,
+        dueAt: null,
+        priority: 3,
+        metadata: {},
+        createdAt: new Date("2026-06-12T08:00:00.000Z"),
+        updatedAt: new Date("2026-06-12T08:00:00.000Z"),
+      },
+      {
+        id: "soon-item",
+        status: "active",
+        kind: "event",
+        title: "Студия Central Park",
+        timezone: "Europe/Moscow",
+        startAt: new Date("2026-06-16T05:00:00.000Z"),
+        endAt: new Date("2026-06-16T09:00:00.000Z"),
+        dueAt: null,
+        priority: 3,
+        metadata: {},
+        createdAt: new Date("2026-06-12T08:00:00.000Z"),
+        updatedAt: new Date("2026-06-12T08:00:00.000Z"),
+      },
+    ]);
+
+    const result = await renderLiveDashboard({
+      userId: "user-id",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-12T09:00:00.000Z"),
+    });
+
+    expect(result.text).toContain("На сегодня нет событий.");
+    expect(result.text).toContain("Завтра:");
+    expect(result.text).toContain("Рекап Дня на ЧМ-26");
+    expect(result.text).toContain("Скоро:");
+    expect(result.text).toContain("Студия Central Park");
+    expect(mocks.rememberTaskView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: "dashboard",
+        items: expect.arrayContaining([
+          expect.objectContaining({ id: "tomorrow-item" }),
+          expect.objectContaining({ id: "soon-item" }),
+        ]),
+      }),
     );
   });
 });

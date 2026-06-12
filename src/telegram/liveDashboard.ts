@@ -18,6 +18,8 @@ import type { EntityRef } from "@/domain/entityRefs";
 import { buildUserTimelineView } from "@/services/userTimeline";
 import { listCalendarSyncStatesForUser } from "@/db/queries/googleCalendar";
 import { formatRuItemsRequireDecision } from "@/lib/ruPlural";
+import { rememberTaskView } from "@/agent/state/taskViewState";
+import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
 
 import { getBot } from "@/bot/createBot";
 import { entityListKeyboard } from "@/bot/keyboards";
@@ -50,8 +52,7 @@ export async function renderLiveDashboard(params: {
 }) {
   const now = params.now ?? new Date();
   const local = DateTime.fromJSDate(now, { zone: "utc" }).setZone(params.timezone).setLocale("ru");
-  const from = local.startOf("day").toUTC().toJSDate();
-  const to = local.endOf("day").toUTC().toJSDate();
+  const weekEnd = local.plus({ days: 7 }).endOf("day").toUTC().toJSDate();
   const [timeline, calendarStates] = await Promise.all([
     buildUserTimelineView(params),
     listCalendarSyncStatesForUser(params.userId, 100),
@@ -60,17 +61,47 @@ export async function renderLiveDashboard(params: {
   for (const { sync } of calendarStates) {
     if (!calendarByItemId.has(sync.plannerItemId)) calendarByItemId.set(sync.plannerItemId, sync);
   }
-  const todayItems = timeline.byBucket.today
+  const itemRows = timeline.rows.filter(
+    (row) => row.item && !["history", "hidden"].includes(row.dateBucket),
+  );
+  const allItems = itemRows.map((row) => row.item!);
+  const todayItems = itemRows
+    .filter((row) => row.dateBucket === "today")
+    .map((row) => row.item!)
+    .slice(0, 8);
+  const tomorrowItems = itemRows
+    .filter((row) => row.dateBucket === "tomorrow")
+    .map((row) => row.item!)
+    .slice(0, 8);
+  const soonItems = itemRows
+    .filter((row) => {
+      if (row.dateBucket !== "soon") return false;
+      const anchor = row.item?.startAt ?? row.item?.dueAt;
+      return Boolean(anchor && anchor <= weekEnd);
+    })
+    .map((row) => row.item!)
+    .slice(0, 10);
+  const scheduledIds = new Set(
+    [...todayItems, ...tomorrowItems, ...soonItems].map((item) => item.id),
+  );
+  const importantItems = allItems
+    .filter((item) => !scheduledIds.has(item.id) && getBasePriority({ item }) >= 4)
+    .slice(0, 5);
+  const longTermItems = itemRows
+    .filter(
+      (row) =>
+        (row.dateBucket === "long_term" ||
+          Boolean((row.item?.startAt ?? row.item?.dueAt) && (row.item?.startAt ?? row.item?.dueAt)! > weekEnd)) &&
+        row.item &&
+        !importantItems.some((item) => item.id === row.item!.id),
+    )
+    .map((row) => row.item!)
+    .slice(0, 5);
+  const unresolvedItems = timeline.byBucket.unresolvedPast
     .filter((row) => row.item)
     .map((row) => row.item!)
-    .filter((item) => {
-      const anchor = item.startAt ?? item.dueAt;
-      return Boolean(anchor && anchor >= from && anchor <= to);
-    })
-    .sort((a, b) =>
-      compareTimelineEntries({ item: a }, { item: b }, now, params.timezone),
-    )
-    .slice(0, 7);
+    .slice(0, 5);
+  const conflicts = detectPlanConflicts(allItems);
   const displayPolicies = timeline.policies;
   const nagging = displayPolicies
     .filter((policy) => classifyTimelineItem({ policy }, now, params.timezone) === "active_nag")
@@ -116,43 +147,67 @@ export async function renderLiveDashboard(params: {
     .sort((a, b) => compareTimelineEntries({ policy: a }, { policy: b }, now, params.timezone))
     .slice(0, 4);
 
-  const lines = [`JARVIS · Сегодня, ${local.toFormat("d LLLL")}`];
+  const lines = ["JARVIS · План"];
   const refs: EntityRef[] = [];
+  const orderedItems: PlannerItem[] = [];
   let displayIndex = 1;
-  const pushRows = (rows: Array<{ text: string; ref: EntityRef }>) => {
+  const pushRows = (rows: Array<{ text: string; ref: EntityRef; item?: PlannerItem }>) => {
     for (const row of rows) {
       lines.push(`${displayIndex}. ${row.text}`);
       refs.push(row.ref);
+      if (row.item) orderedItems.push(row.item);
       displayIndex += 1;
     }
   };
-  lines.push("", "Сейчас / ближайшее:");
+  const itemRowsFor = (items: PlannerItem[], includeDate = false) =>
+    items.map((item) => ({
+      text: formatDashboardItem(
+        item,
+        params.timezone,
+        calendarByItemId.get(item.id),
+        includeDate,
+      ),
+      ref: { type: "planner_item" as const, id: item.id },
+      item,
+    }));
+
+  lines.push("", "Сегодня:");
   if (todayItems.length) {
-    pushRows(
-      todayItems.map((item) => ({
-        text: formatDashboardItem(item, params.timezone, calendarByItemId.get(item.id)),
-        ref: { type: item.status === "active" ? "planner_item" : "history_item", id: item.id },
-      })),
-    );
+    pushRows(itemRowsFor(todayItems));
   } else {
-    lines.push("План на сегодня пока пуст.");
+    lines.push("На сегодня нет событий.");
   }
-  const unresolved = timeline.byBucket.unresolvedPast.filter((row) => row.item);
-  if (unresolved.length) {
-    lines.push("", "Со вчера / Неразобранное:");
-    pushRows([
-      {
-        text: formatRuItemsRequireDecision(unresolved.length),
-        ref: unresolved[0].entityRef,
-      },
-    ]);
+  if (tomorrowItems.length) {
+    lines.push("", "Завтра:");
+    pushRows(itemRowsFor(tomorrowItems));
+  }
+  if (soonItems.length) {
+    lines.push("", "Скоро:");
+    pushRows(itemRowsFor(soonItems, true));
+  }
+  if (conflicts.length) {
+    lines.push("", "Конфликты:");
+    lines.push(...conflicts.slice(0, 5).map((conflict) => formatConflictLine(conflict, params.timezone)));
+  }
+  if (importantItems.length) {
+    lines.push("", "Важное:");
+    pushRows(itemRowsFor(importantItems, true));
+  }
+  if (longTermItems.length) {
+    lines.push("", "Долгосрочные:");
+    pushRows(itemRowsFor(longTermItems, true));
+  }
+  if (unresolvedItems.length) {
+    lines.push("", "Неразобранное:");
+    pushRows(itemRowsFor(unresolvedItems, true));
+    lines.push(formatRuItemsRequireDecision(unresolvedItems.length));
   }
   if (nagging.length) {
     lines.push("", "Активные напоминания:");
     pushRows(nagging.map((policy) => policyRow(policy, params.timezone)));
   }
   if (soon.length) {
-    lines.push("", "Скоро:");
+    lines.push("", "Ближайшие правила:");
     pushRows(soon.map((policy) => policyRow(policy, params.timezone)));
   }
   if (campaigns.length) {
@@ -160,19 +215,35 @@ export async function renderLiveDashboard(params: {
     pushRows(campaigns.map((policy) => policyRow(policy, params.timezone)));
   }
   if (distant.length) {
-    lines.push("", "Дальние по важности:");
+    lines.push("", "Важные правила:");
     pushRows(distant.map((policy) => policyRow(policy, params.timezone)));
   }
   if (longTerm.length) {
-    lines.push("", "Долгосрочные:");
+    lines.push("", "Долгосрочные правила:");
     pushRows(longTerm.map((policy) => policyRow(policy, params.timezone)));
   }
 
+  if (!orderedItems.length && allItems.length) {
+    const fallback = allItems.slice(0, 8);
+    lines.push("", "Открытые записи:");
+    pushRows(itemRowsFor(fallback, true));
+  }
+
+  const viewState = await rememberTaskView({
+    userId: params.userId,
+    scope: "dashboard",
+    title: "JARVIS · План",
+    items: orderedItems,
+    metadata: { source: "live_dashboard", conflictCount: conflicts.length },
+  });
+
   return {
     text: lines.join("\n"),
-    items: todayItems,
+    items: orderedItems,
     policies: displayPolicies,
     keyboard: entityListKeyboard(refs, true),
+    viewState,
+    conflicts,
   };
 }
 export async function renderReminderPolicyList(params: {
@@ -304,13 +375,14 @@ function formatDashboardItem(
   item: PlannerItem,
   timezone: string,
   calendar?: { status: string; lastError: string | null } | null,
+  includeDate = false,
 ) {
   if (item.status === "completed") return `✅ ${item.title} — завершено`;
   const start = item.startAt ?? item.dueAt;
   const time = start
     ? DateTime.fromJSDate(start, { zone: "utc" })
         .setZone(item.timezone || timezone)
-        .toFormat("HH:mm")
+        .toFormat(includeDate ? "dd.LL HH:mm" : "HH:mm")
     : "без времени";
   const end = item.endAt
     ? DateTime.fromJSDate(item.endAt, { zone: "utc" })
@@ -318,13 +390,13 @@ function formatDashboardItem(
         .toFormat("HH:mm")
     : null;
   const marker = item.kind === "training" ? "🟢" : item.kind === "preparation_task" ? "🟡" : "🔴";
-  const important = importanceMarker(getBasePriority({ item }));
+  const important = importanceMarker(getBasePriority({ item })).split(" ")[0];
   const calendarStatus =
     ["event", "training", "tentative_event"].includes(item.kind) &&
     ["pending_retry", "failed", "error"].includes(calendar?.status ?? "")
       ? ` · Календарь: ${calendar?.lastError ?? calendar?.status}, повторю автоматически`
       : "";
-  return `${marker} ${time}${end ? `–${end}` : ""} · ${item.title}${important ? ` · ${important}` : ""}${calendarStatus}`;
+  return `${time}${end ? `–${end}` : ""} · ${important ? `${important} ` : ""}${marker} ${item.title}${calendarStatus}`;
 }
 
 function formatPolicy(policy: ReminderPolicy, timezone: string) {
@@ -333,7 +405,7 @@ function formatPolicy(policy: ReminderPolicy, timezone: string) {
         .setZone(policy.timezone || timezone)
         .toFormat("dd.LL HH:mm")
     : "без ближайшего запуска";
-  const priorityLabel = importanceMarker(getBasePriority({ policy }));
+  const priorityLabel = importanceMarker(getBasePriority({ policy })).split(" ")[0];
   if (policy.policyType === "interval_window") {
     return `${priorityLabel ? `${priorityLabel} · ` : ""}${policy.title}: каждые ${policy.intervalMinutes ?? "?"} мин, следующее ${next}`;
   }

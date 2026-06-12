@@ -60,6 +60,11 @@ import {
   applyV253CalendarRepair,
   previewV253CalendarRepair,
 } from "@/services/v253CalendarRepair";
+import {
+  applyV254ProductionRepair,
+  previewV254ProductionRepair,
+} from "@/services/v254ProductionRepair";
+import { detectPlanConflicts } from "@/services/planConflicts";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -102,14 +107,14 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/today — сегодня",
         "/tomorrow — завтра",
         "/week — ближайшие 7 дней",
-        "/tasks — открытые задачи",
+        "/plan, /dashboard — главный план: сегодня, завтра, скоро, конфликты и важное",
+        "/tasks — полный список для управления: открыть, удалить, перенести или завершить",
         "/review_yesterday — разбор вчера",
         "/cleanup_garbage — убрать тестовый или случайный мусор",
         "/undo — откатить последнее удаление или cleanup",
         "/remindertest 2 — тестовое напоминание через N минут",
         "/aihealth — реальная проверка OpenAI Responses API и tool calling",
-        "/dashboard — живой план",
-        "/reminders — активные reminder policies",
+        "/reminders — только правила напоминаний; обычные встречи находятся в /plan",
         "/longterm — дальние и регулярные policies",
         "/cleanup_chat — убрать старые bot-карточки",
         "/cronhealth — статус scheduler и policy reconciler",
@@ -122,6 +127,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/calendar_test — реальный create/read/delete тест Яндекс.Календаря",
         "/calendar_retry_failed — повторить неудачные синхронизации календаря",
         "/admin_repair_v253_calendar preview|apply — repair timeout-синхронизаций",
+        "/admin_repair_v254 preview|apply — безопасный repair списка после ошибочного удаления",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -268,6 +274,15 @@ export function registerCommands(bot: Bot<BotContext>) {
   );
   bot.command("tasks", async (ctx) => replyJarvisTool(ctx, await renderCommandTasks(ctx)));
   bot.command("dashboard", async (ctx) => {
+    const owner = requireOwner(ctx);
+    if (!ctx.chat?.id) return;
+    await refreshDashboardAfterMutation({
+      userId: owner.id,
+      chatId: ctx.chat.id,
+      timezone: owner.timezone,
+    });
+  });
+  bot.command("plan", async (ctx) => {
     const owner = requireOwner(ctx);
     if (!ctx.chat?.id) return;
     await refreshDashboardAfterMutation({
@@ -595,6 +610,55 @@ export function registerCommands(bot: Bot<BotContext>) {
         ),
         "",
         "Для применения: /admin_repair_v253_calendar apply",
+      ].join("\n"),
+    );
+  });
+
+  bot.command("admin_repair_v254", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "").trim().toLowerCase();
+    if (mode === "apply") {
+      const result = await applyV254ProductionRepair(owner.id);
+      const calendarRetry = await retryCalendarSyncsForUser({ userId: owner.id });
+      const conflicts = detectPlanConflicts([
+        ...result.retained,
+        ...result.restored,
+      ]);
+      await replyAndRecord(
+        ctx,
+        [
+          "V2.5.4 repair применён.",
+          `Восстановлено: ${result.restored.length}`,
+          `Архивировано точных Drik-записей: ${result.archived.length}`,
+          `Calendar retry synced: ${calendarRetry.synced}`,
+          `Конфликтов среди целевых записей: ${conflicts.length}`,
+          "Неизвестные записи и policies не изменялись.",
+        ].join("\n"),
+      );
+      if (ctx.chat?.id) {
+        await refreshDashboardAfterMutation({
+          userId: owner.id,
+          chatId: ctx.chat.id,
+          timezone: owner.timezone,
+        });
+      }
+      return;
+    }
+    const preview = await previewV254ProductionRepair(owner.id);
+    await replyAndRecord(
+      ctx,
+      [
+        "V2.5.4 repair preview:",
+        `Оставить активными: ${preview.retained.length}`,
+        ...preview.retained.map((item) => `• ${item.title}`),
+        `Восстановить из последнего undo: ${preview.restore.length}`,
+        ...preview.restore.map((item) => `• ${item.title}`),
+        `Архивировать: ${preview.archive.length}`,
+        ...preview.archive.map((item) => `• ${item.title}`),
+        "",
+        ...preview.notes,
+        "",
+        "Для применения: /admin_repair_v254 apply",
       ].join("\n"),
     );
   });

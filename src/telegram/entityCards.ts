@@ -18,8 +18,19 @@ import {
   getEffectivePriority,
   getUrgencyBoost,
 } from "@/domain/timelineClassification";
-import { getItemGoogleSyncState } from "@/db/queries/googleCalendar";
+import { getItemCalendarSyncState } from "@/db/queries/googleCalendar";
 import { safeCalendarErrorClass } from "@/services/calendarDiagnostics";
+import { getCalendarProvider } from "@/lib/env";
+
+const itemKindLabels: Record<string, string> = {
+  event: "встреча",
+  task: "задача",
+  training: "тренировка",
+  note: "заметка",
+  preparation_task: "подготовка",
+  tentative_event: "предварительное событие",
+  recurring_task: "повторяющаяся задача",
+};
 
 export async function renderEntityCard(params: {
   userId: string;
@@ -41,9 +52,13 @@ async function renderItemCard(params: {
   const item = await getPlannerItemById(params.userId, params.ref.id);
   if (!item) return null;
   const now = params.now ?? new Date();
+  const calendarProvider = getCalendarProvider();
   const [policies, calendar] = await Promise.all([
     listReminderPoliciesForItem(params.userId, item.id),
-    getItemGoogleSyncState(item.id),
+    getItemCalendarSyncState(
+      item.id,
+      calendarProvider === "yandex" ? "yandex_calendar" : "google_calendar",
+    ),
   ]);
   const base = getBasePriority({ item });
   const effective = getEffectivePriority({ item }, now, params.timezone);
@@ -55,13 +70,13 @@ async function renderItemCard(params: {
       item.title,
       "",
       `Статус: ${item.status}`,
-      `Тип: ${item.kind}`,
+      `Тип: ${itemKindLabels[item.kind] ?? item.kind}`,
       `Когда: ${formatDate(when, item.timezone) || "без времени"}`,
       `Важность: ${importanceLabel(base)} (${importanceMode({ item })})`,
       `Сейчас: ${importanceLabel(effective)}; ${urgencyExplanation(boost)}`,
       `Напоминания: ${policies.filter((policy) => policy.status === "active").length}`,
       ["event", "training", "tentative_event"].includes(item.kind)
-        ? `Календарь: ${formatCalendarState(calendar?.status, safeCalendarErrorClass(calendar?.lastError))}`
+        ? `Календарь: ${formatCalendarState(calendar?.status, safeCalendarErrorClass(calendar?.lastError), calendar?.provider)}`
         : null,
       campaignGroup ? `Кампания: ${campaignGroup}` : null,
       item.category === "health" || item.metadata?.familyRelated === true
@@ -78,13 +93,23 @@ async function renderItemCard(params: {
   };
 }
 
-function formatCalendarState(status?: string | null, errorClass?: string | null) {
-  if (status === "synced") return "synced";
-  if (status === "pending_retry") return `${errorClass ?? "pending retry"}, повторю автоматически`;
+function formatCalendarState(
+  status?: string | null,
+  errorClass?: string | null,
+  syncProvider?: string | null,
+) {
+  const provider = syncProvider?.includes("yandex") || getCalendarProvider() === "yandex"
+    ? "Яндекс"
+    : syncProvider?.includes("google") || getCalendarProvider() === "google"
+      ? "Google"
+      : "не подключён";
+  const prefix = `${provider} · Личный · `;
+  if (status === "synced") return `${prefix}synced`;
+  if (status === "pending_retry") return `${prefix}${errorClass ?? "pending retry"}, повторю автоматически`;
   if (status === "failed" || status === "error") return `failed (${errorClass ?? "unknown"})`;
-  if (status === "pending" || status === "not_synced" || status === "syncing") return status;
-  if (status === "disabled") return "disabled";
-  return "unknown";
+  if (status === "pending" || status === "not_synced" || status === "syncing") return `${prefix}${status}`;
+  if (status === "disabled") return `${prefix}disabled`;
+  return `${prefix}unknown`;
 }
 
 async function renderPolicyCard(params: {

@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { decideJarvisTurn } from "@/agent/jarvisDecision";
 import { detectHardManagementIntent } from "@/agent/hardManagementIntent";
-import { parseDisplayIndexSelection } from "@/agent/jarvisTools";
+import {
+  parseDeleteIndexSelection,
+  parseDisplayIndexSelection,
+} from "@/agent/jarvisTools";
 import { itemIdsForDisplayIndices } from "@/agent/state/taskViewState";
 import { isLikelyGarbagePlannerItem } from "@/agent/validation/antiGarbageValidator";
 import type { PlannerItem, TaskViewState } from "@/db/schema";
@@ -23,6 +26,14 @@ describe("Jarvis Mode decision and view-state safety", () => {
     expect(decision.intent).toBe("delete_by_indices");
     expect(decision.shouldCreateItems).toBe(false);
     expect(parseDisplayIndexSelection("удалить 7-12 и 14")).toEqual([7, 8, 9, 10, 11, 12, 14]);
+  });
+
+  it("does not treat a comma list or a time range as implicit 1-8 deletion", () => {
+    const text = "Удали 5,6,7,8 поменяй 4 время на 10.00-11.00";
+
+    expect(parseDeleteIndexSelection(text)).toEqual([5, 6, 7, 8]);
+    expect(parseDisplayIndexSelection("5,6,7,8")).toEqual([5, 6, 7, 8]);
+    expect(parseDisplayIndexSelection("10.00-11.00")).toEqual([]);
   });
 
   it("opens yesterday review without creating a new item", () => {

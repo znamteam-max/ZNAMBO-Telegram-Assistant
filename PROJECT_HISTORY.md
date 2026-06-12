@@ -1,5 +1,20 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## Update 2026-06-12 - V2.5.4 Unified Plan UX
+
+- Replaced the today-only dashboard with one canonical Plan showing today, tomorrow, soon,
+  conflicts, important, long-term, and unresolved work.
+- Added `/plan`, consistent numeric item cards, clearer Tasks and reminder-rule navigation, and
+  optional post-create triage.
+- Added event overlap detection after create/update and on the main Plan.
+- Replaced immediate numbered deletion with a current-view preview and explicit confirmation.
+- Fixed the critical parser bug where `5,6,7,8` plus `10.00-11.00` could target items 1-8.
+- Added repeat-policy delete scope choice, undo/refresh flow, and conservative V2.5.4 repair.
+- CalDAV, scheduler, runner lock, reminder engine, and OpenAI ActionPlan architecture were
+  preserved.
+- Local validation before rollout: 46 test files and 157 tests passed; lint and build passed.
+- No secrets were written to project history.
+
 ## Update 2026-06-12 - V2.5.3.1
 
 - Fixed normal Yandex CalDAV sync so it uses deterministic object URLs and matching ICS UIDs.

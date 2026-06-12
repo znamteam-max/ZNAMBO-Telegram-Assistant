@@ -11,11 +11,12 @@ import {
   listYesterdayCarryCandidates,
   markPlannerItemCompleted,
   restorePlannerItemStatus,
+  updatePlannerItemSchedule,
 } from "@/db/queries/items";
 import { cancelItemReminders, restoreReminderState } from "@/db/queries/reminders";
 import { listItemsByIds, type TaskViewScope } from "@/db/queries/taskViewStates";
-import { updateAgentAction } from "@/db/queries/agentActions";
-import type { PlannerItem } from "@/db/schema";
+import { getAgentActionById, updateAgentAction } from "@/db/queries/agentActions";
+import type { PlannerItem, TaskViewState } from "@/db/schema";
 
 import { loadLatestUndoableAgentAction, rememberAgentAction } from "./state/actionHistory";
 import { itemIdsForDisplayIndices, loadLatestTaskView } from "./state/taskViewState";
@@ -23,7 +24,12 @@ import { sortJarvisItemsForDisplay } from "./views/renderShared";
 import type { JarvisToolResult } from "./types";
 import { renderAndSaveTaskView, type TaskViewSection } from "./views/renderAndSaveTaskView";
 import { prepareActivePlanReset } from "@/services/activePlanReset";
-import { entityListKeyboard, resetActivePlanKeyboard } from "@/bot/keyboards";
+import {
+  entityListKeyboard,
+  resetActivePlanKeyboard,
+  safeMutationPreviewKeyboard,
+  undoActionKeyboard,
+} from "@/bot/keyboards";
 import { isGarbageOrTestItem } from "@/domain/itemVisibility";
 import { undoLastReminderPolicyEdit } from "@/services/reminderPolicyEditor";
 import { buildUserTimelineView } from "@/services/userTimeline";
@@ -90,7 +96,7 @@ export async function renderTaskViewTool(params: ToolParams): Promise<JarvisTool
     .filter(
       (row) =>
         row.item &&
-        !["unresolved_past", "history", "hidden"].includes(row.dateBucket),
+        !["history", "hidden"].includes(row.dateBucket),
     )
     .map((row) => row.item!);
   const unresolvedCount = timeline.byBucket.unresolvedPast.filter((row) => row.item).length;
@@ -283,8 +289,13 @@ export async function prepareResetActivePlanTool(params: ToolParams): Promise<Ja
 export async function deleteItemsByIndicesTool(params: ToolParams & {
   text: string;
 }): Promise<JarvisToolResult> {
-  const indices = parseDisplayIndexSelection(params.text);
-  const { items, missingIndices } = await resolveItemsFromLatestView(params.userId, indices);
+  const indices = parseDeleteIndexSelection(params.text);
+  const viewState = await loadLatestTaskView(params.userId);
+  const { items, missingIndices } = await resolveItemsFromView(
+    params.userId,
+    viewState,
+    indices,
+  );
   if (!indices.length || !items.length) {
     await rememberAgentAction({
       userId: params.userId,
@@ -302,20 +313,30 @@ export async function deleteItemsByIndicesTool(params: ToolParams & {
     };
   }
 
-  const cancelled: PlannerItem[] = [];
-  for (const item of items) {
-    const updated = await cancelPlannerItem(params.userId, item.id);
-    await cancelItemReminders(params.userId, item.id);
-    await cancelCalendarSyncJobsForItem(item.id);
-    if (updated) cancelled.push(updated);
-  }
-
-  await rememberAgentAction({
+  const scheduleChange = parseScheduleChange(params.text);
+  const scheduleTarget = scheduleChange
+    ? (await resolveItemsFromView(params.userId, viewState, [scheduleChange.index])).items[0] ?? null
+    : null;
+  const action = await rememberAgentAction({
     userId: params.userId,
     sourceMessageId: params.sourceMessageId,
-    actionType: "delete_by_indices",
+    actionType: "numbered_mutation_preview",
+    status: "pending",
     input: { text: params.text, indices },
-    output: { cancelledItemIds: cancelled.map((item) => item.id), missingIndices },
+    output: {
+      viewStateId: viewState?.id ?? null,
+      deleteItems: items.map((item) => ({ id: item.id, title: item.title })),
+      scheduleChange:
+        scheduleChange && scheduleTarget
+          ? {
+              itemId: scheduleTarget.id,
+              title: scheduleTarget.title,
+              startTime: scheduleChange.startTime,
+              endTime: scheduleChange.endTime,
+            }
+          : null,
+      missingIndices,
+    },
     undoPayload: {
       items: items.map((item) => ({
         id: item.id,
@@ -328,13 +349,136 @@ export async function deleteItemsByIndicesTool(params: ToolParams & {
   return {
     handled: true,
     reply: [
-      `Удалил ${cancelled.length}:`,
-      ...cancelled.map((item) => `- ${item.title}`),
+      "Ты хочешь:",
+      "",
+      "Удалить:",
+      ...items.map((item) => `${indices[items.indexOf(item)] ?? "•"}. ${item.title}`),
+      scheduleChange && scheduleTarget ? "" : null,
+      scheduleChange && scheduleTarget ? "Изменить:" : null,
+      scheduleChange && scheduleTarget
+        ? `${scheduleChange.index}. ${scheduleTarget.title} → ${scheduleChange.startTime}–${scheduleChange.endTime}`
+        : null,
       missingIndices.length ? `Не нашел номера: ${missingIndices.join(", ")}.` : null,
+      "",
+      "Подтвердить?",
     ]
       .filter(Boolean)
       .join("\n"),
-    affectedItemIds: cancelled.map((item) => item.id),
+    affectedItemIds: [],
+    status: "noop",
+    replyMarkup: action ? safeMutationPreviewKeyboard(action.id) : undefined,
+    metadata: { previewOnly: true, viewStateId: viewState?.id ?? null },
+  };
+}
+
+export async function confirmNumberedMutationTool(params: ToolParams & {
+  actionId: string;
+}): Promise<JarvisToolResult> {
+  const action = await getAgentActionById({ userId: params.userId, actionId: params.actionId });
+  if (!action || action.actionType !== "numbered_mutation_preview" || action.status !== "pending") {
+    return {
+      handled: true,
+      reply: "Это подтверждение уже обработано или устарело.",
+      affectedItemIds: [],
+      status: "noop",
+    };
+  }
+  const output = action.output as {
+    deleteItems?: Array<{ id?: string; title?: string }>;
+    scheduleChange?: {
+      itemId?: string;
+      title?: string;
+      startTime?: string;
+      endTime?: string;
+    } | null;
+  };
+  const deleted: PlannerItem[] = [];
+  for (const entry of output.deleteItems ?? []) {
+    if (!entry.id) continue;
+    const item = await cancelPlannerItem(params.userId, entry.id);
+    if (!item) continue;
+    await cancelItemReminders(params.userId, item.id);
+    await cancelCalendarSyncJobsForItem(item.id);
+    deleted.push(item);
+  }
+
+  let updated: PlannerItem | null = null;
+  if (
+    output.scheduleChange?.itemId &&
+    output.scheduleChange.startTime &&
+    output.scheduleChange.endTime
+  ) {
+    const item = await listItemsByIds(params.userId, [output.scheduleChange.itemId]).then(
+      (rows) => rows[0] ?? null,
+    );
+    if (item) {
+      const anchor = item.startAt ?? item.dueAt ?? params.now ?? new Date();
+      const localDate = DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(
+        item.timezone || params.timezone,
+      );
+      const startAt = applyClock(localDate, output.scheduleChange.startTime);
+      const endAt = applyClock(localDate, output.scheduleChange.endTime);
+      updated = await updatePlannerItemSchedule({
+        userId: params.userId,
+        itemId: item.id,
+        startAt: startAt.toUTC().toJSDate(),
+        endAt: endAt.toUTC().toJSDate(),
+        dueAt: item.kind === "event" ? null : startAt.toUTC().toJSDate(),
+        metadata: { mutationSource: "confirmed_numbered_mutation" },
+      });
+    }
+  }
+
+  await updateAgentAction({
+    userId: params.userId,
+    actionId: action.id,
+    status: "completed",
+    output: {
+      ...output,
+      cancelledItemIds: deleted.map((item) => item.id),
+      updatedItemIds: updated ? [updated.id] : [],
+    },
+    undoPayload: action.undoPayload,
+  });
+  await rememberAgentAction({
+    userId: params.userId,
+    sourceMessageId: params.sourceMessageId,
+    actionType: "delete_by_indices",
+    output: { cancelledItemIds: deleted.map((item) => item.id), previewActionId: action.id },
+    undoPayload: action.undoPayload,
+  });
+
+  return {
+    handled: true,
+    reply: [
+      deleted.length ? `Удалил ${deleted.length} пунктов.` : null,
+      updated ? `Изменил время: ${updated.title}.` : null,
+    ]
+      .filter(Boolean)
+      .join("\n") || "Изменений не потребовалось.",
+    affectedItemIds: [...deleted.map((item) => item.id), ...(updated ? [updated.id] : [])],
+    replyMarkup: deleted.length ? undoActionKeyboard() : undefined,
+  };
+}
+
+export async function cancelNumberedMutationTool(params: ToolParams & {
+  actionId: string;
+}): Promise<JarvisToolResult> {
+  const action = await getAgentActionById({ userId: params.userId, actionId: params.actionId });
+  if (action?.status === "pending") {
+    await updateAgentAction({
+      userId: params.userId,
+      actionId: action.id,
+      status: "cancelled",
+      output: action.output,
+      undoPayload: action.undoPayload,
+    });
+  }
+  return {
+    handled: true,
+    reply: "Отменил. Ничего не изменено.",
+    affectedItemIds: [],
+    status: "noop",
   };
 }
 
@@ -534,8 +678,11 @@ export async function undoLastActionTool(params: ToolParams): Promise<JarvisTool
 }
 
 export function parseDisplayIndexSelection(text: string): number[] {
+  const withoutTimes = text
+    .replace(/\b\d{1,2}[.:]\d{2}\s*[-–—]\s*\d{1,2}[.:]\d{2}\b/g, " ")
+    .replace(/\b\d{1,2}[.:]\d{2}\b/g, " ");
   const indices: number[] = [];
-  for (const match of text.matchAll(/\b(\d{1,3})(?:\s*[-–—]\s*(\d{1,3}))?\b/g)) {
+  for (const match of withoutTimes.matchAll(/\b(\d{1,3})(?:\s*[-–—]\s*(\d{1,3}))?\b/g)) {
     const start = Number(match[1]);
     const end = match[2] ? Number(match[2]) : start;
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
@@ -550,6 +697,14 @@ export function parseDisplayIndexSelection(text: string): number[] {
 
 async function resolveItemsFromLatestView(userId: string, indices: number[]) {
   const viewState = await loadLatestTaskView(userId);
+  return resolveItemsFromView(userId, viewState, indices);
+}
+
+async function resolveItemsFromView(
+  userId: string,
+  viewState: TaskViewState | null,
+  indices: number[],
+) {
   const itemIds = itemIdsForDisplayIndices(viewState, indices);
   const foundIndexSet = new Set(
     (viewState?.itemsSnapshot as Array<{ displayIndex?: number }> | undefined)
@@ -640,6 +795,32 @@ function buildStatusSections(items: PlannerItem[]): TaskViewSection[] {
     { title: "Выполнено", items: sortJarvisItemsForDisplay(items.filter((item) => item.status === "completed")) },
     { title: "Отменено", items: sortJarvisItemsForDisplay(items.filter((item) => item.status === "cancelled")) },
   ];
+}
+
+export function parseDeleteIndexSelection(text: string): number[] {
+  const deleteStart = text.search(/удал(?:и|ить|яй)|убери|отмени|стереть/i);
+  if (deleteStart < 0) return [];
+  const tail = text.slice(deleteStart);
+  const nextOperation = tail.slice(1).search(/поменяй|измени|перенеси|отметь|сделай/i);
+  const selectionText = nextOperation >= 0 ? tail.slice(0, nextOperation + 1) : tail;
+  return parseDisplayIndexSelection(selectionText);
+}
+
+function parseScheduleChange(text: string) {
+  const match = text.match(
+    /(?:поменяй|измени|перенеси)\s+(\d{1,3}).{0,50}?(\d{1,2})[.:](\d{2})\s*[-–—]\s*(\d{1,2})[.:](\d{2})/i,
+  );
+  if (!match) return null;
+  return {
+    index: Number(match[1]),
+    startTime: `${match[2].padStart(2, "0")}:${match[3]}`,
+    endTime: `${match[4].padStart(2, "0")}:${match[5]}`,
+  };
+}
+
+function applyClock(date: DateTime, time: string) {
+  const [hour, minute] = time.split(":").map(Number);
+  return date.set({ hour, minute, second: 0, millisecond: 0 });
 }
 
 function duplicateItemIds(items: PlannerItem[]) {

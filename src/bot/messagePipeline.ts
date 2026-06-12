@@ -15,6 +15,7 @@ import type { ActionPlan } from "@/ai/schemas";
 import type { AgentReminderPolicy } from "@/ai/schemas/agentExecution";
 import type { AssistantDecision } from "@/ai/schemas/assistantDecision";
 import { writeAudit } from "@/db/queries/audit";
+import { listManageableItems } from "@/db/queries/items";
 import { createIdempotencyKey } from "@/lib/idempotency";
 import {
   commitStoredActionPlan,
@@ -29,11 +30,16 @@ import {
 import { buildActiveContext } from "@/services/contextRetrieval";
 import { storePlanMemoryFacts } from "@/services/memory";
 import { logger } from "@/lib/logger";
+import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
 import { formatActionPlanCard, formatCommittedPlanSummary } from "./formatters";
-import { actionPlanKeyboard } from "./keyboards";
+import {
+  actionPlanKeyboard,
+  conflictKeyboard,
+  postCreateTriageKeyboard,
+} from "./keyboards";
 import { replyAndRecord } from "./reply";
 
 export async function handleIncomingUserMessage(ctx: BotContext, text: string, timezone: string) {
@@ -309,7 +315,11 @@ export async function executeActionPlanForMessage(
         ]
           .filter(Boolean)
           .join("\n\n"),
+        result.items.length
+          ? { reply_markup: postCreateTriageKeyboard(result.items) }
+          : undefined,
       );
+      await replyCreatedConflicts(ctx, owner.id, result.items, params.timezone);
       return {
         finalAction: "committed_action_plan",
         validatorWarnings: validation.warnings,
@@ -355,6 +365,32 @@ export async function executeActionPlanForMessage(
     committedMutationCount: 0,
     partialMutationDetected: false,
   };
+}
+
+async function replyCreatedConflicts(
+  ctx: BotContext,
+  userId: string,
+  createdItems: Awaited<ReturnType<typeof listManageableItems>>,
+  timezone: string,
+) {
+  if (!createdItems.length) return;
+  const createdIds = new Set(createdItems.map((item) => item.id));
+  const allItems = await listManageableItems(userId, 300);
+  const conflict = detectPlanConflicts(allItems).find(
+    (entry) => createdIds.has(entry.first.id) || createdIds.has(entry.second.id),
+  );
+  if (!conflict) return;
+  await replyAndRecord(
+    ctx,
+    [
+      "⚠️ Накладка",
+      "",
+      formatConflictLine(conflict, timezone),
+      "",
+      "Что делаем?",
+    ].join("\n"),
+    { reply_markup: conflictKeyboard(conflict.first.id, conflict.second.id) },
+  );
 }
 
 async function renderTaskManagementView(ctx: BotContext) {

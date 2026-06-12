@@ -95,18 +95,26 @@ export function formatCommittedPlanSummary(params: {
   timezone: string;
   intro?: string;
 }) {
-  const lines = [params.intro ?? "✅ Записал:"];
-  for (const item of params.items) {
+  const lines = [params.intro ?? `Добавил ${params.items.length} ${itemCountLabel(params.items.length)}:`];
+  for (const [index, item] of params.items.entries()) {
     const when = formatLocalDateRange(item.startAt, item.endAt ?? item.dueAt, item.timezone || params.timezone);
-    lines.push(`• ${getItemLabel(item)}: ${item.title} — ${when}`);
+    lines.push(`${index + 1}. ${getItemLabel(item)}: ${item.title} — ${when}`);
   }
   lines.push(
     params.reminderCount
       ? `Напоминаний создано: ${params.reminderCount}.`
       : "Будущих напоминаний не добавлял.",
   );
-  lines.push("Можно прислать уточнение голосом или отметить задачи в /tasks.");
+  lines.push("", "Что настроить?");
   return lines.join("\n");
+}
+
+function itemCountLabel(count: number) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return "пункт";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "пункта";
+  return "пунктов";
 }
 
 export function formatItemList(title: string, items: PlannerItem[], timezone: string): string {
