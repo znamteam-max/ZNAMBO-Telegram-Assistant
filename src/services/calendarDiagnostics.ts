@@ -74,7 +74,7 @@ export async function getCalendarStatus(userId: string) {
     lastWriteStatus: normalStatus ?? (latestTest?.ok === true ? "verified" : latestTest ? "failed" : "unknown"),
     lastWriteErrorClass: normalFailed ? errorClass : latestTest?.ok === true ? null : testErrorClass ?? errorClass,
     lastNormalSyncStatus: normalStatus,
-    lastNormalSyncErrorClass: errorClass,
+    lastNormalSyncErrorClass: normalStatus === "synced" ? null : errorClass,
     lastNormalSyncDurationMs: latest?.sync.durationMs ?? null,
     pendingCalendarRetries,
     failedCalendarSyncs,
