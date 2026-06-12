@@ -189,7 +189,7 @@ export async function runYandexCalendarTest(): Promise<YandexCalendarTestResult>
       body: ics,
     }, "create");
     steps.create = "ok";
-    await readBackCalendarObject(calendarObjectUrl, `UID:${id}@znambo-telegram-assistant`);
+    await readBackCalendarObject(calendarObjectUrl, `UID:${id}`);
     steps.read = "ok";
     await caldavRequest(calendarObjectUrl, { method: "DELETE" }, "delete");
     steps.delete = "ok";
@@ -357,9 +357,13 @@ async function caldavRequest(
 
 async function readBackCalendarObject(url: string, expectedUid: string) {
   let lastError: unknown = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     try {
-      const response = await caldavRequest(url, { method: "GET" }, "read");
+      const response = await caldavRequest(
+        url,
+        { method: "GET", headers: { accept: "text/calendar" } },
+        "read",
+      );
       const text = await response.text();
       if (!text.includes(expectedUid)) {
         throw new YandexCalendarError(
@@ -373,11 +377,11 @@ async function readBackCalendarObject(url: string, expectedUid: string) {
       if (
         !(error instanceof YandexCalendarError) ||
         error.errorClass !== "read_back_not_found" ||
-        attempt === 2
+        attempt === 5
       ) {
         throw error;
       }
-      await delay(250 * (attempt + 1));
+      await delay(Math.min(250 * 2 ** attempt, 2_000));
     }
   }
   throw lastError;
@@ -418,7 +422,7 @@ function buildTestIcs(id: string, start: Date, end: Date): string {
     "VERSION:2.0",
     "PRODID:-//ZNAMBO Telegram Assistant//RU",
     "BEGIN:VEVENT",
-    `UID:${id}@znambo-telegram-assistant`,
+    `UID:${id}`,
     `DTSTAMP:${formatIcsDate(new Date())}`,
     `DTSTART:${formatIcsDate(start)}`,
     `DTEND:${formatIcsDate(end)}`,

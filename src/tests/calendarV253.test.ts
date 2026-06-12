@@ -60,7 +60,7 @@ describe("V2.5.3 Yandex calendar verification", () => {
       new Set([result.calendarObjectUrl]),
     );
     expect(objectCalls.every(([, init]) => init?.redirect === "manual")).toBe(true);
-    const testUid = body.match(/UID:([0-9a-f-]+)@znambo-telegram-assistant/)?.[1];
+    const testUid = body.match(/UID:([0-9a-f-]+)/)?.[1];
     expect(testUid).toBeTruthy();
     expect(result.calendarObjectUrl).toMatch(new RegExp(`/${testUid}\\.ics$`));
   });
@@ -140,7 +140,7 @@ describe("V2.5.3 Yandex calendar verification", () => {
       read: "failed",
       delete: "ok",
     });
-  });
+  }, 10_000);
 
   it("returns safe URL diagnostics without credential values", () => {
     const debug = getYandexCalendarConfigDebug();
