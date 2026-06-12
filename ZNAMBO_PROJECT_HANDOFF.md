@@ -9,15 +9,68 @@ Last updated: 2026-06-12
 ## Current Production
 
 ```text
-Application version: 2.5.3.1
+Application version: 2.5.4
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 2654bb9a9d82bc57923da8706ad7fcc949610985
+Validated application deployment commit: 8fd00ad51014977fb0e7ac346b1b08e7519d33ef
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
 Reconciler: enabled
 Runner lock: enabled
 Production scheduler: cron-job.org
+```
+
+## Latest Deployment - V2.5.4
+
+V2.5.4 replaces the today-only dashboard with one unified Plan and fixes the destructive
+numbered-operation incident.
+
+Implemented:
+
+- `/plan` and `/dashboard` now show today, tomorrow, the next seven days, conflicts, important
+  work, long-term work, unresolved work, and reminder rules from the canonical timeline.
+- `/tasks` uses the same canonical item source and provides numeric cards plus management actions.
+- `/reminders` is explicitly a reminder-rule screen and links back to Plan and Tasks when empty.
+- Item cards show human-readable type, reminders, importance, and calendar provider/label/status.
+- Committed batches receive one optional post-create triage card.
+- Event overlap detection uses `A.start < B.end && B.start < A.end`, appears after mutations, and
+  never blocks creation.
+- Numbered deletion is bound to one latest concrete `viewId`, creates a preview, and requires an
+  explicit callback confirmation.
+- `5,6,7,8` remains a list, only `5-8` is a range, and `10.00-11.00` cannot become item indices.
+- Mixed delete plus time update is previewed as one exact operation before any mutation.
+- Confirmed deletion refreshes Tasks and Plan and exposes Undo.
+- Repeat-policy deletion asks whether to remove only the rule or the task and rule.
+- Added conservative `/admin_repair_v254 preview|apply` and protected read-only acceptance probes.
+- CalDAV, mandatory OpenAI ActionPlan, the reminder engine, reconciler, runner lease, and
+  anchor-grid interval logic were not rewritten.
+
+## V2.5.4 Production Acceptance
+
+```text
+Production URL: https://znambo-telegram-assistant.vercel.app
+Validated runtime commit: 8fd00ad51014977fb0e7ac346b1b08e7519d33ef
+/api/health: ok, appVersion 2.5.4, pipelineMode jarvis
+OpenAI configured: true
+OpenAI required for natural language: true
+Telegram webhook URL: correct production endpoint
+Telegram webhook pending updates: 0
+Telegram webhook last error: none
+Automatic scheduler: lastRunnerRunAt advanced after deployment
+Runner succeeded: true
+Policies missing next reminder: 0
+Plan snapshot: 4 visible items
+Planner snapshot: 4 visible items
+Plan with empty today: shows two tomorrow items and upcoming orthodontist
+Conflict detection: orthodontist overlaps Central Park and is visible in Plan
+Reminder center: "Правила напоминаний", explains rule scope, links to /plan and /tasks
+V2.5.4 repair preview: 4 retained, 0 restore, 0 archive
+Repair apply: not needed and not run
+Local tests: 46 files, 158 tests passed
+Lint: passed
+TypeScript: passed
+Build: passed
+Secret scan: passed
 ```
 
 ## Latest Deployment - V2.5.3.1
@@ -168,17 +221,20 @@ V2.5.1 - Compact control, timeline classification, campaign semantics
 V2.5.2 - Universal editability, temporal safety, Russian weekday repair
 V2.5.3 - Production repair enforcement and deterministic Yandex CalDAV lifecycle
 V2.5.3.1 - Normal CalDAV sync resilience and idempotent retry queue
+V2.5.4 - Unified Plan UX, safe numbered mutations, triage and conflict detection
 ```
 
 ## Remaining Limitations
 
-- One future reminder-like item remains an orphan candidate and was intentionally not
-  auto-archived because it may be a real user task.
 - Calendar sync remains non-blocking by design.
 - Historical calendar failures from the period before valid CalDAV configuration remain visible
   in safe diagnostics. They are not retried automatically unless explicitly requested.
 - An independent Yandex UI check for duplicate legacy events still requires the owner; production
   retry acceptance proved that the existing object URL is reused.
+- The destructive confirmation callback was covered by regression tests and deployed, but no
+  intentional production item deletion was performed during acceptance.
+- Vercel connector access to the team scope still returns 403; GitHub auto-deploy completed and
+  was verified through the production health commit.
 
 ## Handoff Rule
 

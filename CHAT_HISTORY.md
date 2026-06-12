@@ -25,6 +25,22 @@ npm run build -> passed
 No secrets were stored. After deployment the only cross-chat attachment remains
 `ZNAMBO_PROJECT_HANDOFF.md`.
 
+Production result:
+
+```text
+V2.5.4 deployed through GitHub/Vercel auto-deploy
+validated runtime commit -> 8fd00ad51014977fb0e7ac346b1b08e7519d33ef
+health -> ok
+webhook -> pending 0, no last error
+automatic runner -> advanced and succeeded
+Plan and planner snapshots -> 4 matching items
+Plan -> tomorrow and soon are visible when today is empty
+conflict -> orthodontist versus Central Park is visible
+reminder rules -> correct empty-state explanation and Plan/Tasks navigation
+repair preview -> four retained records, zero restore, zero archive
+repair apply -> not run because production state is already clean
+```
+
 ## 2026-06-12 - V2.5.3.1 normal CalDAV sync resilience
 
 User reported that `/calendar_test` passed while normal event sync could still time out and asked

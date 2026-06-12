@@ -17,6 +17,20 @@
 - Local validation before rollout: 46 test files and 158 tests passed; lint and build passed.
 - No secrets were written to project history.
 
+Production rollout:
+
+```text
+validated runtime commit -> 8fd00ad51014977fb0e7ac346b1b08e7519d33ef
+health -> ok, appVersion 2.5.4, Jarvis pipeline active
+webhook -> correct production URL, pending 0, no last error
+automatic scheduler -> lastRunnerRunAt advanced, lastRunnerSucceeded true
+dashboard snapshot -> 4 items, two tomorrow rows, upcoming orthodontist, visible conflict
+planner snapshot -> the same 4 items
+reminder center -> empty rule state explains /plan and /tasks instead of a dead end
+V2.5.4 repair preview -> retained 4, restore 0, archive 0
+repair apply -> not required and not run
+```
+
 ## Update 2026-06-12 - V2.5.3.1
 
 - Fixed normal Yandex CalDAV sync so it uses deterministic object URLs and matching ICS UIDs.
