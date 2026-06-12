@@ -162,7 +162,7 @@ export async function runYandexCalendarTest(): Promise<YandexCalendarTestResult>
   try {
     const collection = await resolveCalendarCollection();
     const id = randomUUID();
-    calendarObjectUrl = buildCalendarObjectUrl(collection.url, `znambo-calendar-test-${id}`);
+    calendarObjectUrl = buildCalendarObjectUrl(collection.url, id);
     diagnostics = {
       calendarUrlSource: collection.source,
       collectionUrlNormalized: collection.normalized,

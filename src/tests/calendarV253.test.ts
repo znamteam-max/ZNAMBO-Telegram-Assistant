@@ -60,6 +60,9 @@ describe("V2.5.3 Yandex calendar verification", () => {
       new Set([result.calendarObjectUrl]),
     );
     expect(objectCalls.every(([, init]) => init?.redirect === "manual")).toBe(true);
+    const testUid = body.match(/UID:([0-9a-f-]+)@znambo-telegram-assistant/)?.[1];
+    expect(testUid).toBeTruthy();
+    expect(result.calendarObjectUrl).toMatch(new RegExp(`/${testUid}\\.ics$`));
   });
 
   it("normalizes configured collection URLs with and without a trailing slash", () => {
