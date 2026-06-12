@@ -1,5 +1,23 @@
 # ZNAMBO Telegram Assistant Chat History
 
+## 2026-06-12 - V2.5.3.1 normal CalDAV sync resilience
+
+User reported that `/calendar_test` passed while normal event sync could still time out and asked
+for an idempotent retry queue, user-visible retry controls, safe diagnostics, production repair,
+tests, and a Russian pluralization fix.
+
+Implemented and deployed:
+
+- normal sync now uses the hardened CalDAV lifecycle and matching UID/object filename;
+- immediate timeout saves the item and queues an automatic retry;
+- retry first GETs the same object URL to avoid duplicate PUTs;
+- the minute reminder runner also processes a bounded calendar retry batch;
+- added `/calendar_retry_failed`, item-card controls, V2.5.3 calendar repair, and diagnostics;
+- fixed `4 пункта требуют решения`;
+- production orthodontist item and automatic retry probe both reached `synced`.
+
+No secrets were stored. The canonical handoff remains `ZNAMBO_PROJECT_HANDOFF.md`.
+
 This file is maintained as a running chat and version log for the project.
 
 Rules:

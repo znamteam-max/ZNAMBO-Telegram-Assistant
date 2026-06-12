@@ -1,5 +1,16 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## Update 2026-06-12 - V2.5.3.1
+
+- Fixed normal Yandex CalDAV sync so it uses deterministic object URLs and matching ICS UIDs.
+- Added abortable immediate sync, idempotent retry queue, retry-first GET, commands, card controls,
+  safe diagnostics, production repair, and Russian dashboard pluralization.
+- Applied `drizzle/0006_calendar_sync_resilience.sql` to production Neon.
+- Production acceptance confirmed `/calendar_test`, orthodontist repair, and automatic retry
+  through the existing minute runner.
+- Validation: 44 test files and 149 tests passed; lint, TypeScript, and build passed.
+- No secrets were written to project history.
+
 Обновлено: 2026-06-09, Europe/Moscow.
 
 Этот файл фиксирует историю создания и текущего состояния проекта без значений секретов. Все токены, пароли, ключи API и строки подключения намеренно не записаны.

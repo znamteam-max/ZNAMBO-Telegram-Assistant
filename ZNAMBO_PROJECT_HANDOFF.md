@@ -9,9 +9,9 @@ Last updated: 2026-06-12
 ## Current Production
 
 ```text
-Application version: 2.5.3
+Application version: 2.5.3.1
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 457961dd5da3353670be86e76afc3fa483ff4e30
+Validated application deployment commit: 2654bb9a9d82bc57923da8706ad7fcc949610985
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -20,7 +20,43 @@ Runner lock: enabled
 Production scheduler: cron-job.org
 ```
 
-## Latest Deployment - V2.5.3
+## Latest Deployment - V2.5.3.1
+
+V2.5.3.1 makes normal event synchronization resilient without changing the planner or reminder
+architecture.
+
+Implemented:
+
+- Normal sync now shares the hardened low-level CalDAV client used by `/calendar_test`.
+- Normal events use one deterministic object URL and a matching ICS UID.
+- Added separate request, read-back, and total sync timeouts with real HTTP aborts.
+- Immediate timeout preserves the planner item and creates an idempotent `pending_retry` job.
+- Retry first GETs the same object URL and PUTs only after confirmed not-found.
+- The existing minute runner processes a bounded calendar retry batch.
+- Added `/calendar_retry_failed`, event-card retry/debug/disable controls, and V2.5.3 repair.
+- Added safe normal-sync and retry metrics to `/calendardebug`.
+- Fixed Russian unresolved-item pluralization.
+- Applied and verified `drizzle/0006_calendar_sync_resilience.sql` in production Neon.
+
+## V2.5.3.1 Production Acceptance
+
+```text
+/api/health: appVersion 2.5.3.1, runner healthy
+Yandex CalDAV test: authorization/create/read/delete all passed
+Orthodontist repair: 1 candidate before, synced, 0 candidates after
+Normal sync: synced, no current error
+Automatic retry probe: pending_retry -> minute runner -> synced
+Automatic retry preserved external ID and cleared last error
+Pending calendar retries: 0
+Telegram webhook: pending updates 0, no last error
+Local tests: 44 files passed, 149 tests passed
+Lint: passed
+TypeScript: passed
+Build: passed
+Secret scan: passed
+```
+
+## Previous Deployment - V2.5.3
 
 V2.5.3 is a focused production hotfix on top of V2.5.2.
 
@@ -131,6 +167,7 @@ V2.4.2 - Atomic reminder semantics, reconciler, runner lock, anchor grid
 V2.5.1 - Compact control, timeline classification, campaign semantics
 V2.5.2 - Universal editability, temporal safety, Russian weekday repair
 V2.5.3 - Production repair enforcement and deterministic Yandex CalDAV lifecycle
+V2.5.3.1 - Normal CalDAV sync resilience and idempotent retry queue
 ```
 
 ## Remaining Limitations
@@ -138,8 +175,10 @@ V2.5.3 - Production repair enforcement and deterministic Yandex CalDAV lifecycle
 - One future reminder-like item remains an orphan candidate and was intentionally not
   auto-archived because it may be a real user task.
 - Calendar sync remains non-blocking by design.
-- Normal item synchronization has production-safe diagnostics, while the confirmed end-to-end
-  acceptance in this deployment was performed through `/calendar_test`.
+- Historical calendar failures from the period before valid CalDAV configuration remain visible
+  in safe diagnostics. They are not retried automatically unless explicitly requested.
+- An independent Yandex UI check for duplicate legacy events still requires the owner; production
+  retry acceptance proved that the existing object URL is reused.
 
 ## Handoff Rule
 
