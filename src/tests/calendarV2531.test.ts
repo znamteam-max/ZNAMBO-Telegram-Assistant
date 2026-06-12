@@ -77,6 +77,7 @@ describe("V2.5.3.1 normal CalDAV sync resilience", () => {
     expect(new Set(calls.map((call) => call.url))).toEqual(
       new Set(["https://caldav.example.test/calendar/11111111222233334444555555555555.ics"]),
     );
+    expect(body).toContain("UID:11111111222233334444555555555555");
   });
 
   it("aborts a slow PUT and records pending_retry without losing the item", async () => {
@@ -108,7 +109,7 @@ describe("V2.5.3.1 normal CalDAV sync resilience", () => {
     });
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
       new Response(
-        init?.method === "GET" ? `UID:${item.id}@znambo-telegram-assistant` : "",
+        init?.method === "GET" ? "UID:11111111222233334444555555555555" : "",
         { status: 200 },
       ),
     );

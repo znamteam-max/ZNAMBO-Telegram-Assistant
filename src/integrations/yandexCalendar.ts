@@ -114,7 +114,7 @@ export async function syncPlannerItemToYandex(
       lastError: null,
       provider: YANDEX_PROVIDER,
     });
-    const expectedUid = `UID:${item.id}@znambo-telegram-assistant`;
+    const expectedUid = `UID:${buildItemCalendarUid(item)}`;
     if (options.retryFirst) {
       try {
         await readCalendarObjectOnce(href, expectedUid, totalController.signal);
@@ -284,7 +284,11 @@ export function classifyYandexCalendarError(error: unknown): {
 
 async function buildNewEventHref(item: PlannerItem): Promise<string> {
   const collection = await resolveCalendarCollection();
-  return buildCalendarObjectUrl(collection.url, item.id.replaceAll("-", ""));
+  return buildCalendarObjectUrl(collection.url, buildItemCalendarUid(item));
+}
+
+function buildItemCalendarUid(item: PlannerItem) {
+  return item.id.replaceAll("-", "");
 }
 
 async function resolveCalendarCollection(): Promise<ResolvedCalendarCollection> {
@@ -462,7 +466,7 @@ function buildIcs(item: PlannerItem, href: string): string {
     "PRODID:-//ZNAMBO Telegram Assistant//RU",
     "CALSCALE:GREGORIAN",
     "BEGIN:VEVENT",
-    `UID:${item.id}@znambo-telegram-assistant`,
+    `UID:${buildItemCalendarUid(item)}`,
     `DTSTAMP:${now}`,
     `DTSTART:${start}`,
     `DTEND:${end}`,
