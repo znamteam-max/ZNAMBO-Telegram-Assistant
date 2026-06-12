@@ -1290,6 +1290,39 @@ npm run build -> passed
 git diff --check -> passed
 ```
 
+## V2.5.3 production repair enforcement and CalDAV verification
+
+Started from active production V2.5.2 commit
+`1c209e03d2aba32dff95eb0f191d7df685819555`.
+
+The protected production snapshot confirmed 12 visible active items, an orthodontist event still on
+2026-06-13, stale/duplicate Drik intent, five unresolved records from 2026-06-07 through
+2026-06-09, and a calendar test event whose CalDAV result was not visible.
+
+Implemented:
+
+```text
+canonical buildUserTimelineView for tasks/dashboard/reminders/long-term
+unresolved_past bucket after 48 hours
+idempotent production repair behind /admin_repair_v252
+safe /cleanup_garbage preview and /admin_state_v252
+CalDAV PROPFIND/create/read/delete test
+read-back verification after normal CalDAV PUT
+safe calendar error classes and per-item calendar status
+explicit calendar feedback after creates, updates and plan confirmations
+```
+
+Pre-deploy validation:
+
+```text
+npm test -> 41 files passed, 129 tests passed
+npm run lint -> passed
+npx tsc --noEmit -> passed
+```
+
+No secrets were written to project history. Production deployment, repair application and
+acceptance checks are pending.
+
 One-time production cleanup status:
 
 ```text

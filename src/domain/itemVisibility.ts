@@ -14,7 +14,18 @@ export function isGarbageOrTestItem(
     metadata.garbageReason === "legacy_multiline_update_saved_as_single_event" ||
     isLegacyMultilineGarbageText(combinedText) ||
     isManagementCommandTitle(item.title) ||
-    isKnownPollutedProductionTitle(item.title)
+    isKnownPollutedProductionTitle(item.title) ||
+    isMalformedPlannerTitle(item.title)
+  );
+}
+
+export function isMalformedPlannerTitle(title: string): boolean {
+  const normalized = title.trim().replace(/\s+/g, " ");
+  const meaningfulWords = normalized.match(/[\p{L}\p{N}]{2,}/gu) ?? [];
+  return (
+    /^сделать\s+его\s*[.!?]*$/iu.test(normalized) ||
+    /(?:\s|^)[.!?]{1,4}$/.test(normalized) ||
+    meaningfulWords.length < 2
   );
 }
 

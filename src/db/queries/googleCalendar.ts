@@ -1,9 +1,10 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 import { getDb } from "../client";
 import {
   googleCalendarConnections,
   itemSyncState,
+  plannerItems,
   type GoogleCalendarConnection,
   type PlannerItem,
 } from "../schema";
@@ -59,6 +60,27 @@ export async function getItemGoogleSyncState(plannerItemId: string) {
     .where(eq(itemSyncState.plannerItemId, plannerItemId))
     .limit(1);
   return syncState ?? null;
+}
+
+export async function getLatestCalendarSyncStateForUser(userId: string) {
+  const [syncState] = await getDb()
+    .select({ sync: itemSyncState, item: plannerItems })
+    .from(itemSyncState)
+    .innerJoin(plannerItems, eq(itemSyncState.plannerItemId, plannerItems.id))
+    .where(eq(plannerItems.userId, userId))
+    .orderBy(desc(itemSyncState.updatedAt))
+    .limit(1);
+  return syncState ?? null;
+}
+
+export async function listCalendarSyncStatesForUser(userId: string, limit = 100) {
+  return getDb()
+    .select({ sync: itemSyncState, item: plannerItems })
+    .from(itemSyncState)
+    .innerJoin(plannerItems, eq(itemSyncState.plannerItemId, plannerItems.id))
+    .where(eq(plannerItems.userId, userId))
+    .orderBy(desc(itemSyncState.updatedAt))
+    .limit(limit);
 }
 
 export async function markGoogleCalendarSync(params: {

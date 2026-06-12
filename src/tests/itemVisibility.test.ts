@@ -32,6 +32,7 @@ describe("daily item visibility", () => {
   it("recognizes known polluted production titles", () => {
     expect(isGarbageOrTestItem(makeItem({ title: "Удали всё, давай заново" }))).toBe(true);
     expect(isGarbageOrTestItem(makeItem({ title: "Тестовое напоминание через 2 мин." }))).toBe(true);
+    expect(isGarbageOrTestItem(makeItem({ title: "сделать его ." }))).toBe(true);
   });
 });
 

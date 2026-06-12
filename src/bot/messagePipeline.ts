@@ -22,7 +22,10 @@ import {
   shouldAutoCommitPlan,
 } from "@/services/actionPlanCommit";
 import { buildActionPlanFromDecision } from "@/services/assistantPlanBuilders";
-import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
+import {
+  formatCalendarSyncFeedback,
+  syncItemsToCalendarBestEffort,
+} from "@/services/calendarBestEffort";
 import { buildActiveContext } from "@/services/contextRetrieval";
 import { storePlanMemoryFacts } from "@/services/memory";
 import { logger } from "@/lib/logger";
@@ -291,18 +294,22 @@ export async function executeActionPlanForMessage(
       reminderPolicies: params.reminderPolicies,
     });
     if (result.status === "committed") {
-      if (!params.compactMode) {
-        await replyAndRecord(
-          ctx,
+      const calendarResults = await syncItemsToCalendarBestEffort(result.items);
+      const calendarFeedback = formatCalendarSyncFeedback(calendarResults);
+      await replyAndRecord(
+        ctx,
+        [
           formatCommittedPlanSummary({
             items: result.items,
             reminderCount: result.reminders.length,
             timezone: params.timezone,
             intro: params.committedIntro,
           }),
-        );
-      }
-      await syncItemsToCalendarBestEffort(result.items);
+          calendarFeedback,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      );
       return {
         finalAction: "committed_action_plan",
         validatorWarnings: validation.warnings,

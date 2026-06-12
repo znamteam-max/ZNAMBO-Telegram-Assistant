@@ -29,6 +29,7 @@ export function classifyTimelineItem(
   if (item?.status === "completed" || item?.status === "cancelled" || item?.status === "archived") {
     return "history";
   }
+  if (item?.visibility === "history") return "history";
   if (metadataValue(item, policy, "campaignState") === "waiting") return "campaign_waiting";
   if (metadataValue(item, policy, "campaignState") === "active") return "campaign_active";
 

@@ -19,7 +19,10 @@ import {
 import { endOfLocalDay, startOfLocalDay } from "@/domain/dateTime";
 import { syncPlannerItemToCalendar } from "@/integrations/calendar";
 import { cancelStoredActionPlan, commitStoredActionPlan } from "@/services/actionPlanCommit";
-import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
+import {
+  formatCalendarSyncFeedback,
+  syncItemsToCalendarBestEffort,
+} from "@/services/calendarBestEffort";
 import { cancelActivePlanReset, executeActivePlanReset } from "@/services/activePlanReset";
 import { UserFacingError } from "@/lib/errors";
 import {
@@ -151,14 +154,20 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       throw error;
     }
     if (result.status === "committed") {
+      const calendarResults = await syncItemsToCalendarBestEffort(result.items);
+      const calendarFeedback = formatCalendarSyncFeedback(calendarResults);
       await ctx.reply(
-        formatCommittedPlanSummary({
-          items: result.items,
-          reminderCount: result.reminders.length,
-          timezone: owner.timezone,
-        }),
+        [
+          formatCommittedPlanSummary({
+            items: result.items,
+            reminderCount: result.reminders.length,
+            timezone: owner.timezone,
+          }),
+          calendarFeedback,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       );
-      await syncItemsToCalendarBestEffort(result.items);
       await refreshAfterCallback(ctx);
       return;
     }

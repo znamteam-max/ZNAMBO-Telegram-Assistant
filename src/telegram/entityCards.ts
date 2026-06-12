@@ -18,6 +18,8 @@ import {
   getEffectivePriority,
   getUrgencyBoost,
 } from "@/domain/timelineClassification";
+import { getItemGoogleSyncState } from "@/db/queries/googleCalendar";
+import { safeCalendarErrorClass } from "@/services/calendarDiagnostics";
 
 export async function renderEntityCard(params: {
   userId: string;
@@ -39,7 +41,10 @@ async function renderItemCard(params: {
   const item = await getPlannerItemById(params.userId, params.ref.id);
   if (!item) return null;
   const now = params.now ?? new Date();
-  const policies = await listReminderPoliciesForItem(params.userId, item.id);
+  const [policies, calendar] = await Promise.all([
+    listReminderPoliciesForItem(params.userId, item.id),
+    getItemGoogleSyncState(item.id),
+  ]);
   const base = getBasePriority({ item });
   const effective = getEffectivePriority({ item }, now, params.timezone);
   const boost = getUrgencyBoost({ item }, now, params.timezone);
@@ -55,6 +60,9 @@ async function renderItemCard(params: {
       `Важность: ${importanceLabel(base)} (${importanceMode({ item })})`,
       `Сейчас: ${importanceLabel(effective)}; ${urgencyExplanation(boost)}`,
       `Напоминания: ${policies.filter((policy) => policy.status === "active").length}`,
+      ["event", "training", "tentative_event"].includes(item.kind)
+        ? `Календарь: ${formatCalendarState(calendar?.status, safeCalendarErrorClass(calendar?.lastError))}`
+        : null,
       campaignGroup ? `Кампания: ${campaignGroup}` : null,
       item.category === "health" || item.metadata?.familyRelated === true
         ? "Рекомендация: добавить напоминание заранее."
@@ -64,6 +72,13 @@ async function renderItemCard(params: {
       .join("\n"),
     keyboard: itemMenuKeyboard(item.id, campaignGroup || null),
   };
+}
+
+function formatCalendarState(status?: string | null, errorClass?: string | null) {
+  if (status === "synced") return "synced";
+  if (status === "error") return `failed (${errorClass ?? "unknown"})`;
+  if (status === "not_synced") return "pending";
+  return "unknown";
 }
 
 async function renderPolicyCard(params: {

@@ -17,6 +17,7 @@ export async function listItemsBetween(params: {
         eq(plannerItems.userId, params.userId),
         eq(plannerItems.status, "active"),
         visibleItemSql(),
+        currentItemSql(),
         or(
           and(
             isNotNull(plannerItems.startAt),
@@ -48,6 +49,7 @@ export async function listOpenTasks(userId: string, limit = 30): Promise<Planner
         inArray(plannerItems.kind, ["task", "preparation_task", "recurring_task"]),
         eq(plannerItems.status, "active"),
         visibleItemSql(),
+        currentItemSql(),
       ),
     )
     .orderBy(sql`${plannerItems.dueAt} asc nulls last`, desc(plannerItems.createdAt))
@@ -71,6 +73,7 @@ export async function listManageableItems(userId: string, limit = 40): Promise<P
         ]),
         eq(plannerItems.status, "active"),
         visibleItemSql(),
+        currentItemSql(),
       ),
     )
     .orderBy(
@@ -95,6 +98,7 @@ export async function listOverdueOpenItems(params: {
         eq(plannerItems.userId, params.userId),
         eq(plannerItems.status, "active"),
         visibleItemSql(),
+        currentItemSql(),
         or(
           and(isNotNull(plannerItems.dueAt), lte(plannerItems.dueAt, params.before)),
           and(isNotNull(plannerItems.startAt), lte(plannerItems.startAt, params.before)),
@@ -189,6 +193,7 @@ export async function listYesterdayCarryCandidates(params: {
         eq(plannerItems.userId, params.userId),
         eq(plannerItems.status, "active"),
         visibleItemSql(),
+        currentItemSql(),
         ne(plannerItems.kind, "event"),
         ne(plannerItems.kind, "recurring_task"),
         itemInWindowSql(params.from, params.to),
@@ -468,6 +473,7 @@ async function listVisibleItemsInWindow(params: {
         eq(plannerItems.userId, params.userId),
         eq(plannerItems.status, "active"),
         visibleItemSql(),
+        currentItemSql(),
         itemInWindowSql(params.from, params.to),
       ),
     )
@@ -484,6 +490,10 @@ function visibleItemSql() {
     and coalesce(${plannerItems.metadata}->>'source', '') <> 'remindertest'
     and coalesce(${plannerItems.visibility}, 'active') <> 'hidden'
   `;
+}
+
+function currentItemSql() {
+  return sql<boolean>`coalesce(${plannerItems.visibility}, 'active') <> 'history'`;
 }
 
 function itemInWindowSql(from: Date, to: Date) {

@@ -1,6 +1,6 @@
 # Personal Telegram Daily Assistant
 
-Current application version: `2.5.2`.
+Current application version: `2.5.3`.
 
 Release summaries are stored as one file per version in [`versions/`](./versions/README.md).
 
@@ -52,7 +52,7 @@ Postgres
 - Telegram message registry for deleting or disabling stale reminder cards, item menus and dashboards.
 - External minute scheduler support through cron-job.org or the optional Cloudflare Worker project.
 - Google Calendar OAuth, encrypted refresh token storage and event sync.
-- Yandex Calendar sync via CalDAV as a best-effort calendar provider. Calendar failure does not block DB records or Telegram reminders.
+- Yandex Calendar sync via CalDAV with write/read-back verification. Calendar failure does not block DB records or Telegram reminders.
 - Vitest coverage for allowlist, idempotency middleware, date conversion, reminder policy repair/reconciliation, catch-up, interval drift, pending action double-click safety, oversized media, agenda ordering, calendar failure preservation and V2 planner acceptance cases.
 
 ## Prerequisites
@@ -188,7 +188,7 @@ Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `APP_ENCR
 
 Then send `/calendar` in Telegram and open the generated authorization link. If Calendar sync fails later, the local item and reminders remain active and sync error is recorded.
 
-Use `/calendar status` for current status and `/calendar retry` for best-effort retry messaging.
+Use `/calendar`, `/calendardebug`, and `/calendar_test` for safe status and a real temporary create/read/delete verification.
 
 ## Yandex Calendar
 

@@ -7,6 +7,7 @@ import { parseRussianWeekdayAppointment } from "@/domain/russianWeekday";
 import { classifyTimelineItem } from "@/domain/timelineClassification";
 import type { PlannerItem } from "@/db/schema";
 import { requiresCampaignCompletionClarification } from "@/services/campaignLifecycle";
+import { duplicateDrikItemIds } from "@/services/v252ProductionRepair";
 
 const now = new Date("2026-06-11T09:00:00.000Z");
 
@@ -79,6 +80,16 @@ describe("V2.5.2 universal editability and temporal safety", () => {
 
   it("requires clarification before completing a future campaign event", () => {
     expect(requiresCampaignCompletionClarification(campaignItem(), now)).toBe(true);
+  });
+
+  it("keeps the future canonical Drik task and marks the stale duplicate", () => {
+    const stale = campaignItem();
+    stale.id = "stale";
+    stale.kind = "task";
+    stale.title = "Записаться к Дрик";
+    stale.startAt = new Date("2026-06-09T05:00:00.000Z");
+    const future = { ...stale, id: "future", startAt: null, dueAt: new Date("2026-06-17T19:00:00.000Z") };
+    expect(duplicateDrikItemIds([stale, future], now)).toEqual(["stale"]);
   });
 });
 

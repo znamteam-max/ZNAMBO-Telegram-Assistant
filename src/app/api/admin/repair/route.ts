@@ -56,6 +56,12 @@ import {
   previewV252ProductionRepair,
 } from "@/services/v252ProductionRepair";
 import { renderLiveDashboard } from "@/telegram/liveDashboard";
+import { getProductionStateV252 } from "@/services/productionDiagnostics";
+import {
+  getCalendarDebug,
+  getCalendarStatus,
+  runCalendarWriteTest,
+} from "@/services/calendarDiagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -118,6 +124,32 @@ export async function POST(request: Request) {
       timezone: owner.timezone,
     });
     return NextResponse.json({ ok: true, result });
+  }
+  if (body.action === "admin_state_v252") {
+    return NextResponse.json({
+      ok: true,
+      state: await getProductionStateV252({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "calendar_state") {
+    return NextResponse.json({
+      ok: true,
+      status: await getCalendarStatus(owner.id),
+      debug: await getCalendarDebug(owner.id),
+    });
+  }
+  if (body.action === "calendar_test" && body.confirm === true) {
+    const result = await runCalendarWriteTest(owner.id);
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.calendar_write_test",
+      entityType: "calendar",
+      details: result,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 502 });
   }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {
     const result = await runV242SnoozeProductionProbe({

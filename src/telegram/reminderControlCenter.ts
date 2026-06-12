@@ -2,7 +2,6 @@ import { DateTime } from "luxon";
 
 import {
   getReminderPolicyById,
-  listActiveReminderPolicies,
   listReminderPoliciesByStatus,
 } from "@/db/queries/reminderPolicies";
 import type { ReminderPolicy } from "@/db/schema";
@@ -18,6 +17,7 @@ import {
   entityListKeyboard,
   reminderPolicyCardKeyboard,
 } from "@/bot/keyboards";
+import { buildUserTimelineView } from "@/services/userTimeline";
 
 export async function renderReminderControlCenter(params: {
   userId: string;
@@ -30,7 +30,7 @@ export async function renderReminderControlCenter(params: {
   const policies =
     scope === "paused"
       ? await listReminderPoliciesByStatus(params.userId, "paused", 100)
-      : await listActiveReminderPolicies(params.userId, 100);
+      : (await buildUserTimelineView(params)).policies;
   const filtered = groupCampaignPolicies(policies)
     .filter((policy) => policyMatchesScope(policy, scope, now, params.timezone))
     .sort((a, b) =>

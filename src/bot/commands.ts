@@ -48,6 +48,13 @@ import {
   applyV252ProductionRepair,
   previewV252ProductionRepair,
 } from "@/services/v252ProductionRepair";
+import {
+  getCalendarDebug,
+  getCalendarStatus,
+  renderCalendarStatus,
+  runCalendarWriteTest,
+} from "@/services/calendarDiagnostics";
+import { getProductionStateV252 } from "@/services/productionDiagnostics";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -106,6 +113,9 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/lasttranscript — показать последнюю расшифровку",
         "/history, /yesterday, /weeklog, /review — история и итоги",
         "/calendar — статус календаря",
+        "/calendardebug — безопасная диагностика календаря",
+        "/calendar_test — реальный create/read/delete тест Яндекс.Календаря",
+        "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
         "/forget — показать память для удаления",
@@ -131,15 +141,12 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
 
   bot.command("calendar", async (ctx) => {
+    const owner = requireOwner(ctx);
     const requested = String(ctx.match ?? "")
       .trim()
       .toLowerCase();
     if (requested === "status") {
-      await ctx.reply(
-        getCalendarProvider() === "yandex"
-          ? "Календарь: Yandex CalDAV включён. Если CalDAV вернёт ошибку, задачи и Telegram-напоминания всё равно сохраняются."
-          : `Календарь: ${getCalendarProvider()}.`,
-      );
+      await ctx.reply(renderCalendarStatus(await getCalendarStatus(owner.id)));
       return;
     }
     if (requested === "retry") {
@@ -150,9 +157,7 @@ export function registerCommands(bot: Bot<BotContext>) {
     }
 
     if (getCalendarProvider() === "yandex") {
-      await ctx.reply(
-        "Яндекс Календарь подключён через CalDAV. Новые встречи буду синхронизировать туда.",
-      );
+      await ctx.reply(renderCalendarStatus(await getCalendarStatus(owner.id)));
       return;
     }
 
@@ -166,6 +171,51 @@ export function registerCommands(bot: Bot<BotContext>) {
     await ctx.reply("Подключи Google Calendar по защищённой ссылке:", {
       reply_markup: calendarConnectKeyboard(url),
     });
+  });
+
+  bot.command("calendardebug", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const debug = await getCalendarDebug(owner.id);
+    await replyAndRecord(
+      ctx,
+      [
+        `calendarProvider: ${debug.provider}`,
+        `calendarConfigured: ${debug.configured}`,
+        `authorization: ${debug.authorization}`,
+        `write: ${debug.write}`,
+        `lastWriteStatus: ${debug.lastWriteStatus}`,
+        `lastWriteErrorClass: ${debug.lastWriteErrorClass ?? "none"}`,
+        `hasUsername: ${debug.hasUsername}`,
+        `hasPassword: ${debug.hasPassword}`,
+        `hasBaseUrl: ${debug.hasBaseUrl}`,
+        `hasCalendarUrl: ${debug.hasCalendarUrl}`,
+        `usesAppPassword: ${debug.usesAppPassword}`,
+      ].join("\n"),
+    );
+  });
+
+  bot.command("calendar_test", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const result = await runCalendarWriteTest(owner.id);
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.calendar_write_test",
+      entityType: "calendar",
+      details: result,
+    });
+    await replyAndRecord(
+      ctx,
+      [
+        "Тест Яндекс.Календаря:",
+        `1. Авторизация — ${result.steps.authorization}`,
+        `2. Создание события — ${result.steps.create}`,
+        `3. Чтение события — ${result.steps.read}`,
+        `4. Удаление теста — ${result.steps.delete}`,
+        result.errorClass ? `Ошибка: ${result.errorClass}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
   });
 
   bot.command("today", async (ctx) =>
@@ -442,10 +492,10 @@ export function registerCommands(bot: Bot<BotContext>) {
       await replyAndRecord(
         ctx,
         [
-          "V2.5.2 production repair применён.",
-          `Ортодонт исправлен: ${result.orthodontistItems.length}`,
-          `Legacy Drik отмечены: ${result.drikOrphans.length}`,
-          `Старые просроченные архивированы: ${result.oldOverdueItems.length}`,
+          "V2.5.3 production repair применён.",
+          `Ортодонт исправлен: ${result.canonicalOrthodontistId ? 1 : 0}`,
+          `Дубли/legacy архивированы: ${result.archivedItemIds.length}`,
+          `Старые просроченные перенесены в history: ${result.movedToHistoryItemIds.length}`,
           `Старые bot-карточки скрыты: ${result.staleBotCards.length}`,
           "Снимок для отката сохранён в audit.",
         ].join("\n"),
@@ -463,15 +513,38 @@ export function registerCommands(bot: Bot<BotContext>) {
     await replyAndRecord(
       ctx,
       [
-        "V2.5.2 production repair preview:",
+        "V2.5.3 production repair preview:",
         `Ортодонт: ${result.orthodontistItems.length}`,
         `Legacy Drik: ${result.drikOrphans.length}`,
-        `Старые просроченные: ${result.oldOverdueItems.length}`,
+        `Неразобранные старые записи: ${result.oldOverdueItems.length}`,
         `Старые bot-карточки: ${result.staleBotCards.length}`,
         `Central Park items: ${result.v251.centralItems.length}`,
         `Malformed: ${result.v251.malformedItems.length}`,
         "",
         "Для применения: /admin_repair_v252 apply",
+      ].join("\n"),
+    );
+  });
+  bot.command("admin_state_v252", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const state = await getProductionStateV252({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    await replyAndRecord(
+      ctx,
+      [
+        `appVersion: ${state.appVersion}`,
+        `deploymentCommit: ${state.deploymentCommit}`,
+        `plannerItemCountsByStatus: ${JSON.stringify(state.plannerItemCountsByStatus)}`,
+        `plannerItemCountsByDateBucket: ${JSON.stringify(state.plannerItemCountsByDateBucket)}`,
+        `activeReminderPolicyCount: ${state.activeReminderPolicyCount}`,
+        `orphanReminderLikeItemsCount: ${state.orphanReminderLikeItemsCount}`,
+        `calendarProvider: ${state.calendarProvider}`,
+        `calendarConfigured: ${state.calendarConfigured}`,
+        `calendarLastWriteStatus: ${state.calendarLastWriteStatus}`,
+        `calendarLastWriteErrorClass: ${state.calendarLastWriteErrorClass ?? "none"}`,
+        `dirtyDataCandidates: ${JSON.stringify(state.dirtyDataCandidates)}`,
       ].join("\n"),
     );
   });

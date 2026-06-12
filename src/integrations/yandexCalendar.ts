@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { randomUUID } from "crypto";
 
 import { getItemGoogleSyncState, markGoogleCalendarSync } from "@/db/queries/googleCalendar";
 import type { PlannerItem } from "@/db/schema";
@@ -14,7 +15,39 @@ type CalDavResponse = {
 export type YandexCalendarSyncResult =
   | { status: "disabled" | "skipped" }
   | { status: "synced"; externalId: string }
-  | { status: "error"; error: string };
+  | { status: "error"; errorClass: YandexCalendarErrorClass; safeMessage: string };
+
+export type YandexCalendarErrorClass =
+  | "auth_failed"
+  | "forbidden"
+  | "caldav_url_not_found"
+  | "network_error"
+  | "timeout"
+  | "parse_error"
+  | "write_failed"
+  | "read_back_failed"
+  | "delete_failed"
+  | "unknown";
+
+export type YandexCalendarTestResult = {
+  ok: boolean;
+  errorClass: YandexCalendarErrorClass | null;
+  steps: {
+    authorization: "ok" | "failed" | "not_run";
+    create: "ok" | "failed" | "not_run";
+    read: "ok" | "failed" | "not_run";
+    delete: "ok" | "failed" | "not_run";
+  };
+};
+
+class YandexCalendarError extends Error {
+  constructor(
+    public readonly errorClass: YandexCalendarErrorClass,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -29,6 +62,11 @@ export async function syncPlannerItemToYandex(
   if (!item.startAt) return { status: "skipped" };
 
   try {
+    await markGoogleCalendarSync({
+      item,
+      status: "not_synced",
+      provider: "yandex_calendar",
+    });
     const existingSync = await getItemGoogleSyncState(item.id);
     const href =
       existingSync?.provider === "yandex_calendar" && existingSync.externalId
@@ -45,6 +83,14 @@ export async function syncPlannerItemToYandex(
       headers,
       body: ics,
     });
+    const readBack = await caldavRequest(href, { method: "GET" });
+    const readBackText = await readBack.text();
+    if (!readBackText.includes(`UID:${item.id}@znambo-telegram-assistant`)) {
+      throw new YandexCalendarError(
+        "read_back_failed",
+        "Yandex CalDAV did not return the event after write.",
+      );
+    }
 
     await markGoogleCalendarSync({
       item,
@@ -54,16 +100,108 @@ export async function syncPlannerItemToYandex(
     });
     return { status: "synced", externalId: href };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const safe = classifyYandexCalendarError(error);
     await markGoogleCalendarSync({
       item,
       status: "error",
-      lastError: message,
+      lastError: safe.errorClass,
       provider: "yandex_calendar",
     });
-    logger.warn("Yandex Calendar sync failed", { itemId: item.id, error: message });
-    return { status: "error", error: message };
+    logger.warn("Yandex Calendar sync failed", {
+      itemId: item.id,
+      errorClass: safe.errorClass,
+      safeMessage: safe.safeMessage,
+    });
+    return { status: "error", ...safe };
   }
+}
+
+export function getYandexCalendarConfigDebug() {
+  const env = getEnv();
+  return {
+    calendarProvider: "yandex",
+    configured: isYandexCalendarConfigured(),
+    hasUsername: Boolean(env.YANDEX_CALDAV_USERNAME),
+    hasPassword: Boolean(env.YANDEX_CALDAV_APP_PASSWORD),
+    hasBaseUrl: Boolean(env.YANDEX_CALDAV_URL),
+    hasCalendarUrl: Boolean(env.YANDEX_CALDAV_CALENDAR_URL),
+    usesAppPassword: "unknown/manual",
+  };
+}
+
+export async function runYandexCalendarTest(): Promise<YandexCalendarTestResult> {
+  const steps: YandexCalendarTestResult["steps"] = {
+    authorization: "not_run",
+    create: "not_run",
+    read: "not_run",
+    delete: "not_run",
+  };
+  let href: string | null = null;
+  try {
+    const collectionUrl = await resolveCalendarCollectionUrl();
+    await caldavRequest(collectionUrl, {
+      method: "PROPFIND",
+      headers: {
+        "content-type": "application/xml; charset=utf-8",
+        depth: "0",
+      },
+      body: calendarListBody(),
+    });
+    steps.authorization = "ok";
+    const id = randomUUID();
+    href = new URL(`znambo-calendar-test-${id}.ics`, ensureTrailingSlash(collectionUrl)).toString();
+    const start = new Date(Date.now() + 10 * 60 * 1000);
+    const end = new Date(start.getTime() + 5 * 60 * 1000);
+    const ics = buildTestIcs(id, start, end);
+    await caldavRequest(href, {
+      method: "PUT",
+      headers: {
+        "content-type": "text/calendar; charset=utf-8",
+        "if-none-match": "*",
+      },
+      body: ics,
+    });
+    steps.create = "ok";
+    const read = await caldavRequest(href, { method: "GET" });
+    const text = await read.text();
+    if (!text.includes(`UID:${id}@znambo-telegram-assistant`)) {
+      throw new YandexCalendarError("read_back_failed", "CalDAV read-back verification failed.");
+    }
+    steps.read = "ok";
+    await caldavRequest(href, { method: "DELETE" });
+    steps.delete = "ok";
+    return { ok: true, errorClass: null, steps };
+  } catch (error) {
+    const safe = classifyYandexCalendarError(error);
+    if (steps.authorization === "not_run") steps.authorization = "failed";
+    else if (steps.create === "not_run") steps.create = "failed";
+    else if (steps.read === "not_run") steps.read = "failed";
+    else if (steps.delete === "not_run") steps.delete = "failed";
+    if (href && steps.create === "ok" && steps.delete !== "ok") {
+      await caldavRequest(href, { method: "DELETE" }).catch(() => undefined);
+    }
+    return { ok: false, errorClass: safe.errorClass, steps };
+  }
+}
+
+export function classifyYandexCalendarError(error: unknown): {
+  errorClass: YandexCalendarErrorClass;
+  safeMessage: string;
+} {
+  if (error instanceof YandexCalendarError) {
+    return { errorClass: error.errorClass, safeMessage: error.message };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (/abort|timeout/i.test(message)) {
+    return { errorClass: "timeout", safeMessage: "Calendar request timed out." };
+  }
+  if (/fetch|network|socket|econn|enotfound/i.test(message)) {
+    return { errorClass: "network_error", safeMessage: "Calendar network request failed." };
+  }
+  if (/parse|xml/i.test(message)) {
+    return { errorClass: "parse_error", safeMessage: "Calendar response could not be parsed." };
+  }
+  return { errorClass: "unknown", safeMessage: "Calendar request failed." };
 }
 
 async function buildNewEventHref(item: PlannerItem): Promise<string> {
@@ -157,10 +295,19 @@ async function caldavRequest(url: string, init: RequestInit): Promise<Response> 
     },
   });
   if (![200, 201, 204, 207].includes(response.status)) {
-    const text = await response.text().catch(() => "");
-    throw new Error(
-      `Yandex CalDAV ${init.method ?? "GET"} failed: ${response.status} ${text.slice(0, 300)}`,
-    );
+    const errorClass =
+      response.status === 401
+        ? "auth_failed"
+        : response.status === 403
+          ? "forbidden"
+          : response.status === 404
+            ? "caldav_url_not_found"
+            : init.method === "DELETE"
+              ? "delete_failed"
+              : init.method === "GET"
+                ? "read_back_failed"
+                : "write_failed";
+    throw new YandexCalendarError(errorClass, `Yandex CalDAV request failed (${response.status}).`);
   }
   return response;
 }
@@ -192,6 +339,23 @@ function buildIcs(item: PlannerItem, href: string): string {
   ]
     .filter(Boolean)
     .join("\r\n");
+}
+
+function buildTestIcs(id: string, start: Date, end: Date): string {
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//ZNAMBO Telegram Assistant//RU",
+    "BEGIN:VEVENT",
+    `UID:${id}@znambo-telegram-assistant`,
+    `DTSTAMP:${formatIcsDate(new Date())}`,
+    `DTSTART:${formatIcsDate(start)}`,
+    `DTEND:${formatIcsDate(end)}`,
+    "SUMMARY:ZNAMBO CalDAV write verification",
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "",
+  ].join("\r\n");
 }
 
 function firstProp(response: Record<string, unknown> | undefined) {

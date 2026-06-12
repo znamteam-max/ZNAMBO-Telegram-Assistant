@@ -3,11 +3,9 @@ import { DateTime } from "luxon";
 import {
   cancelPlannerItem,
   cancelCalendarSyncJobsForItem,
-  cancelPlannerItemWithMetadata,
   listAllActiveItems,
   listDailyDigestItems,
   listEveningReviewItems,
-  listManageableItems,
   listRecentRangeItems,
   listVisibleActivePlanItems,
   listYesterdayCarryCandidates,
@@ -25,9 +23,10 @@ import { sortJarvisItemsForDisplay } from "./views/renderShared";
 import type { JarvisToolResult } from "./types";
 import { renderAndSaveTaskView, type TaskViewSection } from "./views/renderAndSaveTaskView";
 import { prepareActivePlanReset } from "@/services/activePlanReset";
-import { resetActivePlanKeyboard } from "@/bot/keyboards";
+import { entityListKeyboard, resetActivePlanKeyboard } from "@/bot/keyboards";
 import { isGarbageOrTestItem } from "@/domain/itemVisibility";
 import { undoLastReminderPolicyEdit } from "@/services/reminderPolicyEditor";
+import { buildUserTimelineView } from "@/services/userTimeline";
 
 type ToolParams = {
   userId: string;
@@ -82,14 +81,33 @@ export async function renderScheduleViewTool(params: ToolParams & {
 }
 
 export async function renderTaskViewTool(params: ToolParams): Promise<JarvisToolResult> {
-  const items = await listManageableItems(params.userId, 80);
+  const timeline = await buildUserTimelineView({
+    userId: params.userId,
+    timezone: params.timezone,
+    now: params.now,
+  });
+  const items = timeline.rows
+    .filter(
+      (row) =>
+        row.item &&
+        !["unresolved_past", "history", "hidden"].includes(row.dateBucket),
+    )
+    .map((row) => row.item!);
+  const unresolvedCount = timeline.byBucket.unresolvedPast.filter((row) => row.item).length;
   const rendered = await renderAndSaveTaskView({
     userId: params.userId,
     timezone: params.timezone,
     viewType: "current",
     title: "Текущие задачи",
     sections: buildDisplaySections(items, params.now ?? new Date()),
-    intro: "Ничего нового не создаю. Показываю задачи для управления.",
+    intro: [
+      "Ничего нового не создаю. Показываю задачи для управления.",
+      unresolvedCount
+        ? `Неразобранное прошлое: ${unresolvedCount} пунктов требуют решения. Открой /history или /review.`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
     emptyText: "Сейчас открытых задач нет.",
     footer: "Можно написать: удалить 1 и 3, отметить 2 выполненным.",
     metadata: { jarvisTool: "render_task_view" },
@@ -379,7 +397,22 @@ export async function markDoneByIndicesTool(params: ToolParams & {
 
 export async function cleanupGarbageTool(params: ToolParams): Promise<JarvisToolResult> {
   const items = await listAllActiveItems(params.userId, 500);
-  const garbage = items.filter(isGarbageOrTestItem);
+  const now = params.now ?? new Date();
+  const duplicates = duplicateItemIds(items);
+  const garbage = items.filter((item) => {
+    const anchor = item.startAt ?? item.dueAt;
+    return (
+      isGarbageOrTestItem(item) ||
+      duplicates.has(item.id) ||
+      Boolean(
+        anchor &&
+          anchor.getTime() < now.getTime() - 48 * 60 * 60 * 1000 &&
+          item.kind !== "event" &&
+          item.kind !== "recurring_task" &&
+          item.visibility !== "history",
+      )
+    );
+  });
   if (!garbage.length) {
     await rememberAgentAction({
       userId: params.userId,
@@ -396,47 +429,26 @@ export async function cleanupGarbageTool(params: ToolParams): Promise<JarvisTool
     };
   }
 
-  const cancelled: PlannerItem[] = [];
-  for (const item of garbage) {
-    const updated = await cancelPlannerItemWithMetadata({
-      userId: params.userId,
-      itemId: item.id,
-      metadata: {
-        garbage: true,
-        garbageReason:
-          item.metadata?.garbageReason ?? "production_garbage_cleanup",
-        archivedAt: new Date().toISOString(),
-      },
-    });
-    await cancelItemReminders(params.userId, item.id);
-    await cancelCalendarSyncJobsForItem(item.id);
-    if (updated) cancelled.push(updated);
-  }
-
   await rememberAgentAction({
     userId: params.userId,
     sourceMessageId: params.sourceMessageId,
     actionType: "cleanup_garbage",
-    output: {
-      cancelledItemIds: cancelled.map((item) => item.id),
-      reasons: garbage.map((item) => ({
-        id: item.id,
-        reason: String(item.metadata?.garbageReason ?? "production_garbage_cleanup"),
-      })),
-    },
-    undoPayload: {
-      items: garbage.map((item) => ({
-        id: item.id,
-        status: item.status,
-        completedAt: item.completedAt?.toISOString() ?? null,
-      })),
-    },
+    status: "noop",
+    output: { candidateItemIds: garbage.map((item) => item.id) },
   });
 
   return {
     handled: true,
-    reply: ["Почистил мусор:", ...cancelled.map((item) => `- ${item.title}`)].join("\n"),
-    affectedItemIds: cancelled.map((item) => item.id),
+    reply: [
+      "Нашёл возможный мусор или старые неразобранные записи. Ничего не удаляю без выбора:",
+      ...garbage.map((item, index) => `${index + 1}. ${item.title} — ${garbageReason(item, duplicates, now)}`),
+      "",
+      "Открой карточку номером и выбери удалить/изменить, либо запусти /admin_repair_v252 apply для безопасного production repair.",
+    ].join("\n"),
+    affectedItemIds: garbage.map((item) => item.id),
+    replyMarkup: entityListKeyboard(
+      garbage.map((item) => ({ type: "planner_item", id: item.id })),
+    ),
   };
 }
 
@@ -628,4 +640,33 @@ function buildStatusSections(items: PlannerItem[]): TaskViewSection[] {
     { title: "Выполнено", items: sortJarvisItemsForDisplay(items.filter((item) => item.status === "completed")) },
     { title: "Отменено", items: sortJarvisItemsForDisplay(items.filter((item) => item.status === "cancelled")) },
   ];
+}
+
+function duplicateItemIds(items: PlannerItem[]) {
+  const groups = new Map<string, PlannerItem[]>();
+  for (const item of items) {
+    const anchor = item.startAt ?? item.dueAt;
+    const key = `${item.title.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim()}|${anchor?.toISOString().slice(0, 10) ?? "floating"}`;
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+  return new Set(
+    [...groups.values()]
+      .filter((group) => group.length > 1)
+      .flatMap((group) =>
+        [...group]
+          .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+          .slice(1)
+          .map((item) => item.id),
+      ),
+  );
+}
+
+function garbageReason(item: PlannerItem, duplicates: Set<string>, now: Date) {
+  if (isGarbageOrTestItem(item)) return "malformed/test/known garbage";
+  if (duplicates.has(item.id)) return "duplicate normalized title/date";
+  const anchor = item.startAt ?? item.dueAt;
+  if (anchor && anchor.getTime() < now.getTime() - 48 * 60 * 60 * 1000) {
+    return "stale unresolved older than 48h";
+  }
+  return "needs review";
 }

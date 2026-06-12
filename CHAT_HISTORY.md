@@ -656,3 +656,31 @@ git diff --check -> passed
 
 Production deployment remains blocked until the authenticated Vercel account can access the real
 `znambo-telegram-assistant` project.
+
+### Turn: Continue V2.5.3 production hotfix
+
+The user supplied a production incident report showing that V2.5.2 was deployed but its repair was
+incomplete and Yandex Calendar configuration did not prove write access.
+
+Completed in the working tree:
+
+```text
+production state inspected through protected diagnostics
+30-day overdue threshold identified as the reason June 7-9 records remained active
+V2.5.3 canonical timeline and unresolved-past handling implemented
+orthodontist/Drik repair strengthened and made idempotent
+cleanup changed to safe preview
+CalDAV write/read-back verification and temporary calendar test implemented
+calendar status made visible in commands, item cards and mutation replies
+```
+
+Validation:
+
+```text
+41 test files passed
+129 tests passed
+lint passed
+TypeScript passed
+```
+
+Production rollout and final acceptance remain to be completed. No secrets were written to history.

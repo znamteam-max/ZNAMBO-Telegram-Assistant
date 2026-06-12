@@ -20,6 +20,7 @@ vi.mock("@/db/queries/liveDashboards", () => ({
 }));
 vi.mock("@/db/queries/items", () => ({
   listRecentRangeItems: mocks.listRecentRangeItems,
+  listVisibleActivePlanItems: (...args: unknown[]) => mocks.listRecentRangeItems(...args),
   listLegacyReminderLikeItems: mocks.listLegacyReminderLikeItems,
 }));
 vi.mock("@/db/queries/reminderPolicies", () => ({

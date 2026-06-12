@@ -10,7 +10,10 @@ import type { AgentExecution } from "@/ai/schemas/agentExecution";
 import { storePlanMemoryFacts } from "@/services/memory";
 import { applyAgentItemUpdates } from "@/services/agentItemUpdates";
 import { filterDuplicateActionPlan } from "@/services/actionPlanDedup";
-import { syncItemsToCalendarBestEffort } from "@/services/calendarBestEffort";
+import {
+  formatCalendarSyncFeedback,
+  syncItemsToCalendarBestEffort,
+} from "@/services/calendarBestEffort";
 import { bindContextualCompletionTarget } from "@/services/contextualAgentBinding";
 import { listManageableItems } from "@/db/queries/items";
 import { listItemsByIds } from "@/db/queries/taskViewStates";
@@ -305,7 +308,9 @@ async function executeAgentProposal(params: {
         item ? { reply_markup: campaignCompletionGuardKeyboard(item.id) } : undefined,
       );
     }
-    await syncItemsToCalendarBestEffort(updateResult.updatedItems);
+    const calendarResults = await syncItemsToCalendarBestEffort(updateResult.updatedItems);
+    const calendarFeedback = formatCalendarSyncFeedback(calendarResults);
+    if (calendarFeedback) await replyAndRecord(params.ctx, calendarFeedback);
     if (params.execution.reminderPolicies.length) {
       const policyResult = await executePolicyProposals({
         execution: params.execution,

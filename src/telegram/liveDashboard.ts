@@ -5,12 +5,7 @@ import {
   getActiveDashboard,
   markDashboardStatus,
 } from "@/db/queries/liveDashboards";
-import { listLegacyReminderLikeItems, listRecentRangeItems } from "@/db/queries/items";
-import {
-  listActiveReminderPolicies,
-  listActiveReminderPoliciesByCategory,
-  listLongTermReminderPolicies,
-} from "@/db/queries/reminderPolicies";
+import { listLegacyReminderLikeItems } from "@/db/queries/items";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { logger } from "@/lib/logger";
 import {
@@ -20,6 +15,7 @@ import {
 } from "@/domain/timelineClassification";
 import { importanceMarker } from "@/domain/importance";
 import type { EntityRef } from "@/domain/entityRefs";
+import { buildUserTimelineView } from "@/services/userTimeline";
 
 import { getBot } from "@/bot/createBot";
 import { entityListKeyboard } from "@/bot/keyboards";
@@ -54,17 +50,19 @@ export async function renderLiveDashboard(params: {
   const local = DateTime.fromJSDate(now, { zone: "utc" }).setZone(params.timezone).setLocale("ru");
   const from = local.startOf("day").toUTC().toJSDate();
   const to = local.endOf("day").toUTC().toJSDate();
-  const [items, policies] = await Promise.all([
-    listRecentRangeItems({ userId: params.userId, from, to, limit: 80 }),
-    listActiveReminderPolicies(params.userId, 80),
-  ]);
-  const todayItems = items
-    .filter((item) => item.status === "active" || item.status === "completed")
+  const timeline = await buildUserTimelineView(params);
+  const todayItems = timeline.byBucket.today
+    .filter((row) => row.item)
+    .map((row) => row.item!)
+    .filter((item) => {
+      const anchor = item.startAt ?? item.dueAt;
+      return Boolean(anchor && anchor >= from && anchor <= to);
+    })
     .sort((a, b) =>
       compareTimelineEntries({ item: a }, { item: b }, now, params.timezone),
     )
     .slice(0, 7);
-  const displayPolicies = groupCampaignPolicies(policies);
+  const displayPolicies = timeline.policies;
   const nagging = displayPolicies
     .filter((policy) => classifyTimelineItem({ policy }, now, params.timezone) === "active_nag")
     .sort((a, b) =>
@@ -130,6 +128,16 @@ export async function renderLiveDashboard(params: {
   } else {
     lines.push("План на сегодня пока пуст.");
   }
+  const unresolved = timeline.byBucket.unresolvedPast.filter((row) => row.item);
+  if (unresolved.length) {
+    lines.push("", "Со вчера / Неразобранное:");
+    pushRows([
+      {
+        text: `${unresolved.length} пунктов требуют решения`,
+        ref: unresolved[0].entityRef,
+      },
+    ]);
+  }
   if (nagging.length) {
     lines.push("", "Активные напоминания:");
     pushRows(nagging.map((policy) => policyRow(policy, params.timezone)));
@@ -158,21 +166,25 @@ export async function renderLiveDashboard(params: {
     keyboard: entityListKeyboard(refs, true),
   };
 }
-
 export async function renderReminderPolicyList(params: {
   userId: string;
   timezone: string;
   longTermOnly?: boolean;
   category?: string | null;
 }) {
-  const [policies, legacyAll] = await Promise.all([
-    params.category
-      ? listActiveReminderPoliciesByCategory(params.userId, params.category, 100)
-      : params.longTermOnly
-        ? listLongTermReminderPolicies(params.userId, 100)
-        : listActiveReminderPolicies(params.userId, 100),
+  const [timeline, legacyAll] = await Promise.all([
+    buildUserTimelineView({ userId: params.userId, timezone: params.timezone }),
     listLegacyReminderLikeItems(params.userId, 50),
   ]);
+  const policies = timeline.policies.filter((policy) => {
+    if (params.category) {
+      return policy.category === params.category || policy.category === `recurring_${params.category}`;
+    }
+    if (params.longTermOnly) {
+      return classifyTimelineItem({ policy }, new Date(), params.timezone) === "long_term";
+    }
+    return true;
+  });
   const legacy = params.longTermOnly
     ? legacyAll.filter(
         (item) =>
@@ -318,17 +330,4 @@ function policyRow(policy: ReminderPolicy, timezone: string): { text: string; re
       ? { type: "campaign", id: campaignGroup }
       : { type: "reminder_policy", id: policy.id },
   };
-}
-
-function groupCampaignPolicies(policies: ReminderPolicy[]) {
-  const result = new Map<string, ReminderPolicy>();
-  for (const policy of policies) {
-    const group = String(policy.metadata?.campaignGroup ?? "");
-    const key = group || policy.id;
-    const current = result.get(key);
-    if (!current || (policy.nextFireAt?.getTime() ?? Infinity) < (current.nextFireAt?.getTime() ?? Infinity)) {
-      result.set(key, policy);
-    }
-  }
-  return [...result.values()];
 }
