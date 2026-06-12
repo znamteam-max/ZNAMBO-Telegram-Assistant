@@ -11,11 +11,13 @@ const SAFE_ERROR_CLASSES = new Set<YandexCalendarErrorClass>([
   "auth_failed",
   "forbidden",
   "caldav_url_not_found",
+  "calendar_object_url_build_failed",
   "network_error",
   "timeout",
   "parse_error",
   "write_failed",
   "read_back_failed",
+  "read_back_not_found",
   "delete_failed",
   "unknown",
 ]);
@@ -27,7 +29,15 @@ export async function getCalendarStatus(userId: string) {
     getLatestAuditByAction({ userId, action: "assistant.calendar_write_test" }),
   ]);
   const latestTest = latestTestAudit?.details as
-    | { ok?: boolean; errorClass?: string | null }
+    | {
+        ok?: boolean;
+        errorClass?: string | null;
+        diagnostics?: {
+          calendarUrlSource?: "YANDEX_CALDAV_CALENDAR_URL" | "YANDEX_CALENDAR_URL" | "discovery";
+          collectionUrlNormalized?: boolean;
+          createdObjectUrlPresent?: boolean;
+        } | null;
+      }
     | undefined;
   const errorClass = safeCalendarErrorClass(latest?.sync.lastError);
   const testErrorClass = safeCalendarErrorClass(latestTest?.errorClass);
@@ -53,23 +63,36 @@ export async function getCalendarStatus(userId: string) {
     lastWriteErrorClass: testErrorClass ?? errorClass,
     lastSyncedAt: latest?.sync.syncedAt ?? null,
     lastItemTitle: latest?.item.title ?? null,
+    calendarUrlSource: latestTest?.diagnostics?.calendarUrlSource ?? null,
+    collectionUrlNormalized: latestTest?.diagnostics?.collectionUrlNormalized ?? null,
+    createdObjectUrlPresent: latestTest?.diagnostics?.createdObjectUrlPresent ?? null,
   };
 }
 
 export async function getCalendarDebug(userId: string) {
   const status = await getCalendarStatus(userId);
   const env = getEnv();
-  return {
-    ...status,
-    ...(status.provider === "yandex"
+  const config =
+    status.provider === "yandex"
       ? getYandexCalendarConfigDebug()
       : {
           hasUsername: false,
           hasPassword: false,
           hasBaseUrl: false,
           hasCalendarUrl: false,
+          calendarUrlSource: "discovery" as const,
+          collectionUrlNormalized: false,
+          createdObjectUrlPresent: false,
           usesAppPassword: "unknown/manual",
-        }),
+        };
+  return {
+    ...status,
+    ...config,
+    calendarUrlSource: status.calendarUrlSource ?? config.calendarUrlSource,
+    collectionUrlNormalized:
+      status.collectionUrlNormalized ?? config.collectionUrlNormalized,
+    createdObjectUrlPresent:
+      status.createdObjectUrlPresent ?? config.createdObjectUrlPresent,
     hasConfiguredProvider: env.CALENDAR_PROVIDER !== "none",
   };
 }
@@ -81,6 +104,8 @@ export async function runCalendarWriteTest(userId: string) {
       provider,
       ok: false,
       errorClass: "provider_not_supported",
+      calendarObjectUrl: null,
+      diagnostics: null,
       steps: {
         authorization: "not_run",
         create: "not_run",

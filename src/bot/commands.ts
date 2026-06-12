@@ -189,6 +189,9 @@ export function registerCommands(bot: Bot<BotContext>) {
         `hasPassword: ${debug.hasPassword}`,
         `hasBaseUrl: ${debug.hasBaseUrl}`,
         `hasCalendarUrl: ${debug.hasCalendarUrl}`,
+        `calendarUrlSource: ${debug.calendarUrlSource}`,
+        `collectionUrlNormalized: ${debug.collectionUrlNormalized}`,
+        `createdObjectUrlPresent: ${debug.createdObjectUrlPresent}`,
         `usesAppPassword: ${debug.usesAppPassword}`,
       ].join("\n"),
     );
@@ -211,6 +214,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         `2. Создание события — ${result.steps.create}`,
         `3. Чтение события — ${result.steps.read}`,
         `4. Удаление теста — ${result.steps.delete}`,
+        `Object URL создан: ${result.diagnostics?.createdObjectUrlPresent ? "да" : "нет"}`,
         result.errorClass ? `Ошибка: ${result.errorClass}` : null,
       ]
         .filter(Boolean)

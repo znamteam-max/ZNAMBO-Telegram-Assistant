@@ -21,17 +21,30 @@ export type YandexCalendarErrorClass =
   | "auth_failed"
   | "forbidden"
   | "caldav_url_not_found"
+  | "calendar_object_url_build_failed"
   | "network_error"
   | "timeout"
   | "parse_error"
   | "write_failed"
   | "read_back_failed"
+  | "read_back_not_found"
   | "delete_failed"
   | "unknown";
+
+export type CalendarUrlSource =
+  | "YANDEX_CALDAV_CALENDAR_URL"
+  | "YANDEX_CALENDAR_URL"
+  | "discovery";
 
 export type YandexCalendarTestResult = {
   ok: boolean;
   errorClass: YandexCalendarErrorClass | null;
+  calendarObjectUrl: string | null;
+  diagnostics: {
+    calendarUrlSource: CalendarUrlSource;
+    collectionUrlNormalized: boolean;
+    createdObjectUrlPresent: boolean;
+  } | null;
   steps: {
     authorization: "ok" | "failed" | "not_run";
     create: "ok" | "failed" | "not_run";
@@ -48,6 +61,14 @@ class YandexCalendarError extends Error {
     super(message);
   }
 }
+
+type CalDavOperation = "authorization" | "create" | "read" | "delete";
+
+type ResolvedCalendarCollection = {
+  url: string;
+  source: CalendarUrlSource;
+  normalized: boolean;
+};
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -83,14 +104,7 @@ export async function syncPlannerItemToYandex(
       headers,
       body: ics,
     });
-    const readBack = await caldavRequest(href, { method: "GET" });
-    const readBackText = await readBack.text();
-    if (!readBackText.includes(`UID:${item.id}@znambo-telegram-assistant`)) {
-      throw new YandexCalendarError(
-        "read_back_failed",
-        "Yandex CalDAV did not return the event after write.",
-      );
-    }
+    await readBackCalendarObject(href, `UID:${item.id}@znambo-telegram-assistant`);
 
     await markGoogleCalendarSync({
       item,
@@ -118,13 +132,19 @@ export async function syncPlannerItemToYandex(
 
 export function getYandexCalendarConfigDebug() {
   const env = getEnv();
+  const configuredCollection = getConfiguredCalendarCollection();
   return {
     calendarProvider: "yandex",
     configured: isYandexCalendarConfigured(),
     hasUsername: Boolean(env.YANDEX_CALDAV_USERNAME),
     hasPassword: Boolean(env.YANDEX_CALDAV_APP_PASSWORD),
     hasBaseUrl: Boolean(env.YANDEX_CALDAV_URL),
-    hasCalendarUrl: Boolean(env.YANDEX_CALDAV_CALENDAR_URL),
+    hasCalendarUrl: Boolean(
+      env.YANDEX_CALDAV_CALENDAR_URL || env.YANDEX_CALENDAR_URL?.startsWith("https://caldav."),
+    ),
+    calendarUrlSource: configuredCollection?.source ?? "discovery",
+    collectionUrlNormalized: configuredCollection?.normalized ?? false,
+    createdObjectUrlPresent: false,
     usesAppPassword: "unknown/manual",
   };
 }
@@ -136,51 +156,60 @@ export async function runYandexCalendarTest(): Promise<YandexCalendarTestResult>
     read: "not_run",
     delete: "not_run",
   };
-  let href: string | null = null;
+  let calendarObjectUrl: string | null = null;
+  let diagnostics: YandexCalendarTestResult["diagnostics"] = null;
+  let testError: YandexCalendarErrorClass | null = null;
   try {
-    const collectionUrl = await resolveCalendarCollectionUrl();
-    await caldavRequest(collectionUrl, {
+    const collection = await resolveCalendarCollection();
+    const id = randomUUID();
+    calendarObjectUrl = buildCalendarObjectUrl(collection.url, `znambo-calendar-test-${id}`);
+    diagnostics = {
+      calendarUrlSource: collection.source,
+      collectionUrlNormalized: collection.normalized,
+      createdObjectUrlPresent: Boolean(calendarObjectUrl),
+    };
+    await caldavRequest(collection.url, {
       method: "PROPFIND",
       headers: {
         "content-type": "application/xml; charset=utf-8",
         depth: "0",
       },
       body: calendarListBody(),
-    });
+    }, "authorization");
     steps.authorization = "ok";
-    const id = randomUUID();
-    href = new URL(`znambo-calendar-test-${id}.ics`, ensureTrailingSlash(collectionUrl)).toString();
     const start = new Date(Date.now() + 10 * 60 * 1000);
     const end = new Date(start.getTime() + 5 * 60 * 1000);
     const ics = buildTestIcs(id, start, end);
-    await caldavRequest(href, {
+    await caldavRequest(calendarObjectUrl, {
       method: "PUT",
       headers: {
         "content-type": "text/calendar; charset=utf-8",
         "if-none-match": "*",
       },
       body: ics,
-    });
+    }, "create");
     steps.create = "ok";
-    const read = await caldavRequest(href, { method: "GET" });
-    const text = await read.text();
-    if (!text.includes(`UID:${id}@znambo-telegram-assistant`)) {
-      throw new YandexCalendarError("read_back_failed", "CalDAV read-back verification failed.");
-    }
+    await readBackCalendarObject(calendarObjectUrl, `UID:${id}@znambo-telegram-assistant`);
     steps.read = "ok";
-    await caldavRequest(href, { method: "DELETE" });
+    await caldavRequest(calendarObjectUrl, { method: "DELETE" }, "delete");
     steps.delete = "ok";
-    return { ok: true, errorClass: null, steps };
+    return { ok: true, errorClass: null, calendarObjectUrl, diagnostics, steps };
   } catch (error) {
     const safe = classifyYandexCalendarError(error);
+    testError = safe.errorClass;
     if (steps.authorization === "not_run") steps.authorization = "failed";
     else if (steps.create === "not_run") steps.create = "failed";
     else if (steps.read === "not_run") steps.read = "failed";
     else if (steps.delete === "not_run") steps.delete = "failed";
-    if (href && steps.create === "ok" && steps.delete !== "ok") {
-      await caldavRequest(href, { method: "DELETE" }).catch(() => undefined);
+    if (calendarObjectUrl && steps.create === "ok" && steps.delete !== "ok") {
+      try {
+        await caldavRequest(calendarObjectUrl, { method: "DELETE" }, "delete");
+        steps.delete = "ok";
+      } catch {
+        steps.delete = "failed";
+      }
     }
-    return { ok: false, errorClass: safe.errorClass, steps };
+    return { ok: false, errorClass: testError, calendarObjectUrl, diagnostics, steps };
   }
 }
 
@@ -205,19 +234,14 @@ export function classifyYandexCalendarError(error: unknown): {
 }
 
 async function buildNewEventHref(item: PlannerItem): Promise<string> {
-  const collectionUrl = await resolveCalendarCollectionUrl();
-  return new URL(
-    `${item.id.replaceAll("-", "")}.ics`,
-    ensureTrailingSlash(collectionUrl),
-  ).toString();
+  const collection = await resolveCalendarCollection();
+  return buildCalendarObjectUrl(collection.url, item.id.replaceAll("-", ""));
 }
 
-async function resolveCalendarCollectionUrl(): Promise<string> {
+async function resolveCalendarCollection(): Promise<ResolvedCalendarCollection> {
   const env = getEnv();
-  if (env.YANDEX_CALDAV_CALENDAR_URL) return ensureTrailingSlash(env.YANDEX_CALDAV_CALENDAR_URL);
-  if (env.YANDEX_CALENDAR_URL?.startsWith("https://caldav.")) {
-    return ensureTrailingSlash(env.YANDEX_CALENDAR_URL);
-  }
+  const configured = getConfiguredCalendarCollection();
+  if (configured) return configured;
 
   const root = ensureTrailingSlash(env.YANDEX_CALDAV_URL);
   const principal = await propfindHref(
@@ -235,7 +259,32 @@ async function resolveCalendarCollectionUrl(): Promise<string> {
   const calendars = await propfindCalendars(toAbsoluteCalDavUrl(homeSet));
   const calendar = calendars.find((candidate) => candidate.isCalendar);
   if (!calendar) throw new Error("Yandex CalDAV calendar collection was not found.");
-  return ensureTrailingSlash(toAbsoluteCalDavUrl(calendar.href));
+  const discovered = toAbsoluteCalDavUrl(calendar.href);
+  return {
+    url: ensureTrailingSlash(discovered),
+    source: "discovery",
+    normalized: true,
+  };
+}
+
+export function buildCalendarObjectUrl(collectionUrl: string, uid: string): string {
+  try {
+    const normalizedCollection = ensureTrailingSlash(new URL(collectionUrl).toString());
+    const safeUid = uid.trim().replace(/[^a-zA-Z0-9_-]/g, "");
+    if (!safeUid) {
+      throw new Error("Calendar object UID is empty after normalization.");
+    }
+    const objectUrl = new URL(`${safeUid}.ics`, normalizedCollection).toString();
+    if (!objectUrl.endsWith(`${safeUid}.ics`)) {
+      throw new Error("Calendar object URL does not contain the expected object name.");
+    }
+    return objectUrl;
+  } catch {
+    throw new YandexCalendarError(
+      "calendar_object_url_build_failed",
+      "Calendar object URL could not be built.",
+    );
+  }
 }
 
 async function propfindHref(
@@ -284,32 +333,54 @@ async function caldavText(url: string, init: RequestInit): Promise<string> {
   return response.text();
 }
 
-async function caldavRequest(url: string, init: RequestInit): Promise<Response> {
+async function caldavRequest(
+  url: string,
+  init: RequestInit,
+  operation?: CalDavOperation,
+): Promise<Response> {
   const username = requireEnv("YANDEX_CALDAV_USERNAME");
   const password = requireEnv("YANDEX_CALDAV_APP_PASSWORD");
   const response = await fetch(url, {
     ...init,
+    redirect: "manual",
     headers: {
       authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
       ...init.headers,
     },
   });
   if (![200, 201, 204, 207].includes(response.status)) {
-    const errorClass =
-      response.status === 401
-        ? "auth_failed"
-        : response.status === 403
-          ? "forbidden"
-          : response.status === 404
-            ? "caldav_url_not_found"
-            : init.method === "DELETE"
-              ? "delete_failed"
-              : init.method === "GET"
-                ? "read_back_failed"
-                : "write_failed";
+    const errorClass = classifyCalDavHttpError(response.status, operation, init.method);
     throw new YandexCalendarError(errorClass, `Yandex CalDAV request failed (${response.status}).`);
   }
   return response;
+}
+
+async function readBackCalendarObject(url: string, expectedUid: string) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await caldavRequest(url, { method: "GET" }, "read");
+      const text = await response.text();
+      if (!text.includes(expectedUid)) {
+        throw new YandexCalendarError(
+          "read_back_failed",
+          "CalDAV read-back did not contain the expected UID.",
+        );
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      if (
+        !(error instanceof YandexCalendarError) ||
+        error.errorClass !== "read_back_not_found" ||
+        attempt === 2
+      ) {
+        throw error;
+      }
+      await delay(250 * (attempt + 1));
+    }
+  }
+  throw lastError;
 }
 
 function buildIcs(item: PlannerItem, href: string): string {
@@ -388,6 +459,44 @@ function toAbsoluteCalDavUrl(href: string): string {
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
+}
+
+function getConfiguredCalendarCollection(): ResolvedCalendarCollection | null {
+  const env = getEnv();
+  if (env.YANDEX_CALDAV_CALENDAR_URL) {
+    return normalizeCollectionUrl(env.YANDEX_CALDAV_CALENDAR_URL, "YANDEX_CALDAV_CALENDAR_URL");
+  }
+  if (env.YANDEX_CALENDAR_URL?.startsWith("https://caldav.")) {
+    return normalizeCollectionUrl(env.YANDEX_CALENDAR_URL, "YANDEX_CALENDAR_URL");
+  }
+  return null;
+}
+
+function normalizeCollectionUrl(value: string, source: CalendarUrlSource): ResolvedCalendarCollection {
+  const parsed = new URL(value).toString();
+  const url = ensureTrailingSlash(parsed);
+  return { url, source, normalized: true };
+}
+
+function classifyCalDavHttpError(
+  status: number,
+  operation?: CalDavOperation,
+  method?: string,
+): YandexCalendarErrorClass {
+  if (status === 401) return "auth_failed";
+  if (status === 403) return "forbidden";
+  if (status === 404) {
+    if (operation === "read") return "read_back_not_found";
+    if (operation === "delete") return "delete_failed";
+    return "caldav_url_not_found";
+  }
+  if (operation === "delete" || method === "DELETE") return "delete_failed";
+  if (operation === "read" || method === "GET") return "read_back_failed";
+  return "write_failed";
+}
+
+function delay(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function toArray<T>(value: T | T[] | undefined): T[] {
