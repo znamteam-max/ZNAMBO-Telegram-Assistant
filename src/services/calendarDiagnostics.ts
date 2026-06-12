@@ -1,4 +1,5 @@
 import { getLatestCalendarSyncStateForUser } from "@/db/queries/googleCalendar";
+import { getLatestAuditByAction } from "@/db/queries/audit";
 import { getCalendarProvider, getEnv, isYandexCalendarConfigured } from "@/lib/env";
 import {
   getYandexCalendarConfigDebug,
@@ -21,25 +22,35 @@ const SAFE_ERROR_CLASSES = new Set<YandexCalendarErrorClass>([
 
 export async function getCalendarStatus(userId: string) {
   const provider = getCalendarProvider();
-  const latest = await getLatestCalendarSyncStateForUser(userId);
+  const [latest, latestTestAudit] = await Promise.all([
+    getLatestCalendarSyncStateForUser(userId),
+    getLatestAuditByAction({ userId, action: "assistant.calendar_write_test" }),
+  ]);
+  const latestTest = latestTestAudit?.details as
+    | { ok?: boolean; errorClass?: string | null }
+    | undefined;
   const errorClass = safeCalendarErrorClass(latest?.sync.lastError);
+  const testErrorClass = safeCalendarErrorClass(latestTest?.errorClass);
   return {
     provider,
     configured: provider === "yandex" ? isYandexCalendarConfigured() : provider !== "none",
     authorization:
-      latest?.sync.status === "synced"
+      latestTest?.ok === true || latest?.sync.status === "synced"
         ? "ok"
-        : errorClass === "auth_failed" || errorClass === "forbidden"
+        : testErrorClass === "auth_failed" ||
+            testErrorClass === "forbidden" ||
+            errorClass === "auth_failed" ||
+            errorClass === "forbidden"
           ? "failed"
           : "unknown",
     write:
-      latest?.sync.status === "synced"
+      latestTest?.ok === true || latest?.sync.status === "synced"
         ? "ok"
-        : latest?.sync.status === "error"
+        : latestTest || latest?.sync.status === "error"
           ? "failed"
           : "unknown",
-    lastWriteStatus: latest?.sync.status ?? "unknown",
-    lastWriteErrorClass: errorClass,
+    lastWriteStatus: latestTest?.ok === true ? "verified" : latestTest ? "failed" : latest?.sync.status ?? "unknown",
+    lastWriteErrorClass: testErrorClass ?? errorClass,
     lastSyncedAt: latest?.sync.syncedAt ?? null,
     lastItemTitle: latest?.item.title ?? null,
   };
