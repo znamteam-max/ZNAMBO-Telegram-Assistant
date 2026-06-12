@@ -16,13 +16,14 @@ import {
 } from "@/lib/version";
 import { getSchedulerRuntimeHealth } from "@/db/queries/schedulerHealth";
 import { getReminderPolicyHealthStats } from "@/db/queries/reminderPolicies";
+import { getLatestCalendarImportState } from "@/db/queries/externalCalendarEvents";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const env = getEnv();
-  const [lastSuccessfulAi, lastAiCall, scheduler, policyStats] = await Promise.all([
+  const [lastSuccessfulAi, lastAiCall, scheduler, policyStats, calendarImport] = await Promise.all([
     getLatestAiAuditStatus({ succeeded: true }).catch(() => null),
     getLatestAiAuditStatus().catch(() => null),
     getSchedulerRuntimeHealth().catch(() => null),
@@ -30,6 +31,7 @@ export async function GET() {
       activePolicyCount: 0,
       policiesMissingNextReminder: 0,
     })),
+    getLatestCalendarImportState().catch(() => null),
   ]);
   const lastSuccessfulDetails = lastSuccessfulAi?.details as Record<string, unknown> | undefined;
   const lastCallDetails = lastAiCall?.details as Record<string, unknown> | undefined;
@@ -76,5 +78,9 @@ export async function GET() {
     calendarProvider: getCalendarProvider(),
     googleCalendarConfigured: isGoogleCalendarConfigured(),
     yandexCalendarConfigured: isYandexCalendarConfigured(),
+    lastCalendarImportAt: calendarImport?.lastImportAt?.toISOString() ?? null,
+    externalCalendarEventsVisible: calendarImport?.externalEventsVisible ?? 0,
+    recurringCalendarEventsImported: calendarImport?.recurringEventsCount ?? 0,
+    lastCalendarImportErrorClass: calendarImport?.lastImportErrorClass ?? null,
   });
 }

@@ -1,4 +1,4 @@
-import { and, count, eq, gte, inArray, isNull, lte, notInArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, lte, notInArray, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
 import {
@@ -225,6 +225,15 @@ export async function getCalendarImportState(userId: string) {
     .select()
     .from(calendarImportState)
     .where(eq(calendarImportState.userId, userId))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function getLatestCalendarImportState() {
+  const [row] = await getDb()
+    .select()
+    .from(calendarImportState)
+    .orderBy(desc(calendarImportState.lastImportAt))
     .limit(1);
   return row ?? null;
 }
