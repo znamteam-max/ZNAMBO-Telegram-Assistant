@@ -118,6 +118,8 @@ export async function markGoogleCalendarSync(params: {
   provider?: string;
 }) {
   const now = new Date();
+  const lastError =
+    params.lastError === undefined ? undefined : params.lastError?.slice(0, 1000) ?? null;
   await getDb()
     .insert(itemSyncState)
     .values({
@@ -125,7 +127,7 @@ export async function markGoogleCalendarSync(params: {
       provider: params.provider ?? "google_calendar",
       externalId: params.externalId,
       status: params.status,
-      lastError: params.lastError?.slice(0, 1000),
+      lastError,
       durationMs: params.durationMs,
       syncedAt: params.status === "synced" ? now : null,
     })
@@ -134,7 +136,7 @@ export async function markGoogleCalendarSync(params: {
       set: {
         externalId: params.externalId,
         status: params.status,
-        lastError: params.lastError?.slice(0, 1000),
+        lastError,
         durationMs: params.durationMs,
         syncedAt: params.status === "synced" ? now : null,
         updatedAt: now,
