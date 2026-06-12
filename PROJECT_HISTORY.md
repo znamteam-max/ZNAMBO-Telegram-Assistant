@@ -13,7 +13,7 @@
 - Added protected read-only snapshots for repair preview and reminder-center production acceptance.
 - CalDAV, scheduler, runner lock, reminder engine, and OpenAI ActionPlan architecture were
   preserved.
-- Local validation before rollout: 46 test files and 157 tests passed; lint and build passed.
+- Local validation before rollout: 46 test files and 158 tests passed; lint and build passed.
 - No secrets were written to project history.
 
 ## Update 2026-06-12 - V2.5.3.1

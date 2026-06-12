@@ -11,7 +11,7 @@ const KEEP_PATTERNS = [
   /рекап дня на чм-?26/i,
   /эфир студии (централ парк|central park)/i,
   /студия central park/i,
-  /отвезти роба к ортодонту/i,
+  /отве(?:з|с)?ти роба к ортодонту/i,
 ];
 
 const ARCHIVE_PATTERNS = [
@@ -34,14 +34,12 @@ export async function previewV254ProductionRepair(userId: string) {
     .filter((id): id is string => Boolean(id));
   const deletedCandidates = await listItemsByIds(userId, undoIds);
   const restore = deletedCandidates.filter(
-    (item) => item.status !== "active" && KEEP_PATTERNS.some((pattern) => pattern.test(item.title)),
+    (item) => item.status !== "active" && isV254KeepTitle(item.title),
   );
   const archive = activeItems.filter((item) =>
     ARCHIVE_PATTERNS.some((pattern) => pattern.test(item.title)),
   );
-  const retained = activeItems.filter((item) =>
-    KEEP_PATTERNS.some((pattern) => pattern.test(item.title)),
-  );
+  const retained = activeItems.filter((item) => isV254KeepTitle(item.title));
   return {
     latestDeleteActionId: recentDelete?.id ?? null,
     retained,
@@ -53,6 +51,10 @@ export async function previewV254ProductionRepair(userId: string) {
       "Calendar retry запускается после apply отдельным best-effort шагом.",
     ],
   };
+}
+
+export function isV254KeepTitle(title: string) {
+  return KEEP_PATTERNS.some((pattern) => pattern.test(title));
 }
 
 export async function applyV254ProductionRepair(userId: string) {

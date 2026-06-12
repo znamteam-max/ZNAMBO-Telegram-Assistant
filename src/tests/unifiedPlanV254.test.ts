@@ -8,6 +8,7 @@ import {
 import type { PlannerItem } from "@/db/schema";
 import { detectPlanConflicts } from "@/services/planConflicts";
 import { buildUserTimelineViewFromData } from "@/services/userTimeline";
+import { isV254KeepTitle } from "@/services/v254ProductionRepair";
 
 describe("V2.5.4 unified plan UX", () => {
   it("detects the Central Park and orthodontist overlap", () => {
@@ -69,6 +70,11 @@ describe("V2.5.4 unified plan UX", () => {
     expect(buttons.map((button) => button.text)).toEqual(
       expect.arrayContaining(["Только правило", "Задачу и правило", "Отмена"]),
     );
+  });
+
+  it("keeps both Russian orthodontist verb forms in the conservative repair", () => {
+    expect(isV254KeepTitle("Отвести Роба к ортодонту")).toBe(true);
+    expect(isV254KeepTitle("Отвезти Роба к ортодонту")).toBe(true);
   });
 });
 

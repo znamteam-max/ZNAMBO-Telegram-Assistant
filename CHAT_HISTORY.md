@@ -17,7 +17,7 @@ Implemented in the working tree:
 Checks before production rollout:
 
 ```text
-npm test -> 46 files, 157 tests passed
+npm test -> 46 files, 158 tests passed
 npm run lint -> passed
 npm run build -> passed
 ```
