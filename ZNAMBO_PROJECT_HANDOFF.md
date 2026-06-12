@@ -11,7 +11,7 @@ Last updated: 2026-06-12
 ```text
 Application version: 2.5.4.1
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: pending V2.5.4.1 rollout
+Validated application deployment commit: bd76bb2c4189f01051b6a63940c5b61af6b490b0
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -41,7 +41,15 @@ Implemented:
 
 ```text
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated runtime commit: pending GitHub/Vercel rollout
+Validated runtime commit: bd76bb2c4189f01051b6a63940c5b61af6b490b0
+/api/health: ok, appVersion 2.5.4.1, pipelineMode jarvis
+Telegram webhook URL: correct production endpoint
+Telegram webhook pending updates: 0
+Telegram webhook last error: none
+Automatic scheduler: lastRunnerRunAt advanced after deployment
+Runner succeeded: true
+Dashboard snapshot: ok, 4 items, 0 policies
+Manual Telegram item-card edit smoke: not run to avoid mutating live tasks without explicit user action
 Local tests: 47 files, 166 tests passed
 Lint: passed
 TypeScript: passed
@@ -250,6 +258,7 @@ V2.5.2 - Universal editability, temporal safety, Russian weekday repair
 V2.5.3 - Production repair enforcement and deterministic Yandex CalDAV lifecycle
 V2.5.3.1 - Normal CalDAV sync resilience and idempotent retry queue
 V2.5.4 - Unified Plan UX, safe numbered mutations, triage and conflict detection
+V2.5.4.1 - Item-card edit sessions, compound edits and Russian date fixes
 ```
 
 ## Remaining Limitations

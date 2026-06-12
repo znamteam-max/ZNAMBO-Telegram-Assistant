@@ -22,7 +22,13 @@
 Production rollout:
 
 ```text
-pending GitHub/Vercel rollout
+production URL -> https://znambo-telegram-assistant.vercel.app
+validated runtime commit -> bd76bb2c4189f01051b6a63940c5b61af6b490b0
+health -> ok, appVersion 2.5.4.1, Jarvis pipeline active
+webhook -> correct production URL, pending 0, no last error
+automatic scheduler -> lastRunnerRunAt advanced after deployment, runner succeeded
+dashboard snapshot -> ok, 4 items, 0 policies
+manual Telegram item-card edit smoke -> not run to avoid mutating live tasks without explicit user action
 ```
 
 ## Update 2026-06-12 - V2.5.4 Unified Plan UX

@@ -29,7 +29,13 @@ npm run build -> passed
 Production rollout:
 
 ```text
-pending GitHub/Vercel rollout
+V2.5.4.1 deployed through GitHub/Vercel auto-deploy
+validated runtime commit -> bd76bb2c4189f01051b6a63940c5b61af6b490b0
+health -> ok, appVersion 2.5.4.1
+webhook -> production URL, pending 0, no last error
+automatic runner -> advanced and succeeded
+dashboard snapshot -> ok, 4 items, 0 policies
+manual Telegram item-card edit smoke -> not run to avoid mutating live tasks without explicit user action
 ```
 
 ## 2026-06-12 - V2.5.4 implementation continued after emergency release
