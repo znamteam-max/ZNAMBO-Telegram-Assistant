@@ -39,7 +39,19 @@ Cloudflare Worker remains optional.
 No API keys, bot tokens, database connection strings, passwords, bearer secrets, or authorization
 headers are included in this export.
 
-## Pending Acceptance
+## Production Acceptance
 
-- Deploy V2.5.3 through GitHub/Vercel auto-deploy.
-- Verify health, webhook, production state, repair preview/apply/preview, and CalDAV test.
+```text
+V2.5.3 deployed
+active tested code commit: febedb885f05b4512dbce25d216b186b64aaf7f4
+health and webhook: ok
+production repair: applied and idempotent
+dirty repair candidates after apply: 0
+dashboard: compact unresolved-past block
+reminder smoke: delivered and auto-archived
+OpenAI exact orthodontist execution: canonical item updated, no duplicate created
+CalDAV create/read/delete test: blocked at authorization with safe auth_failed
+```
+
+The only external blocker is Yandex CalDAV authentication. A valid Yandex app password is required;
+no credential value is stored in this export.

@@ -684,3 +684,36 @@ TypeScript passed
 ```
 
 Production rollout and final acceptance remain to be completed. No secrets were written to history.
+
+### Turn: V2.5.3 production rollout and acceptance completed
+
+Production rollout facts:
+
+```text
+V2.5.3 deployed through GitHub/Vercel
+repair preview/apply/preview completed and became clean
+orthodontist corrected to June 16 at 10:20
+one stale Drik duplicate archived
+four old records moved to unresolved history state
+dashboard shows one compact unresolved-past block
+real reminder smoke delivered through cron-job.org
+webhook has zero pending updates and no last error
+```
+
+The CalDAV create/read/delete verification stopped safely at authorization with `auth_failed`.
+The bot now reports this explicitly instead of claiming that configuration proves write access.
+
+A production exact-phrase check found and then fixed a semantic binding issue where a medical
+request could select a Drik task that only mentioned Rob. After the guard was deployed, the same
+OpenAI-backed execution updated the canonical orthodontist item and created no duplicate.
+
+Final validation:
+
+```text
+41 test files passed
+130 tests passed
+lint passed
+build passed
+```
+
+No secrets were written to chat or project history.

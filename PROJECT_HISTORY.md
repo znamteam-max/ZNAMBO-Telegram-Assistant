@@ -1323,6 +1323,50 @@ npx tsc --noEmit -> passed
 No secrets were written to project history. Production deployment, repair application and
 acceptance checks are pending.
 
+### V2.5.3 production rollout completed
+
+Production acceptance:
+
+```text
+active tested code commit -> febedb885f05b4512dbce25d216b186b64aaf7f4
+production URL -> https://znambo-telegram-assistant.vercel.app
+health -> appVersion 2.5.3, Jarvis enabled, runner/reconciler enabled
+webhook -> pending 0, no last error
+repair preview before apply -> 1 orthodontist, 1 Drik duplicate, 5 old overdue, 1 stale bot card
+repair apply -> fixed orthodontist, archived 1 Drik duplicate, moved 4 records to history state
+repair preview after apply -> all target counts 0
+dashboard -> compact "Со вчера / Неразобранное: 4" block
+reminder smoke -> delivery sent, test item auto-archived
+OpenAI health -> real call succeeded, structured output valid
+exact orthodontist execution -> updated canonical orthodontist item, created 0 items
+```
+
+The production agent probe exposed one semantic binding bug: the first attempt selected a Drik task
+that mentioned Rob. V2.5.3 was patched so orthodontist requests can bind only to orthodontist or
+dentist context. The repeated production execution then updated the correct canonical item.
+
+Yandex CalDAV verification is now honest and visible:
+
+```text
+calendar configured -> true
+authorization -> failed
+write -> failed
+safe error class -> auth_failed
+```
+
+The app password must be corrected outside the repository before create/read/delete can pass.
+Planner and Telegram reminder writes remain non-blocking. One future reminder-like item remains an
+orphan candidate and was intentionally not auto-archived because it may be a real user task.
+
+Final local validation:
+
+```text
+npm test -> 41 files passed, 130 tests passed
+npm run lint -> passed
+npm run build -> passed
+secret scan -> no supplied secrets found in repository
+```
+
 One-time production cleanup status:
 
 ```text
