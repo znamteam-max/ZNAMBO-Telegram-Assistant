@@ -60,7 +60,7 @@ export async function getCalendarStatus(userId: string) {
           ? "failed"
           : "unknown",
     lastWriteStatus: latestTest?.ok === true ? "verified" : latestTest ? "failed" : latest?.sync.status ?? "unknown",
-    lastWriteErrorClass: testErrorClass ?? errorClass,
+    lastWriteErrorClass: latestTest?.ok === true ? null : testErrorClass ?? errorClass,
     lastSyncedAt: latest?.sync.syncedAt ?? null,
     lastItemTitle: latest?.item.title ?? null,
     calendarUrlSource: latestTest?.diagnostics?.calendarUrlSource ?? null,
