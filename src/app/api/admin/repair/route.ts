@@ -270,6 +270,34 @@ export async function POST(request: Request) {
       policyIds: center.policies.map((policy) => policy.id),
     });
   }
+  if (body.action === "telegram_webhook_status") {
+    const token = requireEnv("TELEGRAM_BOT_TOKEN");
+    const response = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      result?: {
+        url?: string;
+        pending_update_count?: number;
+        last_error_date?: number;
+        last_error_message?: string;
+      };
+    } | null;
+    return NextResponse.json(
+      {
+        ok: response.ok && payload?.ok === true,
+        webhook: {
+          url: payload?.result?.url ?? null,
+          pendingUpdateCount: payload?.result?.pending_update_count ?? null,
+          lastErrorDate: payload?.result?.last_error_date ?? null,
+          lastErrorMessage: payload?.result?.last_error_message ?? null,
+        },
+      },
+      { status: response.ok && payload?.ok === true ? 200 : 502 },
+    );
+  }
   if (body.action === "planner_snapshot") {
     const items = await listVisibleActivePlanItems(owner.id, 100);
     return NextResponse.json({

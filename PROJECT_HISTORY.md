@@ -11,6 +11,7 @@
 - Fixed the critical parser bug where `5,6,7,8` plus `10.00-11.00` could target items 1-8.
 - Added repeat-policy delete scope choice, undo/refresh flow, and conservative V2.5.4 repair.
 - Added protected read-only snapshots for repair preview and reminder-center production acceptance.
+- Added a protected server-side Telegram webhook status probe that never returns the bot token.
 - CalDAV, scheduler, runner lock, reminder engine, and OpenAI ActionPlan architecture were
   preserved.
 - Local validation before rollout: 46 test files and 158 tests passed; lint and build passed.
