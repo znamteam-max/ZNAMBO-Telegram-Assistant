@@ -67,6 +67,11 @@ import {
   previewV253CalendarRepair,
 } from "@/services/v253CalendarRepair";
 import { retryCalendarSyncsForUser } from "@/services/calendarSyncRetry";
+import {
+  applyV254ProductionRepair,
+  previewV254ProductionRepair,
+} from "@/services/v254ProductionRepair";
+import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -174,6 +179,18 @@ export async function POST(request: Request) {
       result: await applyV253CalendarRepair(owner.id),
     });
   }
+  if (body.action === "v254_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV254ProductionRepair(owner.id),
+    });
+  }
+  if (body.action === "v254_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV254ProductionRepair(owner.id),
+    });
+  }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {
     const result = await runV242SnoozeProductionProbe({
       userId: owner.id,
@@ -239,6 +256,18 @@ export async function POST(request: Request) {
       text: dashboard.text,
       itemIds: dashboard.items.map((item) => item.id),
       policyIds: dashboard.policies.map((policy) => policy.id),
+    });
+  }
+  if (body.action === "reminder_center_snapshot") {
+    const center = await renderReminderControlCenter({
+      userId: owner.id,
+      timezone: owner.timezone,
+      scope: "active",
+    });
+    return NextResponse.json({
+      ok: true,
+      text: center.text,
+      policyIds: center.policies.map((policy) => policy.id),
     });
   }
   if (body.action === "planner_snapshot") {
