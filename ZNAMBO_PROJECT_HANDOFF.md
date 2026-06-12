@@ -11,7 +11,7 @@ Last updated: 2026-06-12
 ```text
 Application version: 2.5.3
 Production URL: https://znambo-telegram-assistant.vercel.app
-Active deployment commit: 2493eb26e0f783210d71cef150258ca9498f06fa
+Validated application deployment commit: 457961dd5da3353670be86e76afc3fa483ff4e30
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -38,7 +38,15 @@ Implemented:
 - Added safe `/admin_state_v252`.
 - Added safe Yandex CalDAV error classes.
 - Added `/calendardebug` and `/calendar_test`.
-- Normal CalDAV sync now verifies writes with a read-back GET.
+- CalDAV collection URLs are normalized and deterministic `${uid}.ics` object URLs are generated
+  before writes.
+- CalDAV create, read-back, and cleanup now use the exact same object URL and do not depend on a
+  `Location` response header.
+- CalDAV read-back requests explicitly accept `text/calendar` and retry short-lived Yandex 404s.
+- Read-back 404 is reported as `read_back_not_found`; object URL construction failure is reported
+  as `calendar_object_url_build_failed`.
+- `/calendardebug` exposes only safe URL-source and object-presence diagnostics.
+- A successful `/calendar_test` clears stale displayed calendar errors.
 - Event cards and mutation replies show calendar sync status.
 - Added a semantic guard so an orthodontist request cannot bind to a Drik task that only mentions
   Rob.
@@ -55,8 +63,11 @@ Repair preview after apply: all target counts 0
 Dashboard: compact unresolved-past block with 4 records
 Reminder smoke: delivered through cron-job.org and test item auto-archived
 Exact orthodontist agent execution: canonical orthodontist item updated, 0 new items created
-Final local tests: 41 files passed, 130 tests passed
+Yandex CalDAV production test: authorization/create/read/delete all passed
+Calendar debug: hasCalendarUrl true, authorization ok, write ok, status verified, no last error
+Final local tests: 41 files passed, 135 tests passed
 Lint: passed
+TypeScript: passed
 Build: passed
 Secret scan: passed
 ```
@@ -66,14 +77,20 @@ Secret scan: passed
 ```text
 Provider: Yandex CalDAV
 Configured: yes
-Authorization: failed
-Write verification: failed
-Safe error class: auth_failed
+Calendar URL source: YANDEX_CALDAV_CALENDAR_URL
+Collection URL normalized: yes
+Deterministic object URL created: yes
+Authorization: ok
+Create: ok
+Read-back: ok
+Delete cleanup: ok
+Write verification: verified
+Safe error class: none
 ```
 
-The Yandex app password must be corrected outside the repository before create/read/delete
-verification can pass. Planner items and Telegram reminders continue working when calendar sync
-fails.
+Production create/read/delete verification passed on June 12, 2026. Planner items and Telegram
+reminders continue working when calendar sync fails because calendar integration remains
+best-effort by design.
 
 ## Reminder Delivery
 
@@ -113,15 +130,16 @@ V2.4.1 - Reminder policy reliability and repair
 V2.4.2 - Atomic reminder semantics, reconciler, runner lock, anchor grid
 V2.5.1 - Compact control, timeline classification, campaign semantics
 V2.5.2 - Universal editability, temporal safety, Russian weekday repair
-V2.5.3 - Production repair enforcement and CalDAV write verification
+V2.5.3 - Production repair enforcement and deterministic Yandex CalDAV lifecycle
 ```
 
 ## Remaining Limitations
 
-- Yandex CalDAV currently returns `auth_failed`; a valid Yandex app password is required.
 - One future reminder-like item remains an orphan candidate and was intentionally not
   auto-archived because it may be a real user task.
 - Calendar sync remains non-blocking by design.
+- Normal item synchronization has production-safe diagnostics, while the confirmed end-to-end
+  acceptance in this deployment was performed through `/calendar_test`.
 
 ## Handoff Rule
 
