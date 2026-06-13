@@ -19,6 +19,7 @@ import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
 import { renderTaskViewTool } from "@/agent/jarvisTools";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { navigationKeyboard } from "./keyboards";
+import { writeAudit } from "@/db/queries/audit";
 
 export function registerMessageHandlers(bot: Bot<BotContext>) {
   bot.on("message:text", async (ctx) => {
@@ -36,8 +37,15 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
     const media = extractTelegramMedia(ctx);
     if (!media) return;
     const owner = requireOwner(ctx);
-
+    let transcriptionCompleted = false;
     try {
+      await writeAudit({
+        userId: owner.id,
+        action: "assistant.transcription_status",
+        entityType: "telegram_message",
+        entityId: ctx.dbMessageId,
+        details: { status: "started", mediaType: media.mimeType ?? "unknown" },
+      }).catch(() => undefined);
       if (media.fileSize && media.fileSize > TELEGRAM_DOWNLOAD_LIMIT_BYTES) {
         throw new UserFacingError(
           "Файл больше 20 МБ. Для MVP поддерживаю только стандартный Bot API лимит.",
@@ -63,9 +71,30 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
         });
         await markTelegramMessageProcessed(ctx.dbMessageId, transcript);
       }
+      await writeAudit({
+        userId: owner.id,
+        action: "assistant.transcription_status",
+        entityType: "telegram_message",
+        entityId: ctx.dbMessageId,
+        details: { status: "succeeded", mediaType: media.mimeType ?? "unknown" },
+      }).catch(() => undefined);
+      transcriptionCompleted = true;
 
       await handleNaturalLanguageTurn(ctx, transcript, owner.timezone);
     } catch (error) {
+      if (!transcriptionCompleted) {
+        await writeAudit({
+          userId: owner.id,
+          action: "assistant.transcription_status",
+          entityType: "telegram_message",
+          entityId: ctx.dbMessageId,
+          details: {
+            status: "failed",
+            mediaType: media.mimeType ?? "unknown",
+            errorType: error instanceof UserFacingError ? "user_facing" : "processing",
+          },
+        }).catch(() => undefined);
+      }
       await replyAndRecord(ctx, toUserMessage(error));
     }
   });

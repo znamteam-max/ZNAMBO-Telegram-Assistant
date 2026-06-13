@@ -26,9 +26,13 @@ export function normalizeAgentExecutionProposal(params: {
     ...params,
     execution: weekday,
   });
-  const interval = normalizeIntervalWindow({
+  const clearReminder = normalizeClearReminderIntent({
     ...params,
     execution: temporal,
+  });
+  const interval = normalizeIntervalWindow({
+    ...params,
+    execution: clearReminder,
   });
   const recurring = normalizeLongTermRecurrence({
     ...params,
@@ -43,6 +47,215 @@ export function normalizeAgentExecutionProposal(params: {
     text: params.text,
     activeContext: params.activeContext,
   });
+}
+
+function normalizeClearReminderIntent(params: {
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+}): AgentExecution {
+  if (!/(?:напомни|напоминай|напомняй)/i.test(params.text)) return params.execution;
+  if (
+    (params.execution.actionPlan?.actions.length ?? 0) > 1 ||
+    /(после\s+записи|если\s+не\s+будет|возмож(?:ен|на|но)\s+около)/i.test(params.text)
+  ) {
+    return params.execution;
+  }
+  if (
+    /(кажд(?:ого|ому|ое)\s+событи|все(?:м|х)?\s+событи|за\s+\S+\s+до\s+(?:событи|встреч|эфир)|после\s+(?:событи|встреч|эфир))/i.test(
+      params.text,
+    )
+  ) {
+    return params.execution;
+  }
+  const nagUntilAck =
+    /(до\s+тех\s+пор,?\s*пока|пока\s+(?:я\s+)?не|до\s+выполнени|кажд(?:ый|ые)\s+час)/i.test(
+      params.text,
+    );
+  const clock = extractReminderClock(params.text);
+  const relativeHour = /через\s+час/i.test(params.text);
+  if (!nagUntilAck && !clock && !relativeHour && !/сегодня/i.test(params.text)) {
+    return params.execution;
+  }
+
+  const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
+  const fireAt = resolveClearReminderFireAt({
+    text: params.text,
+    nowLocal,
+    clock,
+    relativeHour,
+    nagUntilAck,
+  });
+  const title = extractClearReminderTitle(params.text);
+  if (!title) return params.execution;
+  const proposed = params.execution.actionPlan?.actions[0];
+  const action: ActionPlanItem = {
+    ...(proposed ?? buildSyntheticReminderAction(title, params.timezone)),
+    actionType: "task",
+    kind: "task",
+    title,
+    timezone: proposed?.timezone || params.timezone,
+    startAtLocal: null,
+    endAtLocal: null,
+    dueAtLocal: nagUntilAck
+      ? nowLocal.endOf("day").toFormat("yyyy-MM-dd'T'HH:mm:ss")
+      : fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    durationMinutes: null,
+    confidence: Math.max(proposed?.confidence ?? 0, 0.96),
+    risk: "low",
+    requiresConfirmation: false,
+    reminders: nagUntilAck
+      ? []
+      : [
+          {
+            type: "custom",
+            scheduledAtLocal: fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+            offsetMinutesBefore: null,
+            repeatUntilAck: false,
+            payload: { sourceNormalization: "clear_reminder_v270" },
+          },
+        ],
+    metadata: {
+      ...(proposed?.metadata ?? {}),
+      sourceNormalization: "clear_reminder_v270",
+      reminderIntentExplicit: true,
+    },
+  };
+  const policy: AgentReminderPolicy | null = nagUntilAck
+    ? {
+        operation: "create_interval_window_policy",
+        itemIds: [],
+        itemTitle: title,
+        title,
+        category: /оплат|леи|деньг|сч[её]т/i.test(title) ? "finance" : "nag_until_done",
+        policyType: "nag_until_ack",
+        startsAtLocal: fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+        endsAtLocal: null,
+        nextFireAtLocal: fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+        recurrenceRule: null,
+        intervalMinutes: extractIntervalMinutes(params.text) ?? 60,
+        requireAck: true,
+        maxOccurrences: null,
+        minutesBefore: null,
+        windowEndInclusive: true,
+        catchUpMode: "one_immediate_then_resume",
+        onWindowEnd: "carry_to_next_day",
+        quietHoursStart: null,
+        quietHoursEnd: null,
+        allowDuringQuietHours: false,
+      }
+    : null;
+
+  return {
+    ...params.execution,
+    intent: "create_plan" as const,
+    reply: null,
+    actionPlan: {
+      ...(params.execution.actionPlan ?? {
+        intent: "plan" as const,
+        summary: title,
+        reply: null,
+        confidence: 0.96,
+        requiresConfirmation: false,
+        actions: [],
+        memoryCandidates: [],
+        clarificationQuestions: [],
+      }),
+      intent: "plan" as const,
+      summary: title,
+      reply: null,
+      confidence: Math.max(params.execution.actionPlan?.confidence ?? 0, 0.96),
+      requiresConfirmation: false,
+      actions: [action],
+      clarificationQuestions: [],
+    },
+    itemUpdates: [],
+    reminderPolicies: policy ? [policy] : [],
+    clarificationQuestions: [],
+  };
+}
+
+function buildSyntheticReminderAction(title: string, timezone: string): ActionPlanItem {
+  return {
+    actionType: "task",
+    kind: "task",
+    title,
+    description: null,
+    location: null,
+    timezone,
+    startAtLocal: null,
+    endAtLocal: null,
+    dueAtLocal: null,
+    durationMinutes: null,
+    priority: 3,
+    confidence: 0.96,
+    risk: "low",
+    requiresConfirmation: false,
+    tentative: false,
+    recurrence: null,
+    reminders: [],
+    memoryCandidates: [],
+    metadata: {},
+  };
+}
+
+function resolveClearReminderFireAt(params: {
+  text: string;
+  nowLocal: DateTime;
+  clock: { hour: number; minute: number } | null;
+  relativeHour: boolean;
+  nagUntilAck: boolean;
+}) {
+  if (params.relativeHour) return params.nowLocal.plus({ hours: 1 }).startOf("minute");
+  if (!params.clock) {
+    return params.nowLocal
+      .plus({ minutes: params.nagUntilAck ? 5 : 60 })
+      .startOf("minute");
+  }
+  const tomorrow = /завтра/i.test(params.text);
+  let target = params.nowLocal
+    .plus({ days: tomorrow ? 1 : 0 })
+    .set({
+      hour: params.clock.hour,
+      minute: params.clock.minute,
+      second: 0,
+      millisecond: 0,
+    });
+  if (!tomorrow && target <= params.nowLocal) {
+    if (/сегодня/i.test(params.text) && params.clock.hour < 12 && params.nowLocal.hour >= 12) {
+      const evening = target.plus({ hours: 12 });
+      target = evening > params.nowLocal ? evening : params.nowLocal.plus({ hours: 1 });
+    } else {
+      target = target.plus({ days: 1 });
+    }
+  }
+  return target;
+}
+
+function extractReminderClock(text: string) {
+  const match =
+    text.match(/(?:^|\s)(?:сегодня\s+|завтра\s+)?в\s+(\d{1,2})(?:[.:](\d{2}))?/i) ??
+    text.match(/напом(?:ни|инай|няй)(?:\s+мне)?(?:\s+сегодня|\s+завтра)?\s+в\s+(\d{1,2})(?:[.:](\d{2}))?/i);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2] ?? 0);
+  return hour <= 23 && minute <= 59 ? { hour, minute } : null;
+}
+
+function extractClearReminderTitle(text: string) {
+  const firstSentence = text.split(/[.!?]\s+/)[0] ?? text;
+  const title = firstSentence
+    .replace(/^(?:сегодня|завтра)\s+/i, "")
+    .replace(/^(?:в\s+\d{1,2}(?:[.:]\d{2})?\s+)?напом(?:ни|инай|няй)(?:\s+мне)?\s+/i, "")
+    .replace(/^кажд(?:ый|ые)\s+час(?:а|ов)?\s+напом(?:ни|инай|няй)(?:\s+мне)?\s+/i, "")
+    .replace(/^(?:напом(?:ни|инай|няй)(?:\s+мне)?\s+)(?:сегодня|завтра)?\s*/i, "")
+    .replace(/^(?:сегодня|завтра)\s+/i, "")
+    .replace(/^через\s+час\s+/i, "")
+    .replace(/,\s*пока\s+.*$/i, "")
+    .replace(/\s+до\s+тех\s+пор.*$/i, "")
+    .trim();
+  return title ? `${title[0].toLocaleUpperCase("ru")}${title.slice(1)}` : null;
 }
 
 function normalizeRussianWeekdaySemantics(params: {

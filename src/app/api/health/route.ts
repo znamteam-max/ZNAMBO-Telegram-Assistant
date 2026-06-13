@@ -6,7 +6,11 @@ import {
   isGoogleCalendarConfigured,
   isYandexCalendarConfigured,
 } from "@/lib/env";
-import { getLatestAiAuditStatus } from "@/db/queries/audit";
+import {
+  getLatestAiAuditStatus,
+  getLatestAuditByActionGlobal,
+  getLatestPlannerGuardBlock,
+} from "@/db/queries/audit";
 import {
   APP_VERSION,
   INTERVAL_ALGORITHM_VERSION,
@@ -23,7 +27,16 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const env = getEnv();
-  const [lastSuccessfulAi, lastAiCall, scheduler, policyStats, calendarImport] = await Promise.all([
+  const [
+    lastSuccessfulAi,
+    lastAiCall,
+    scheduler,
+    policyStats,
+    calendarImport,
+    lastTranscription,
+    lastNaturalLanguagePlan,
+    lastPlannerGuardBlock,
+  ] = await Promise.all([
     getLatestAiAuditStatus({ succeeded: true }).catch(() => null),
     getLatestAiAuditStatus().catch(() => null),
     getSchedulerRuntimeHealth().catch(() => null),
@@ -32,9 +45,15 @@ export async function GET() {
       policiesMissingNextReminder: 0,
     })),
     getLatestCalendarImportState().catch(() => null),
+    getLatestAuditByActionGlobal("assistant.transcription_status").catch(() => null),
+    getLatestAuditByActionGlobal("assistant.agent_decision_trace").catch(() => null),
+    getLatestPlannerGuardBlock().catch(() => null),
   ]);
   const lastSuccessfulDetails = lastSuccessfulAi?.details as Record<string, unknown> | undefined;
   const lastCallDetails = lastAiCall?.details as Record<string, unknown> | undefined;
+  const lastTranscriptionDetails = lastTranscription?.details as Record<string, unknown> | undefined;
+  const lastPlanDetails = lastNaturalLanguagePlan?.details as Record<string, unknown> | undefined;
+  const lastGuardDetails = lastPlannerGuardBlock?.details as Record<string, unknown> | undefined;
   const runnerStartedAt = scheduler?.lastRunnerStartedAt ?? null;
   const runnerFinishedAt = scheduler?.lastRunnerFinishedAt ?? null;
   const lastRunnerRunAt =
@@ -82,5 +101,17 @@ export async function GET() {
     externalCalendarEventsVisible: calendarImport?.externalEventsVisible ?? 0,
     recurringCalendarEventsImported: calendarImport?.recurringEventsCount ?? 0,
     lastCalendarImportErrorClass: calendarImport?.lastImportErrorClass ?? null,
+    lastTranscriptionStatus: String(lastTranscriptionDetails?.status ?? "") || null,
+    lastPlannerGuardBlockReason:
+      String(
+        lastGuardDetails?.plannerGuardBlockReason ??
+          (Array.isArray(lastGuardDetails?.validationWarnings)
+            ? lastGuardDetails.validationWarnings[0]
+            : ""),
+      ) || null,
+    lastPlannerGuardBlockedAt: lastPlannerGuardBlock?.createdAt?.toISOString() ?? null,
+    lastNaturalLanguagePlanAttemptAt:
+      lastNaturalLanguagePlan?.createdAt?.toISOString() ?? null,
+    lastNaturalLanguagePlanResult: String(lastPlanDetails?.finalAction ?? "") || null,
   });
 }

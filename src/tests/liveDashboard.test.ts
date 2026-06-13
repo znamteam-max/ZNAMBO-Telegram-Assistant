@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   listCalendarSyncStatesForUser: vi.fn(),
   rememberTaskView: vi.fn(),
   listVisibleExternalCalendarEvents: vi.fn(),
+  getCalendarImportState: vi.fn(),
+  reconcileActiveReminderPolicies: vi.fn(),
 }));
 
 vi.mock("@/db/queries/liveDashboards", () => ({
@@ -40,6 +42,10 @@ vi.mock("@/db/queries/googleCalendar", () => ({
 }));
 vi.mock("@/db/queries/externalCalendarEvents", () => ({
   listVisibleExternalCalendarEvents: mocks.listVisibleExternalCalendarEvents,
+  getCalendarImportState: mocks.getCalendarImportState,
+}));
+vi.mock("@/services/reminderPolicyReconciler", () => ({
+  reconcileActiveReminderPolicies: mocks.reconcileActiveReminderPolicies,
 }));
 vi.mock("@/bot/createBot", () => ({
   getBot: () => ({ api: {} }),
@@ -80,6 +86,13 @@ describe("live dashboard lifecycle", () => {
     mocks.listLegacyReminderLikeItems.mockResolvedValue([]);
     mocks.listCalendarSyncStatesForUser.mockResolvedValue([]);
     mocks.listVisibleExternalCalendarEvents.mockResolvedValue([]);
+    mocks.getCalendarImportState.mockResolvedValue(null);
+    mocks.reconcileActiveReminderPolicies.mockResolvedValue({
+      checked: 0,
+      materialized: 0,
+      advanced: 0,
+      expired: 0,
+    });
     mocks.rememberTaskView.mockResolvedValue({ id: "view-id" });
   });
 
@@ -310,5 +323,34 @@ describe("live dashboard lifecycle", () => {
         ]),
       }),
     );
+  });
+
+  it("uses non-contradictory wording when an event is ongoing and nothing is later today", async () => {
+    mocks.listRecentRangeItems.mockResolvedValue([
+      {
+        id: "ongoing",
+        status: "active",
+        kind: "event",
+        title: "Текущий эфир",
+        timezone: "Europe/Moscow",
+        startAt: new Date("2026-06-13T07:00:00.000Z"),
+        endAt: new Date("2026-06-13T09:00:00.000Z"),
+        dueAt: null,
+        priority: 3,
+        visibility: "active",
+        metadata: {},
+      },
+    ]);
+
+    const result = await renderLiveDashboard({
+      userId: "user-id",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-13T08:00:00.000Z"),
+    });
+
+    expect(result.text).toContain("Сейчас / идёт:");
+    expect(result.text).toContain("Сегодня позже:");
+    expect(result.text).toContain("Больше событий сегодня нет.");
+    expect(result.text).not.toContain("На сегодня нет событий.");
   });
 });

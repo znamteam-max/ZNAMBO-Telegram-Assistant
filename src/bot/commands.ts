@@ -69,6 +69,16 @@ import {
   getSafeCalendarImportStatus,
   importYandexCalendarForUser,
 } from "@/services/yandexCalendarImport";
+import {
+  applyExternalCalendarCleanup,
+  getExternalCalendarVisibilityPreferences,
+  previewExternalCalendarCleanup,
+  setExternalCalendarVisibilityPreferences,
+} from "@/services/externalCalendarCleanup";
+import {
+  applyV270ProductionRepair,
+  previewV270ProductionRepair,
+} from "@/services/v270ProductionRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -134,8 +144,11 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/calendar_retry_failed — повторить неудачные синхронизации календаря",
         "/calendar_sync — импортировать события из Яндекс.Календаря",
         "/calendar_import_status — безопасный статус последнего импорта",
+        "/calendar_cleanup preview|apply — скрыть служебные и прошлые события только в JARVIS",
+        "/calendar_view — настройки видимости внешнего календаря",
         "/admin_repair_v253_calendar preview|apply — repair timeout-синхронизаций",
         "/admin_repair_v254 preview|apply — безопасный repair списка после ошибочного удаления",
+        "/admin_repair_v270 preview|apply — гигиена календаря, reconciler и stale edit sessions",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -315,6 +328,79 @@ export function registerCommands(bot: Bot<BotContext>) {
         `lastImportErrorClass: ${status.lastImportErrorClass ?? "none"}`,
       ].join("\n"),
     );
+  });
+
+  bot.command("calendar_cleanup", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyExternalCalendarCleanup({ userId: owner.id })
+        : await previewExternalCalendarCleanup({ userId: owner.id });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "Calendar cleanup применён локально." : "Calendar cleanup preview:",
+        `• служебных тестовых событий: ${result.counts.serviceEvents}`,
+        `• прошлых внешних событий для скрытия по умолчанию: ${result.counts.pastEvents}`,
+        `• возможных дублей: ${result.counts.possibleDuplicates}`,
+        "",
+        "События в Яндекс.Календаре не удалялись.",
+        ...(mode === "apply" ? [] : ["Для применения: /calendar_cleanup apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+
+  bot.command("calendar_view", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const requested = String(ctx.match ?? "").trim().toLowerCase();
+    const changes =
+      requested === "jarvis_only"
+        ? { mode: "jarvis_only" as const }
+        : ["today_future", "future"].includes(requested)
+          ? { mode: "today_future" as const }
+          : ["future_30_days", "30"].includes(requested)
+            ? { mode: "future_30_days" as const }
+            : requested === "show_past"
+              ? { showPast: true }
+              : requested === "hide_past"
+                ? { showPast: false }
+                : requested === "show_service"
+                  ? { showServiceEvents: true }
+                  : requested === "hide_service"
+                    ? { showServiceEvents: false }
+                    : null;
+    const preferences = changes
+      ? await setExternalCalendarVisibilityPreferences({
+          userId: owner.id,
+          preferences: changes,
+        })
+      : await getExternalCalendarVisibilityPreferences(owner.id);
+    await replyAndRecord(
+      ctx,
+      [
+        "Видимость внешнего календаря:",
+        `• режим: ${preferences.mode}`,
+        `• показывать прошлое: ${preferences.showPast ? "да" : "нет"}`,
+        `• показывать служебные тесты: ${preferences.showServiceEvents ? "да" : "нет"}`,
+        "",
+        "Команды: /calendar_view jarvis_only | today_future | future_30_days | show_past | hide_past | show_service | hide_service",
+      ].join("\n"),
+    );
+    if (changes && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
   });
 
   bot.command("today", async (ctx) =>
@@ -715,6 +801,45 @@ export function registerCommands(bot: Bot<BotContext>) {
         ...preview.notes,
         "",
         "Для применения: /admin_repair_v254 apply",
+      ].join("\n"),
+    );
+  });
+  bot.command("admin_repair_v270", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    if (mode === "apply") {
+      const result = await applyV270ProductionRepair({ userId: owner.id });
+      await replyAndRecord(
+        ctx,
+        [
+          "V2.7.0 production repair применён.",
+          `Служебных внешних событий скрыто: ${result.calendar.counts.serviceEvents}`,
+          `Прошлых внешних событий скрыто по умолчанию: ${result.calendar.counts.pastEvents}`,
+          `Policies reconciled: ${result.reconcile.checked}; materialized: ${result.reconcile.materialized}`,
+          `Stale edit sessions cleared: ${result.clearedSessionIds.length}`,
+          "Реальные события Яндекс.Календаря и planner items не удалялись.",
+        ].join("\n"),
+      );
+      if (ctx.chat?.id) {
+        await refreshDashboardAfterMutation({
+          userId: owner.id,
+          chatId: ctx.chat.id,
+          timezone: owner.timezone,
+        });
+      }
+      return;
+    }
+    const preview = await previewV270ProductionRepair({ userId: owner.id });
+    await replyAndRecord(
+      ctx,
+      [
+        "V2.7.0 production repair preview:",
+        `Служебных внешних событий: ${preview.calendar.counts.serviceEvents}`,
+        `Прошлых внешних событий: ${preview.calendar.counts.pastEvents}`,
+        `Reminder policies к reconcile: ${preview.reminderPoliciesToReconcile}`,
+        `Stale edit sessions: ${preview.staleEditSessions.length}`,
+        "",
+        "Для применения: /admin_repair_v270 apply",
       ].join("\n"),
     );
   });

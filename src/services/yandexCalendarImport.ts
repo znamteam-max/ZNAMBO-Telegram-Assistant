@@ -17,6 +17,11 @@ import {
 } from "@/integrations/yandexCalendar";
 import { getCalendarProvider, isYandexCalendarConfigured } from "@/lib/env";
 import { logger } from "@/lib/logger";
+import {
+  classifyExternalCalendarEventHygiene,
+  parseExternalCalendarVisibilityPreferences,
+} from "@/services/externalCalendarHygiene";
+import { hideExternalCalendarEventWithReason } from "@/db/queries/externalCalendarEvents";
 
 export type YandexCalendarImportResult = {
   ok: boolean;
@@ -60,11 +65,13 @@ export async function importYandexCalendarForUser(params: {
   }
 
   try {
-    const [events, syncStates, localItems] = await Promise.all([
+    const [events, syncStates, localItems, importState] = await Promise.all([
       queryYandexCalendarWindow({ from, to, timezone: params.timezone }),
       listCalendarSyncStatesForUser(params.userId, 1000),
       listVisibleActivePlanItems(params.userId, 1000),
+      getCalendarImportState(params.userId),
     ]);
+    const visibility = parseExternalCalendarVisibilityPreferences(importState?.metadata);
     const linkedObjectUrls = new Set(
       syncStates
         .map(({ sync }) => sync.externalId)
@@ -76,6 +83,7 @@ export async function importYandexCalendarForUser(params: {
     let recurring = 0;
     let skippedLinked = 0;
     let possibleDuplicates = 0;
+    let hygieneHidden = 0;
 
     for (const event of events) {
       seenObjectUrls.add(event.calendarObjectUrl);
@@ -91,7 +99,7 @@ export async function importYandexCalendarForUser(params: {
       if (previous) updated += 1;
       else created += 1;
       if (event.isRecurring) recurring += 1;
-      if (
+      const possibleDuplicate =
         !previous &&
         localItems.some((item) => {
           const anchor = item.startAt ?? item.dueAt;
@@ -100,11 +108,16 @@ export async function importYandexCalendarForUser(params: {
             Math.abs(anchor.getTime() - event.startAt.getTime()) < 5 * 60 * 1000 &&
             normalizeTitle(item.title) === normalizeTitle(event.summary)
           );
-        })
-      ) {
-        possibleDuplicates += 1;
-      }
-      await upsertExternalCalendarEvent({
+        });
+      if (possibleDuplicate) possibleDuplicates += 1;
+      const hygiene = classifyExternalCalendarEventHygiene(
+        {
+          ...event,
+          metadata: { xZnamboTest: event.xZnamboTest === true },
+        },
+        now,
+      );
+      const imported = await upsertExternalCalendarEvent({
         userId: params.userId,
         calendarObjectUrl: event.calendarObjectUrl,
         uid: event.uid,
@@ -121,12 +134,25 @@ export async function importYandexCalendarForUser(params: {
         exdates: event.exdates,
         lastSeenAt: now,
         metadata: {
-          possibleDuplicate: !previous && possibleDuplicates > 0,
+          possibleDuplicate,
+          isServiceEvent: hygiene.isServiceEvent,
+          isPastExternalEvent: hygiene.isPastEvent,
+          hiddenFromDefaultPlan: hygiene.isPastEvent,
+          hiddenReason: hygiene.hiddenReason,
+          xZnamboTest: event.xZnamboTest === true,
           importedAt: now.toISOString(),
         },
       });
+      if (imported && hygiene.isServiceEvent && !visibility.showServiceEvents) {
+        await hideExternalCalendarEventWithReason({
+          userId: params.userId,
+          id: imported.id,
+          reason: "service_test_event",
+        });
+        if (!previous?.hiddenAt) hygieneHidden += 1;
+      }
     }
-    const hidden = await markMissingExternalEventsHidden({
+    const missingHidden = await markMissingExternalEventsHidden({
       userId: params.userId,
       from,
       to,
@@ -140,13 +166,18 @@ export async function importYandexCalendarForUser(params: {
       externalEventsVisible: visible,
       possibleDuplicates,
       lastImportErrorClass: null,
-      metadata: { from: from.toISOString(), to: to.toISOString(), skippedLinked },
+      metadata: {
+        from: from.toISOString(),
+        to: to.toISOString(),
+        skippedLinked,
+        calendarHygieneVersion: "2.7.0",
+      },
     });
     return {
       ok: true,
       created,
       updated,
-      hidden,
+      hidden: missingHidden + hygieneHidden,
       recurring,
       skippedLinked,
       possibleDuplicates,

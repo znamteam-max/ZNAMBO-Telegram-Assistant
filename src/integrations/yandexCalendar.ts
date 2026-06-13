@@ -96,6 +96,7 @@ export type YandexCalendarExternalEvent = {
   recurrenceRule: string | null;
   recurrenceId: string;
   exdates: string[];
+  xZnamboTest?: boolean;
 };
 
 const YANDEX_PROVIDER = "yandex_calendar";
@@ -412,6 +413,7 @@ export function parseIcsEvents(ics: string, fallbackTimezone = "Europe/Moscow") 
                 )?.date.toISOString(),
               )
               .filter((value): value is string => Boolean(value)),
+            xZnamboTest: /^true$/i.test(firstIcsValue(eventProperties, "X-ZNAMBO-TEST")),
           });
         }
       }

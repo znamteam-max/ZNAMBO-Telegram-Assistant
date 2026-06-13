@@ -4,20 +4,62 @@ This is the single canonical file to attach to a new Codex chat after every depl
 It contains the current production state, cumulative implementation history, validation results,
 and remaining limitations. It must never contain secrets.
 
-Last updated: 2026-06-12
+Last updated: 2026-06-13
 
 ## Current Production
 
 ```text
-Application version: 2.6.0
+Application version: 2.7.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 8506145e6f281cd12c69941664e4bf69a38c9810
+Validated application deployment commit: pending V2.7.0 rollout
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
 Reconciler: enabled
 Runner lock: enabled
 Production scheduler: cron-job.org
+```
+
+## Latest Deployment - V2.7.0
+
+V2.7.0 restores clear reminder capture and makes imported Yandex Calendar data useful instead of
+noisy.
+
+Implemented:
+
+- Exact-time, relative one-time, and open-ended hourly nag-until-ack reminder requests are
+  normalized after the mandatory OpenAI proposal and no longer hit a generic ambiguity block.
+- The planner guard accepts open-ended nag policies and returns precise missing-field messages.
+- Imported service/test and ended past Yandex events are hidden from the default Plan; real future
+  events remain visible.
+- Plan buckets and conflict detection ignore hidden, service, and ended past events.
+- `/calendar_cleanup preview|apply`, `/calendar_view`, and `/admin_repair_v270 preview|apply` safely
+  change only the local JARVIS view. They do not delete real Yandex events.
+- Plan and `/reminders` reconcile active reminder policies before rendering.
+- Safe health diagnostics now include transcription, natural-language planning, and planner-guard
+  status without message text or secrets.
+- Calendar reads remain best-effort and cannot block the core Plan.
+
+## V2.7.0 Production Acceptance
+
+```text
+Production commit: pending
+/api/health: pending
+Telegram webhook: pending
+Scheduler/reminder runner: pending
+Calendar cleanup/repair commands: require owner Telegram acceptance after deploy
+Local tests: 49 files, 187 tests passed
+Lint: passed
+Build: passed
+git diff --check: passed
+Database migration: not required
+```
+
+Remaining limitations:
+
+```text
+The today_future and future_30_days calendar visibility modes currently share the bounded imported
+calendar cache. Recurring external Yandex occurrences still cannot be edited individually.
 ```
 
 ## Latest Deployment - V2.6.0
@@ -316,6 +358,8 @@ V2.5.3 - Production repair enforcement and deterministic Yandex CalDAV lifecycle
 V2.5.3.1 - Normal CalDAV sync resilience and idempotent retry queue
 V2.5.4 - Unified Plan UX, safe numbered mutations, triage and conflict detection
 V2.5.4.1 - Item-card edit sessions, compound edits and Russian date fixes
+V2.6.0 - Plan UI and Yandex inbound calendar import
+V2.7.0 - Reminder capture regression fix and calendar import hygiene
 ```
 
 ## Remaining Limitations

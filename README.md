@@ -1,6 +1,6 @@
 # Personal Telegram Daily Assistant
 
-Current application version: `2.6.0`.
+Current application version: `2.7.0`.
 
 Canonical cross-chat handoff after each deployment: [`ZNAMBO_PROJECT_HANDOFF.md`](./ZNAMBO_PROJECT_HANDOFF.md).
 
@@ -55,6 +55,12 @@ Postgres
 - External minute scheduler support through cron-job.org or the optional Cloudflare Worker project.
 - Google Calendar OAuth, encrypted refresh token storage and event sync.
 - Yandex Calendar two-way support via CalDAV: deterministic outbound sync plus bounded inbound import of external and recurring events. Calendar failure does not block DB records or Telegram reminders.
+- V2.7.0 calendar-import hygiene hides service tests and past external events from the default Plan,
+  adds `/calendar_cleanup`, `/calendar_view`, and safe `/admin_repair_v270` controls.
+- Clear reminder requests are normalized after mandatory OpenAI planning, including exact-time,
+  relative one-time, and open-ended hourly `nag_until_ack` reminders.
+- Safe health diagnostics expose the last transcription, natural-language planning result, and
+  planner-guard block reason without message text or secrets.
 - Vitest coverage for allowlist, idempotency middleware, date conversion, reminder policy repair/reconciliation, catch-up, interval drift, pending action double-click safety, oversized media, agenda ordering, calendar failure preservation and V2 planner acceptance cases.
 
 ## Prerequisites

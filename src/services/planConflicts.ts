@@ -12,9 +12,19 @@ export type PlanConflict = {
   overlapEnd: Date;
 };
 
-export function detectPlanConflicts(items: PlannerItem[]): PlanConflict[] {
+export function detectPlanConflicts(items: PlannerItem[], options?: { now?: Date }): PlanConflict[] {
   const candidates = items
-    .filter((item) => item.status === "active" && EVENT_LIKE_KINDS.has(item.kind) && item.startAt)
+    .filter((item) => {
+      if (item.status !== "active" || !EVENT_LIKE_KINDS.has(item.kind) || !item.startAt) return false;
+      if (
+        item.visibility === "hidden" ||
+        item.visibility === "history" ||
+        item.metadata?.isServiceEvent === true ||
+        item.metadata?.hiddenFromDefaultPlan === true
+      ) return false;
+      const end = item.endAt ?? new Date(item.startAt.getTime() + DEFAULT_DURATION_MS);
+      return !options?.now || end > options.now;
+    })
     .map((item) => ({
       item,
       start: item.startAt!,

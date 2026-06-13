@@ -113,10 +113,84 @@ export async function hideExternalCalendarEvent(userId: string, id: string) {
   const now = new Date();
   const [row] = await getDb()
     .update(externalCalendarEvents)
-    .set({ hiddenAt: now, updatedAt: now })
+    .set({
+      hiddenAt: now,
+      metadata: sql`${externalCalendarEvents.metadata} || '{"hiddenReason":"user_hidden"}'::jsonb`,
+      updatedAt: now,
+    })
     .where(and(eq(externalCalendarEvents.userId, userId), eq(externalCalendarEvents.id, id)))
     .returning();
   return row ?? null;
+}
+
+export async function hideExternalCalendarEventWithReason(params: {
+  userId: string;
+  id: string;
+  reason: string;
+}) {
+  const now = new Date();
+  const [row] = await getDb()
+    .update(externalCalendarEvents)
+    .set({
+      hiddenAt: now,
+      metadata: sql`${externalCalendarEvents.metadata} || ${JSON.stringify({
+        hiddenReason: params.reason,
+        hiddenAt: now.toISOString(),
+      })}::jsonb`,
+      updatedAt: now,
+    })
+    .where(
+      and(eq(externalCalendarEvents.userId, params.userId), eq(externalCalendarEvents.id, params.id)),
+    )
+    .returning();
+  return row ?? null;
+}
+
+export async function updateExternalCalendarEventMetadata(params: {
+  userId: string;
+  id: string;
+  metadata: Record<string, unknown>;
+}) {
+  const [row] = await getDb()
+    .update(externalCalendarEvents)
+    .set({
+      metadata: sql`${externalCalendarEvents.metadata} || ${JSON.stringify(params.metadata)}::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(externalCalendarEvents.userId, params.userId), eq(externalCalendarEvents.id, params.id)),
+    )
+    .returning();
+  return row ?? null;
+}
+
+export async function listExternalCalendarEventsForCleanup(userId: string, limit = 1000) {
+  return getDb()
+    .select()
+    .from(externalCalendarEvents)
+    .where(eq(externalCalendarEvents.userId, userId))
+    .orderBy(externalCalendarEvents.startAt)
+    .limit(limit);
+}
+
+export async function unhideExternalCalendarEventsByReason(params: {
+  userId: string;
+  reason: string;
+}) {
+  const rows = await getDb()
+    .update(externalCalendarEvents)
+    .set({
+      hiddenAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(externalCalendarEvents.userId, params.userId),
+        sql`${externalCalendarEvents.metadata}->>'hiddenReason' = ${params.reason}`,
+      ),
+    )
+    .returning({ id: externalCalendarEvents.id });
+  return rows.length;
 }
 
 export async function deleteExternalCalendarEventCache(userId: string, id: string) {
@@ -212,7 +286,32 @@ export async function updateCalendarImportState(params: {
         externalEventsVisible: params.externalEventsVisible,
         possibleDuplicates: params.possibleDuplicates,
         lastImportErrorClass: params.lastImportErrorClass,
-        metadata: params.metadata ?? {},
+        metadata: sql`${calendarImportState.metadata} || ${JSON.stringify(params.metadata ?? {})}::jsonb`,
+        updatedAt: now,
+      },
+    })
+    .returning();
+  return row ?? null;
+}
+
+export async function updateCalendarImportPreferences(params: {
+  userId: string;
+  preferences: Record<string, unknown>;
+}) {
+  const now = new Date();
+  const metadata = { externalCalendarVisibility: params.preferences };
+  const [row] = await getDb()
+    .insert(calendarImportState)
+    .values({
+      userId: params.userId,
+      provider: "yandex",
+      metadata,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: calendarImportState.userId,
+      set: {
+        metadata: sql`${calendarImportState.metadata} || ${JSON.stringify(metadata)}::jsonb`,
         updatedAt: now,
       },
     })

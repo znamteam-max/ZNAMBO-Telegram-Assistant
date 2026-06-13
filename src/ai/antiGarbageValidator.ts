@@ -102,7 +102,19 @@ export function buildValidationFailureReply(warnings: string[]): string {
   if (warnings.some((warning) => warning.includes("training report"))) {
     return "Похоже, это отчёт по тренировке, а не новая задача. Отмечу как тренировочный статус и не буду сохранять весь текст заголовком.";
   }
-  return "Я остановил сохранение: план выглядит неоднозначно. Лучше уточним, чтобы не создать мусорную запись.";
+  if (warnings.some((warning) => warning.includes("explicit reminder intent has no committed policy"))) {
+    return "Понял задачу, но не понял время напоминания. Когда напомнить: сейчас, через час или сегодня вечером?";
+  }
+  if (warnings.some((warning) => warning.includes("explicit reminder times are not fully materialized"))) {
+    return "Понял задачу, но не смог однозначно привязать указанное время напоминания. Напиши время ещё раз, например: «сегодня в 18:00».";
+  }
+  if (warnings.some((warning) => warning.includes("interval policy is incomplete"))) {
+    return "Понял повторяющееся напоминание, но не смог определить время начала или интервал. Когда начать и как часто напоминать?";
+  }
+  if (warnings.some((warning) => warning.includes("policy target is not present"))) {
+    return "Понял правило напоминания, но не понял, к какой задаче его привязать. Назови задачу точнее.";
+  }
+  return `Не сохранил план из-за точной проверки: ${warnings[0]}. Уточни этот момент, остальное я уже понял.`;
 }
 
 export function validateReminderPoliciesBeforeSave(params: {
@@ -116,8 +128,14 @@ export function validateReminderPoliciesBeforeSave(params: {
 
   for (const policy of params.policies) {
     if (
-      ["interval_window", "nag_until_ack"].includes(policy.policyType) &&
+      policy.policyType === "interval_window" &&
       (!policy.startsAtLocal || !policy.endsAtLocal || !policy.intervalMinutes)
+    ) {
+      warnings.push(`interval policy is incomplete: ${policy.title}`);
+    }
+    if (
+      policy.policyType === "nag_until_ack" &&
+      (!policy.startsAtLocal || !policy.intervalMinutes)
     ) {
       warnings.push(`interval policy is incomplete: ${policy.title}`);
     }

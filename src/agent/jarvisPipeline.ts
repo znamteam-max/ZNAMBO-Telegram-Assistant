@@ -81,6 +81,9 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     partialMutationDetected: false,
     errorCode: null,
     safeErrorMessage: null,
+    naturalLanguagePlanAttemptAt: now.toISOString(),
+    naturalLanguagePlanResult: "started",
+    plannerGuardBlockReason: null,
   };
 
   try {
@@ -156,6 +159,10 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     trace.partialMutationDetected = executionResult.partialMutationDetected;
     trace.validationWarnings = [...bound.warnings, ...executionResult.validationWarnings];
     trace.finalAction = executionResult.finalAction;
+    trace.naturalLanguagePlanResult = executionResult.finalAction;
+    if (executionResult.finalAction.startsWith("blocked_by_")) {
+      trace.plannerGuardBlockReason = executionResult.validationWarnings[0] ?? "unknown";
+    }
     if (executionResult.mutationOccurred) {
       await refreshDashboardBestEffort(ctx, timezone);
     }
@@ -163,10 +170,12 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     if (error instanceof MandatoryAiError) {
       applyAiTelemetry(trace, error.telemetry);
       trace.finalAction = "ai_required_failed_closed";
+      trace.naturalLanguagePlanResult = "ai_required_failed_closed";
       await replyAndRecord(ctx, AI_SAFE_FAILURE_REPLY);
       return;
     }
     trace.finalAction = "agent_execution_failed_closed";
+    trace.naturalLanguagePlanResult = "agent_execution_failed_closed";
     if (Number(trace.proposedMutationCount) > 0) {
       trace.transactionStarted = true;
       trace.transactionCommitted = false;

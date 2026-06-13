@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { agentActions, type AgentAction } from "../schema";
@@ -95,4 +95,24 @@ export async function getLatestAgentActionByStatus(params: {
     .limit(1);
 
   return row ?? null;
+}
+
+export async function listPendingAgentActionsByTypes(params: {
+  userId: string;
+  actionTypes: string[];
+  limit?: number;
+}) {
+  if (!params.actionTypes.length) return [];
+  return getDb()
+    .select()
+    .from(agentActions)
+    .where(
+      and(
+        eq(agentActions.userId, params.userId),
+        eq(agentActions.status, "pending"),
+        inArray(agentActions.actionType, params.actionTypes),
+      ),
+    )
+    .orderBy(desc(agentActions.createdAt))
+    .limit(params.limit ?? 100);
 }

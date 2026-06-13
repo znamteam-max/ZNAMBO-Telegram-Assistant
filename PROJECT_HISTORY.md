@@ -56,6 +56,35 @@ npm run build -> passed
 git diff --check -> passed
 ```
 
+## V2.7.0 reminder capture and calendar import hygiene
+
+V2.7.0 fixes the production regressions discovered after inbound Yandex Calendar import.
+
+Implemented:
+
+- Clear reminders are normalized only after mandatory OpenAI planning, including exact clock,
+  relative one-time, and open-ended hourly nag-until-ack requests.
+- The validation guard accepts open-ended nag policies and names the exact missing field when it
+  must block.
+- External calendar import classifies service/test and past events. The default Plan hides them,
+  while visibility and cleanup commands can change the local JARVIS view without deleting Yandex
+  data.
+- Timeline buckets, conflict detection, Plan wording, and reminder-policy rendering were aligned.
+- Voice transcription, natural-language planner attempts, and guard blocks gained safe audit and
+  health diagnostics.
+- Added safe `/calendar_cleanup`, `/calendar_view`, and `/admin_repair_v270` commands.
+
+No schema migration is required because the release uses existing metadata fields.
+
+Pre-deployment validation:
+
+```text
+npm test -> 49 files, 187 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+```
+
 No secrets were written to project history.
 
 ## Update 2026-06-12 - V2.5.4.1 Item Card Edit Sessions

@@ -19,6 +19,8 @@ import {
   reminderPolicyCardKeyboard,
 } from "@/bot/keyboards";
 import { buildUserTimelineView } from "@/services/userTimeline";
+import { reconcileActiveReminderPolicies } from "@/services/reminderPolicyReconciler";
+import { logger } from "@/lib/logger";
 
 export async function renderReminderControlCenter(params: {
   userId: string;
@@ -28,6 +30,11 @@ export async function renderReminderControlCenter(params: {
 }) {
   const now = params.now ?? new Date();
   const scope = params.scope?.toLowerCase() || "active";
+  await reconcileActiveReminderPolicies({ now, limit: 200 }).catch((error) => {
+    logger.warn("Reminder control reconciliation failed without blocking view", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
   const timeline = scope === "paused" ? null : await buildUserTimelineView(params);
   const policies =
     scope === "paused"
@@ -42,7 +49,7 @@ export async function renderReminderControlCenter(params: {
   const futureItems =
     timeline?.items.filter((item) => {
       const anchor = item.startAt ?? item.dueAt;
-      return item.status === "active" && Boolean(anchor && anchor > now);
+      return item.source !== "yandex_external" && item.status === "active" && Boolean(anchor && anchor > now);
     }) ?? [];
   const taskCount = futureItems.filter((item) =>
     ["task", "preparation_task", "recurring_task"].includes(item.kind),

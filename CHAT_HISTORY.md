@@ -843,3 +843,16 @@ Telegram `BUTTON_DATA_INVALID` regression caused by a callback longer than 64 by
 entity wire alias was shortened and protected by a regression test. The next smoke was delivered
 successfully and auto-archived. Non-recurring external events gained same-object-URL edit and
 reschedule flow. Final validation passed 48 files and 176 tests.
+
+### Turn: V2.7.0 calendar hygiene and reminder capture implementation
+
+The attached V2.7.0 brief was implemented on top of V2.6.0 without rewriting the mandatory OpenAI
+planner, reminder engine, runner lock, or CalDAV lifecycle.
+
+The release restores ordinary exact-time, relative, and nag-until-ack reminder capture after the AI
+proposal; replaces generic ambiguity failures with precise validation messages; filters service
+tests and past Yandex events from the default Plan; aligns Plan and reminder policy views; and adds
+safe local calendar cleanup, visibility, repair, transcription, and planner-guard diagnostics.
+
+No database migration is required. Pre-deployment validation passed 49 test files and 187 tests,
+lint, build, and diff checks. No secrets were written to history.

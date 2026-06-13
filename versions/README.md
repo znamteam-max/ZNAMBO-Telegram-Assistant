@@ -25,3 +25,4 @@ Version index:
 - `V2.5.4.md` - unified plan UX, safe numbered mutations, triage and conflict detection.
 - `V2.5.4.1.md` - item-card edit sessions, compound edits and Russian date fixes.
 - `V2.6.0.md` - cleaner live Plan UI, robust compound time edits and inbound Yandex Calendar import.
+- `V2.7.0.md` - reminder capture regression fix and external-calendar import hygiene.

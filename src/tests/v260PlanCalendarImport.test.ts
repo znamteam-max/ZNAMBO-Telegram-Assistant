@@ -150,6 +150,36 @@ END:VCALENDAR
     expect(new Set(events.map((event) => event.recurrenceId)).size).toBe(3);
   });
 
+  it("captures the safe X-ZNAMBO-TEST service marker", () => {
+    process.env.YANDEX_CALDAV_URL = "https://caldav.example.test/";
+    resetEnvCacheForTests();
+    const xml = `<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/calendars/me/personal/test.ics</D:href>
+    <D:propstat><D:prop><C:calendar-data><![CDATA[
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:external-smoke
+DTSTART:20260615T120000Z
+DTEND:20260615T120500Z
+SUMMARY:External smoke
+X-ZNAMBO-TEST:true
+END:VEVENT
+END:VCALENDAR
+]]></C:calendar-data></D:prop></D:propstat>
+  </D:response>
+</D:multistatus>`;
+    const [event] = parseCalendarQueryResponse({
+      xml,
+      from: new Date("2026-06-12T00:00:00.000Z"),
+      to: new Date("2026-07-01T00:00:00.000Z"),
+      timezone: "Europe/Moscow",
+    });
+
+    expect(event.xZnamboTest).toBe(true);
+  });
+
   it("updates a non-recurring external event at the same object URL", async () => {
     process.env.YANDEX_CALDAV_USERNAME = "calendar-user";
     process.env.YANDEX_CALDAV_APP_PASSWORD = "calendar-password";

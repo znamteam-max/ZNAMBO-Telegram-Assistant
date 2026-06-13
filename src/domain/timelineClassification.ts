@@ -38,6 +38,9 @@ export function classifyTimelineItem(
   const anchorLocal = anchor
     ? DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(item?.timezone || policy?.timezone || timezone)
     : null;
+  const itemEnd = item?.endAt ?? (
+    item?.startAt ? new Date(item.startAt.getTime() + 60 * 60 * 1000) : null
+  );
 
   if (
     policy &&
@@ -55,14 +58,16 @@ export function classifyTimelineItem(
   ) {
     return "long_term";
   }
-  if (
-    anchorLocal &&
-    Math.abs(anchorLocal.toMillis() - nowLocal.toMillis()) <= 60 * 60 * 1000
-  ) {
+  if (item?.startAt && itemEnd && item.startAt <= now && itemEnd > now) {
     return "now";
   }
+  if (item?.metadata?.isExternalCalendarEvent === true && itemEnd && itemEnd <= now) return "history";
   if (anchorLocal?.hasSame(nowLocal, "day")) return "today";
-  if (anchor && anchor.getTime() <= now.getTime() + 48 * 60 * 60 * 1000) return "soon";
+  if (
+    anchor &&
+    anchor.getTime() > now.getTime() &&
+    anchor.getTime() <= now.getTime() + 48 * 60 * 60 * 1000
+  ) return "soon";
   return anchor ? "distant_priority" : "long_term";
 }
 

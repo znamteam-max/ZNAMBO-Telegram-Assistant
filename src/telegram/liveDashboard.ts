@@ -20,6 +20,7 @@ import { listCalendarSyncStatesForUser } from "@/db/queries/googleCalendar";
 import { formatRuItemsRequireDecision } from "@/lib/ruPlural";
 import { rememberTaskView } from "@/agent/state/taskViewState";
 import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
+import { reconcileActiveReminderPolicies } from "@/services/reminderPolicyReconciler";
 
 import { getBot } from "@/bot/createBot";
 import { entityListKeyboard } from "@/bot/keyboards";
@@ -53,6 +54,11 @@ export async function renderLiveDashboard(params: {
   const now = params.now ?? new Date();
   const local = DateTime.fromJSDate(now, { zone: "utc" }).setZone(params.timezone).setLocale("ru");
   const weekEnd = local.plus({ days: 7 }).endOf("day").toUTC().toJSDate();
+  await reconcileActiveReminderPolicies({ now, limit: 200 }).catch((error) => {
+    logger.warn("Dashboard reminder reconciliation failed without blocking view", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
   const [timeline, calendarStates] = await Promise.all([
     buildUserTimelineView(params),
     listCalendarSyncStatesForUser(params.userId, 100),
@@ -66,8 +72,8 @@ export async function renderLiveDashboard(params: {
   );
   const allItems = itemRows.map((row) => row.item!);
   const isPastActiveItem = (item: PlannerItem) => {
-    const anchor = item.startAt ?? item.dueAt;
-    return Boolean(anchor && anchor < now && item.status === "active");
+    const anchor = item.endAt ?? item.startAt ?? item.dueAt;
+    return Boolean(anchor && anchor <= now && item.status === "active");
   };
   const pastTodayItems = itemRows
     .filter((row) => row.dateBucket === "today" && row.item && isPastActiveItem(row.item))
@@ -97,7 +103,7 @@ export async function renderLiveDashboard(params: {
     .filter((row) => {
       if (row.dateBucket !== "soon") return false;
       const anchor = row.item?.startAt ?? row.item?.dueAt;
-      return Boolean(anchor && anchor <= weekEnd);
+      return Boolean(anchor && anchor > now && anchor <= weekEnd);
     })
     .map((row) => row.item!)
     .slice(0, 10);
@@ -126,7 +132,7 @@ export async function renderLiveDashboard(params: {
     .map((row) => row.item!)
     .filter((item) => !pastTodayIds.has(item.id)),
   ].slice(0, 5);
-  const conflicts = detectPlanConflicts(allItems);
+  const conflicts = detectPlanConflicts(allItems, { now });
   const displayPolicies = timeline.policies;
   const nagging = displayPolicies
     .filter((policy) => classifyTimelineItem({ policy }, now, params.timezone) === "active_nag")
@@ -206,11 +212,15 @@ export async function renderLiveDashboard(params: {
     lines.push("", "Сейчас / идёт:");
     pushRows(itemRowsFor(currentItems));
   }
-  lines.push("", "Сегодня:");
+  lines.push("", currentItems.length ? "Сегодня позже:" : "Сегодня:");
   if (todayItems.length) {
     pushRows(itemRowsFor(todayItems));
   } else {
-    lines.push("На сегодня нет событий.");
+    lines.push(
+      currentItems.length
+        ? "Больше событий сегодня нет."
+        : "На сегодня нет событий.",
+    );
   }
   if (tomorrowItems.length) {
     lines.push("", "Завтра:");
@@ -287,6 +297,11 @@ export async function renderReminderPolicyList(params: {
   longTermOnly?: boolean;
   category?: string | null;
 }) {
+  await reconcileActiveReminderPolicies({ limit: 200 }).catch((error) => {
+    logger.warn("Reminder list reconciliation failed without blocking view", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
   const [timeline, legacyAll] = await Promise.all([
     buildUserTimelineView({ userId: params.userId, timezone: params.timezone }),
     listLegacyReminderLikeItems(params.userId, 50),

@@ -59,3 +59,28 @@ export async function getLatestAiAuditStatus(params?: { succeeded?: boolean }) {
     .limit(1);
   return row ?? null;
 }
+
+export async function getLatestAuditByActionGlobal(action: string) {
+  const [row] = await getDb()
+    .select()
+    .from(auditLog)
+    .where(eq(auditLog.action, action))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function getLatestPlannerGuardBlock() {
+  const [row] = await getDb()
+    .select()
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.action, "assistant.agent_decision_trace"),
+        sql`${auditLog.details}->>'finalAction' like 'blocked_by_%'`,
+      ),
+    )
+    .orderBy(desc(auditLog.createdAt))
+    .limit(1);
+  return row ?? null;
+}

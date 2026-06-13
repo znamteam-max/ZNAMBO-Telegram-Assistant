@@ -1,6 +1,9 @@
 import { DateTime } from "luxon";
 
-import { listVisibleExternalCalendarEvents } from "@/db/queries/externalCalendarEvents";
+import {
+  getCalendarImportState,
+  listVisibleExternalCalendarEvents,
+} from "@/db/queries/externalCalendarEvents";
 import type { ExternalCalendarEvent, PlannerItem, ReminderPolicy } from "@/db/schema";
 import { listVisibleActivePlanItems } from "@/db/queries/items";
 import { listActiveReminderPolicies } from "@/db/queries/reminderPolicies";
@@ -10,6 +13,10 @@ import {
   compareTimelineEntries,
   type TimelineClassification,
 } from "@/domain/timelineClassification";
+import {
+  parseExternalCalendarVisibilityPreferences,
+  shouldShowExternalCalendarEvent,
+} from "@/services/externalCalendarHygiene";
 
 export type TimelineDateBucket =
   | "today"
@@ -36,17 +43,28 @@ export async function buildUserTimelineView(params: {
   timezone: string;
   now?: Date;
 }) {
-  const [items, policies, externalEvents] = await Promise.all([
+  const [items, policies, externalEvents, importState] = await Promise.all([
     listVisibleActivePlanItems(params.userId, 300),
     listActiveReminderPolicies(params.userId, 300),
-    listVisibleExternalCalendarEvents({ userId: params.userId, limit: 500 }),
+    listVisibleExternalCalendarEvents({ userId: params.userId, limit: 500 }).catch(() => []),
+    getCalendarImportState(params.userId).catch(() => null),
   ]);
+  const now = params.now ?? new Date();
+  const preferences = parseExternalCalendarVisibilityPreferences(importState?.metadata);
   return buildUserTimelineViewFromData({
     items,
     policies,
-    externalEvents,
+    externalEvents: externalEvents
+      .filter((event) => shouldShowExternalCalendarEvent({ event, preferences, now }))
+      .map((event) => ({
+        ...event,
+        metadata: {
+          ...event.metadata,
+          showPastExternal: preferences.showPast,
+        },
+      })),
     timezone: params.timezone,
-    now: params.now,
+    now,
   });
 }
 
@@ -103,10 +121,13 @@ function buildItemRow(
 ): UserTimelineRow {
   const anchor = item.startAt ?? item.dueAt;
   const unresolvedPast =
-    item.status === "active" &&
-    item.kind !== "event" &&
-    item.kind !== "recurring_task" &&
-    Boolean(anchor && anchor.getTime() < now.getTime() - 48 * 60 * 60 * 1000);
+    (item.metadata?.isExternalCalendarEvent === true &&
+      item.metadata?.showPastExternal === true &&
+      Boolean((item.endAt ?? item.startAt) && (item.endAt ?? item.startAt)! <= now)) ||
+    (item.status === "active" &&
+      item.kind !== "event" &&
+      item.kind !== "recurring_task" &&
+      Boolean(anchor && anchor.getTime() < now.getTime() - 48 * 60 * 60 * 1000));
   const classification = unresolvedPast
     ? "unresolved_past"
     : classifyTimelineItem({ item }, now, timezone);
@@ -155,6 +176,7 @@ function externalEventAsPlannerItem(event: ExternalCalendarEvent): PlannerItem {
       calendarObjectUrl: event.calendarObjectUrl,
       calendarUid: event.uid,
       calendarEtag: event.etag,
+      isExternalCalendarEvent: true,
       isRecurring: event.isRecurring,
       recurrenceRule: event.recurrenceRule,
       recurrenceId: event.recurrenceId,
