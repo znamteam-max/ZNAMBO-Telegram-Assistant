@@ -71,6 +71,10 @@ import {
   applyV254ProductionRepair,
   previewV254ProductionRepair,
 } from "@/services/v254ProductionRepair";
+import {
+  applyV280ProductionRepair,
+  previewV280ProductionRepair,
+} from "@/services/v280ProductionRepair";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 
 export const runtime = "nodejs";
@@ -191,6 +195,18 @@ export async function POST(request: Request) {
       result: await applyV254ProductionRepair(owner.id),
     });
   }
+  if (body.action === "v280_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV280ProductionRepair({ userId: owner.id }),
+    });
+  }
+  if (body.action === "v280_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV280ProductionRepair({ userId: owner.id }),
+    });
+  }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {
     const result = await runV242SnoozeProductionProbe({
       userId: owner.id,
@@ -232,6 +248,8 @@ export async function POST(request: Request) {
         requireAck: policy.requireAck,
         catchUpMode: policy.catchUpMode,
         onWindowEnd: policy.onWindowEnd,
+        snoozedUntil: policy.snoozedUntil,
+        snoozeScope: policy.snoozeScope,
       })),
       latest: latest
         ? {

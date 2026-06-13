@@ -23,12 +23,20 @@ export async function claimDueReminders(params: {
     with due as (
       select r.id
       from "assistant"."reminders" r
-      left join "assistant"."reminder_policies" p on p.id = r.policy_id
-      left join "assistant"."planner_items" i on i.id = r.planner_item_id
       where r.status = 'pending'
         and r.scheduled_at <= ${nowIso}::timestamptz
-        and (p.snoozed_until is null or p.snoozed_until <= ${nowIso}::timestamptz)
-        and (i.snoozed_until is null or i.snoozed_until <= ${nowIso}::timestamptz)
+        and not exists (
+          select 1
+          from "assistant"."reminder_policies" p
+          where p.id = r.policy_id
+            and p.snoozed_until > ${nowIso}::timestamptz
+        )
+        and not exists (
+          select 1
+          from "assistant"."planner_items" i
+          where i.id = r.planner_item_id
+            and i.snoozed_until > ${nowIso}::timestamptz
+        )
       order by r.scheduled_at asc
       limit ${params.limit}
       for update skip locked
