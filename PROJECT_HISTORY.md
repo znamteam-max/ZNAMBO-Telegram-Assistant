@@ -1,5 +1,54 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## Update 2026-06-13 - V2.8.0 Production Rollout
+
+V2.8.0 was deployed through GitHub/Vercel auto-deploy and verified against production.
+
+Production rollout:
+
+```text
+validated application commit -> d2ccd86f5cc4b74144b0938513e78f4bcf23757d
+GitHub CI -> passed
+/api/health -> ok, appVersion 2.8.0, matching deployment commit
+Telegram webhook -> correct production URL, pending 0, no last error
+cron-job.org runner -> completed successfully
+active policies -> 1
+policies missing next reminder -> 0
+Yandex import error -> none
+```
+
+Database rollout:
+
+```text
+drizzle/0008_reminder_policy_snooze.sql applied to production Neon
+planner_items.snoozed_until verified
+reminder_policies.snoozed_until verified
+reminder_policies.snooze_scope verified
+```
+
+Production acceptance found and fixed two release edges:
+
+- The first snooze-aware claim query used a nullable outer join with `FOR UPDATE SKIP LOCKED`,
+  which PostgreSQL cannot lock. It now uses `NOT EXISTS`.
+- The complex three-reminder phrase used plural `показания счётчиков`; the post-AI normalizer now
+  recognizes it, with an integration test through the real OpenAI proposal path.
+
+Final proof:
+
+```text
+V2.8 repair preview -> 0 cadence-only garbage tasks, 0 garbage policies, 0 stale sessions
+complex production agent probe -> AI called, AI succeeded, structured output valid, 3 actions
+agent probe -> read-only, no user records created
+automatic two-minute reminder smoke -> sent to Telegram and auto-archived
+npm test -> 51 files, 203 tests passed
+npm run lint -> passed
+npx tsc --noEmit -> passed
+npm run build -> passed
+git diff --check -> passed
+```
+
+No secrets were written to project history.
+
 ## Update 2026-06-12 - V2.6.0 Plan UI and Yandex Inbound Calendar
 
 Implemented in the release working tree:
@@ -72,7 +121,7 @@ or already-claimed reminders from leaking during snooze. A conservative `/admin_
 preview/apply path archives only the known cadence-only garbage task when exactly one safe target
 exists and never deletes Yandex Calendar events.
 
-Production rollout and acceptance are pending.
+Production rollout and acceptance completed. See the V2.8.0 production rollout entry above.
 
 Pre-deployment validation completed:
 
@@ -81,7 +130,7 @@ drizzle/0008_reminder_policy_snooze.sql applied to production Neon
 planner_items.snoozed_until verified
 reminder_policies.snoozed_until verified
 reminder_policies.snooze_scope verified
-npm test -> 51 files, 202 tests passed
+npm test -> 51 files, 203 tests passed
 npm run lint -> passed
 npx tsc --noEmit -> passed
 npm run build -> passed

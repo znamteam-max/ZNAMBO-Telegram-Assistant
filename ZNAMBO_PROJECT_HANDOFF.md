@@ -9,15 +9,73 @@ Last updated: 2026-06-13
 ## Current Production
 
 ```text
-Application version: 2.7.0
+Application version: 2.8.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 0038d8fb516fdf3ef347fd96af2e7a16bda7fe06
+Validated application deployment commit: d2ccd86f5cc4b74144b0938513e78f4bcf23757d
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
 Reconciler: enabled
 Runner lock: enabled
 Production scheduler: cron-job.org
+```
+
+## Latest Deployment - V2.8.0
+
+V2.8.0 makes reminder policies understandable in Plan, adds real policy-level snooze, fixes
+cadence-only edit context, and hardens the reminder runner.
+
+Implemented:
+
+- `/plan` and `/dashboard` render Plan directly instead of replying with a navigation placeholder.
+- Reminder policies render inline under their tasks with human wording, weekdays, and a visible
+  marker for persistent until-ack policies.
+- Reminder-edit sessions apply cadence-only replies to the selected item; global cadence-only text
+  asks for a target instead of creating a garbage task.
+- Policy/item snooze is enforced during claim, reconciliation, materialization, and the final
+  pre-delivery check. High-frequency rules offer 30-minute, one-hour, two-hour, and tomorrow
+  snooze choices.
+- Normal reminders expose Done, snooze, and item-edit controls.
+- Complex three-reminder requests produce one three-intent confirmation preview.
+- `/admin_repair_v280` safely archives the known cadence-only garbage task and its generated policy
+  without deleting Yandex Calendar data.
+- A production-only PostgreSQL claim regression caused by locking a nullable outer-join side was
+  found after deployment and fixed with `NOT EXISTS`.
+- The complex-request normalizer now accepts plural `показания счётчиков`; an integration test
+  proves the real mandatory OpenAI proposal path returns three actions.
+
+## V2.8.0 Production Acceptance
+
+```text
+Production application commit: d2ccd86f5cc4b74144b0938513e78f4bcf23757d
+GitHub CI: passed
+Vercel production deployment: passed
+/api/health: ok, appVersion 2.8.0, deployment commit matched
+Pipeline: jarvis, OpenAI configured and required for natural language
+Production Neon migration: drizzle/0008_reminder_policy_snooze.sql applied
+Verified columns: planner_items.snoozed_until, reminder_policies.snoozed_until,
+reminder_policies.snooze_scope
+Reminder runner: completed successfully after deployment
+Reminder reconciler: 1 active policy, 0 policies missing next reminder
+Telegram webhook: correct production URL, pending updates 0, no last error
+V2.8 repair final preview: 0 garbage cadence tasks, 0 garbage cadence policies, 0 stale sessions
+Complex production AI probe: AI called and succeeded, structured output valid, 3 recurring tasks
+Probe mutation count: 0; the read-only probe did not create user records
+Automatic reminder smoke: reminder sent to Telegram and test item auto-archived
+Yandex import: configured, latest import error none
+Local tests: 51 files, 203 tests passed
+Lint: passed
+TypeScript: passed
+Build: passed
+git diff --check: passed
+```
+
+Remaining V2.8 acceptance:
+
+```text
+Owner interaction is still required to visually confirm `/plan`, `/dashboard`, reminder-edit
+context, and each snooze callback in Telegram. These were not claimed as manually accepted.
+Monthly day-range reminder policies still require confirmation before commit.
 ```
 
 ## Latest Deployment - V2.7.0
@@ -371,6 +429,7 @@ V2.5.4 - Unified Plan UX, safe numbered mutations, triage and conflict detection
 V2.5.4.1 - Item-card edit sessions, compound edits and Russian date fixes
 V2.6.0 - Plan UI and Yandex inbound calendar import
 V2.7.0 - Reminder capture regression fix and calendar import hygiene
+V2.8.0 - Reminder policy UX, real policy snooze and Plan routing
 ```
 
 ## Remaining Limitations

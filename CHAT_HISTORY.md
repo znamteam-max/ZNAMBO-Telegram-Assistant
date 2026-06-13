@@ -1,5 +1,33 @@
 # ZNAMBO Telegram Assistant Chat History
 
+## 2026-06-13 - V2.8.0 production rollout completed
+
+User requested implementation of the V2.8 reminder-policy UX and snooze brief, followed by a
+production rollout and one canonical post-deploy handoff file.
+
+Completed:
+
+- applied and verified the V2.8 snooze migration in production Neon;
+- deployed V2.8 through GitHub/Vercel auto-deploy;
+- fixed the production PostgreSQL reminder-claim regression;
+- repaired the known cadence-only garbage task and generated policy;
+- fixed plural meter-reading wording in the complex three-reminder normalization;
+- proved a real mandatory OpenAI call returned three structured actions without mutation;
+- proved cron-job.org delivered the two-minute Telegram reminder and the test item auto-archived;
+- verified health, webhook, runner, reconciliation, repair preview, dashboard, and reminder-center
+  backend snapshots.
+
+Final checks:
+
+```text
+production application commit -> d2ccd86f5cc4b74144b0938513e78f4bcf23757d
+GitHub CI -> passed
+npm test -> 51 files, 203 tests passed
+lint, TypeScript, build and diff check -> passed
+```
+
+Only `ZNAMBO_PROJECT_HANDOFF.md` is attached after deployment. No secrets were stored.
+
 ## 2026-06-12 - V2.5.4.1 item edit session rollout work
 
 User reported the V2.5.4 production bug where editing an opened orthodontist item card ignored
