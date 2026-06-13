@@ -85,6 +85,22 @@ npm run build -> passed
 git diff --check -> passed
 ```
 
+Production rollout:
+
+```text
+application commit -> 0038d8fb516fdf3ef347fd96af2e7a16bda7fe06
+GitHub validate -> passed
+Vercel production deployment -> passed
+/api/health -> appVersion 2.7.0 and matching deployment commit
+webhook route -> reachable
+cron-job.org runner -> timestamp advanced during observation, last run succeeded
+reminder policies missing next reminder -> 0
+Yandex import error -> none
+```
+
+Owner Telegram acceptance remains for the cleanup/repair previews, exact reminder behavior, and
+voice transcription. No protected command was faked and no secret was exposed.
+
 No secrets were written to project history.
 
 ## Update 2026-06-12 - V2.5.4.1 Item Card Edit Sessions

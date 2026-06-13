@@ -856,3 +856,9 @@ safe local calendar cleanup, visibility, repair, transcription, and planner-guar
 
 No database migration is required. Pre-deployment validation passed 49 test files and 187 tests,
 lint, build, and diff checks. No secrets were written to history.
+
+V2.7.0 was then pushed to GitHub and deployed by Vercel. Production health reported version 2.7.0
+and the matching application commit. GitHub validation passed, the Telegram webhook route was
+reachable, cron-job.org advanced the reminder runner timestamp during observation, reminder-policy
+reconciliation was clean, and the latest Yandex import had no error. Protected owner Telegram
+acceptance remains for the cleanup/repair previews, a clear text reminder, and a voice reminder.

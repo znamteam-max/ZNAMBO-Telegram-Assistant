@@ -11,7 +11,7 @@ Last updated: 2026-06-13
 ```text
 Application version: 2.7.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: pending V2.7.0 rollout
+Validated application deployment commit: 0038d8fb516fdf3ef347fd96af2e7a16bda7fe06
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -43,15 +43,24 @@ Implemented:
 ## V2.7.0 Production Acceptance
 
 ```text
-Production commit: pending
-/api/health: pending
-Telegram webhook: pending
-Scheduler/reminder runner: pending
+Production application commit: 0038d8fb516fdf3ef347fd96af2e7a16bda7fe06
+GitHub validate check: passed
+Vercel production deployment: passed
+/api/health: ok, appVersion 2.7.0, deployment commit matched
+Pipeline: jarvis, OpenAI configured and required for natural language
+New transcription/planner-guard health diagnostics: present
+Telegram webhook route: reachable and reports endpoint ok
+Telegram getWebhookInfo: requires protected owner/admin acceptance
+Scheduler/reminder runner: lastRunnerRunAt advanced during a 65-second observation, succeeded
+Reminder reconciler: policiesMissingNextReminder 0
+Yandex import: configured, latest import error none
+External calendar events visible after default hygiene: 1
 Calendar cleanup/repair commands: require owner Telegram acceptance after deploy
 Local tests: 49 files, 187 tests passed
 Lint: passed
 Build: passed
 git diff --check: passed
+Secret scan: passed; only the known local Drizzle fallback URL matched the URL pattern
 Database migration: not required
 ```
 
@@ -60,6 +69,8 @@ Remaining limitations:
 ```text
 The today_future and future_30_days calendar visibility modes currently share the bounded imported
 calendar cache. Recurring external Yandex occurrences still cannot be edited individually.
+Owner Telegram acceptance remains for `/calendar_cleanup preview`, `/admin_repair_v270 preview`,
+`/plan`, `/reminders`, one clear reminder text, and one voice reminder.
 ```
 
 ## Latest Deployment - V2.6.0
