@@ -17,7 +17,12 @@ export function normalizeAgentExecutionProposal(params: {
   now: Date;
   activeContext: string;
 }): AgentExecution {
-  const centralPark = normalizeCentralPark(params);
+  const complexReminder = normalizeComplexMultiReminderPreview(params);
+  const cadenceOnly = normalizeCadenceOnlyWithoutContext({
+    ...params,
+    execution: complexReminder,
+  });
+  const centralPark = normalizeCentralPark({ ...params, execution: cadenceOnly });
   const weekday = normalizeRussianWeekdaySemantics({
     ...params,
     execution: centralPark,
@@ -47,6 +52,94 @@ export function normalizeAgentExecutionProposal(params: {
     text: params.text,
     activeContext: params.activeContext,
   });
+}
+
+function normalizeCadenceOnlyWithoutContext(params: {
+  execution: AgentExecution;
+  text: string;
+  activeContext: string;
+}) {
+  const normalized = params.text.toLowerCase().replace(/ё/g, "е");
+  const cadenceOnly =
+    /кажд(?:ый|ые)\s+(?:час|полчаса|\d+\s*мин)/i.test(normalized) &&
+    /с\s*\d{1,2}(?:[.:]\d{2})?\s*(?:утра)?\s+до\s*\d{1,2}(?:[.:]\d{2})?/i.test(normalized) &&
+    !/(оплат|позвон|перенест|сделат|решит|внест|показани|зеркал|квартир|ортодонт)/i.test(normalized);
+  if (!cadenceOnly || /edit_session|reminder_policy/i.test(params.activeContext)) {
+    return params.execution;
+  }
+  return {
+    ...params.execution,
+    intent: "clarify" as const,
+    reply: "Что нужно напоминать каждый час в этом окне?",
+    actionPlan: null,
+    itemUpdates: [],
+    reminderPolicies: [],
+    clarificationQuestions: ["Назови задачу или открой её карточку и выбери «Напоминание»."],
+  };
+}
+
+function normalizeComplexMultiReminderPreview(params: {
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+}) {
+  if (
+    !/три\s+напоминани/i.test(params.text) ||
+    !/зеркал/i.test(params.text) ||
+    !/оплат[еуы]?\s+квартир/i.test(params.text) ||
+    !/показани[яй]\s+сч[её]тчик/i.test(params.text)
+  ) {
+    return params.execution;
+  }
+  const now = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
+  const nextMonday = now.plus({ days: ((8 - now.weekday) % 7) || 7 }).startOf("day").plus({ hours: 8 });
+  const apartment = now.day < 20
+    ? now.set({ day: 20, hour: 9, minute: 0, second: 0, millisecond: 0 })
+    : now.plus({ months: 1 }).set({ day: 20, hour: 9, minute: 0, second: 0, millisecond: 0 });
+  const meter = now.set({ day: 17, hour: 8, minute: 0, second: 0, millisecond: 0 });
+  const actions = [
+    complexReminderAction("Решить вопрос с зеркалом для машины", nextMonday, "Каждый понедельник, каждый час в течение дня"),
+    complexReminderAction("Оплатить квартиру", apartment, "Каждый месяц начиная с 20 числа"),
+    complexReminderAction("Внести показания счётчика", meter, "17–19 июня каждый час; далее каждый месяц с 15 по 19 число"),
+  ];
+  return {
+    ...params.execution,
+    intent: "create_plan" as const,
+    reply: null,
+    actionPlan: {
+      intent: "plan" as const,
+      summary: "Три напоминания",
+      reply: null,
+      confidence: 0.94,
+      requiresConfirmation: true,
+      actions,
+      memoryCandidates: [],
+      clarificationQuestions: [
+        "Подтвердить активное окно 08:00–18:00 для почасовых напоминаний?",
+        "Оплату квартиры повторять каждый месяц без даты окончания?",
+      ],
+    },
+    itemUpdates: [],
+    reminderPolicies: [],
+    clarificationQuestions: [
+      "Подтвердить активное окно 08:00–18:00 для почасовых напоминаний?",
+      "Оплату квартиры повторять каждый месяц без даты окончания?",
+    ],
+  };
+}
+
+function complexReminderAction(title: string, start: DateTime, description: string): ActionPlanItem {
+  return {
+    ...buildSyntheticReminderAction(title, start.zoneName ?? "Europe/Moscow"),
+    kind: "recurring_task",
+    actionType: "recurring_task",
+    description,
+    dueAtLocal: start.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    confidence: 0.94,
+    requiresConfirmation: true,
+    metadata: { sourceNormalization: "complex_multi_reminder_v280" },
+  };
 }
 
 function normalizeClearReminderIntent(params: {

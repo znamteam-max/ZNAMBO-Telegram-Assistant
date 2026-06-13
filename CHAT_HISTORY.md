@@ -862,3 +862,16 @@ and the matching application commit. GitHub validation passed, the Telegram webh
 reachable, cron-job.org advanced the reminder runner timestamp during observation, reminder-policy
 reconciliation was clean, and the latest Yandex import had no error. Protected owner Telegram
 acceptance remains for the cleanup/repair previews, a clear text reminder, and a voice reminder.
+
+### Turn: V2.8.0 reminder policy UX and snooze implementation
+
+The attached V2.8.0 brief was implemented on top of V2.7.0. Plan command routing was corrected,
+reminder policies moved inline under their tasks, weekday labels were added, reminder-edit sessions
+now bind cadence-only replies to the selected item, and global cadence-only text no longer creates
+garbage tasks.
+
+Snooze now mutes the owning policy/item across claim, reconciler, materialization and final runner
+delivery checks. High-frequency reminders expose 30-minute, one-hour, two-hour and tomorrow
+buttons. A safe V2.8 repair command and complex three-reminder preview were added.
+
+No secrets were written to chat or project history.

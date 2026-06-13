@@ -9,7 +9,11 @@ import {
 } from "@/services/externalCalendarCleanup";
 import { reconcileActiveReminderPolicies } from "@/services/reminderPolicyReconciler";
 
-const EDIT_SESSION_TYPES = ["item_edit_session", "external_calendar_edit_session"];
+const EDIT_SESSION_TYPES = [
+  "item_edit_session",
+  "external_calendar_edit_session",
+  "reminder_policy_edit_session",
+];
 
 export async function previewV270ProductionRepair(params: {
   userId: string;

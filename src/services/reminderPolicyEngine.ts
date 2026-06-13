@@ -115,6 +115,7 @@ export async function materializeNextPolicyReminder(
   options?: { now?: Date; deliveryAt?: Date; catchUp?: boolean },
 ) {
   const now = options?.now ?? new Date();
+  if (policy.snoozedUntil && policy.snoozedUntil > now) return null;
   const scheduledAt = fireAt ?? policy.nextFireAt;
   if (!scheduledAt) return null;
   if (

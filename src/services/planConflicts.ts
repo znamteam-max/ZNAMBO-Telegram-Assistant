@@ -1,6 +1,5 @@
-import { DateTime } from "luxon";
-
 import type { PlannerItem } from "@/db/schema";
+import { formatRuWeekdayDateTime } from "@/domain/dateTime";
 
 const EVENT_LIKE_KINDS = new Set(["event", "training", "tentative_event"]);
 const DEFAULT_DURATION_MS = 60 * 60 * 1000;
@@ -53,8 +52,6 @@ export function detectPlanConflicts(items: PlannerItem[], options?: { now?: Date
 
 export function formatConflictLine(conflict: PlanConflict, timezone: string) {
   const zone = conflict.first.timezone || conflict.second.timezone || timezone;
-  const when = DateTime.fromJSDate(conflict.overlapStart, { zone: "utc" })
-    .setZone(zone)
-    .toFormat("dd.LL HH:mm");
+  const when = formatRuWeekdayDateTime(conflict.overlapStart, zone);
   return `⚠️ ${when} · ${conflict.second.title} пересекается с «${conflict.first.title}»`;
 }

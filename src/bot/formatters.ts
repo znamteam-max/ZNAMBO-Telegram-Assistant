@@ -3,7 +3,11 @@ import { DateTime } from "luxon";
 import type { ActionPlan, ActionPlanItem } from "@/ai/schemas";
 import type { PlannerActionProposal } from "@/ai/schemas";
 import type { PlannerItem, Reminder } from "@/db/schema";
-import { formatLocalDateRange, formatLocalDateTime } from "@/domain/dateTime";
+import {
+  formatLocalDateRange,
+  formatLocalDateTime,
+  formatRuWeekdayDateRange,
+} from "@/domain/dateTime";
 
 const kindLabels: Record<string, string> = {
   event: "Встреча",
@@ -176,7 +180,7 @@ export function formatTaskManagementView(params: {
 
 export function formatReminderMessage(reminder: Reminder, item?: PlannerItem | null): string {
   if (!item) return "Напоминание.";
-  const when = formatLocalDateRange(item.startAt, item.endAt ?? item.dueAt, item.timezone);
+  const when = formatRuWeekdayDateRange(item.startAt ?? item.dueAt, item.endAt, item.timezone);
   if (reminder.repeatUntilAck || item.kind === "recurring_task") {
     return `Повторяющееся напоминание: ${item.title}\n${when}\n\nНажми кнопку, чтобы я понял, что делать дальше.`;
   }

@@ -37,7 +37,11 @@ import {
   snoozeReminder,
   stopRecurringReminders,
 } from "@/db/queries/reminders";
-import { endOfLocalDay, startOfLocalDay } from "@/domain/dateTime";
+import {
+  endOfLocalDay,
+  formatRuWeekdayDateTime,
+  startOfLocalDay,
+} from "@/domain/dateTime";
 import { cancelStoredActionPlan, commitStoredActionPlan } from "@/services/actionPlanCommit";
 import {
   formatCalendarSyncFeedback,
@@ -74,6 +78,7 @@ import {
   renderReminderPolicyCard,
 } from "@/telegram/reminderControlCenter";
 import { editReminderPolicy } from "@/services/reminderPolicyEditor";
+import { startReminderPolicyEditSession } from "@/services/reminderPolicyEditSessions";
 import {
   completeCampaignEventAndActivateNext,
   markCampaignPreparationDone,
@@ -675,7 +680,11 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       minutes,
     });
     await ctx.answerCallbackQuery(snoozed ? "Отложил" : "Окно уже закончилось");
-    if (!snoozed) await ctx.reply("Не откладываю: это вышло бы за пределы окна напоминаний.");
+    if (snoozed) {
+      const row = await getPolicyForReminder(ctx.match[1]);
+      const until = formatRuWeekdayDateTime(snoozed.scheduledAt, owner.timezone);
+      await ctx.reply(`Ок, отложил «${row?.policy.title ?? "напоминание"}» до ${until}. До этого времени не буду напоминать по этой задаче.`);
+    } else await ctx.reply("Не удалось отложить это напоминание.");
     await refreshAfterCallback(ctx);
   });
 
@@ -694,7 +703,11 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       minutes,
     });
     await ctx.answerCallbackQuery(snoozed ? "Отложил" : "Окно уже закончилось");
-    if (!snoozed) await ctx.reply("Не откладываю: это вышло бы за пределы окна напоминаний.");
+    if (snoozed) {
+      const row = await getPolicyForReminder(ctx.match[2]);
+      const until = formatRuWeekdayDateTime(snoozed.scheduledAt, owner.timezone);
+      await ctx.reply(`Ок, отложил «${row?.policy.title ?? "напоминание"}» до ${until}. До этого времени не буду напоминать по этой задаче.`);
+    } else await ctx.reply("Не удалось отложить это напоминание.");
     await refreshAfterCallback(ctx);
   });
 
@@ -934,6 +947,14 @@ export function registerCallbacks(bot: Bot<BotContext>) {
           "Напиши категорию: content, meeting, training, health, car, home, finance, documents, people или project.",
         custom: "Опиши своё правило одним сообщением. OpenAI разберёт его в typed reminder policy.",
       } as const;
+      if (section === "until") {
+        await startReminderPolicyEditSession({
+          userId: requireOwner(ctx).id,
+          itemId,
+          section,
+          sourceMessageId: ctx.dbMessageId,
+        });
+      }
       await ctx.reply(prompts[section as keyof typeof prompts]);
     },
   );

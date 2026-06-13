@@ -79,6 +79,10 @@ import {
   applyV270ProductionRepair,
   previewV270ProductionRepair,
 } from "@/services/v270ProductionRepair";
+import {
+  applyV280ProductionRepair,
+  previewV280ProductionRepair,
+} from "@/services/v280ProductionRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -149,6 +153,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v253_calendar preview|apply — repair timeout-синхронизаций",
         "/admin_repair_v254 preview|apply — безопасный repair списка после ошибочного удаления",
         "/admin_repair_v270 preview|apply — гигиена календаря, reconciler и stale edit sessions",
+        "/admin_repair_v280 preview|apply — cadence-only garbage task и reminder-edit sessions",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -421,7 +426,6 @@ export function registerCommands(bot: Bot<BotContext>) {
       chatId: ctx.chat.id,
       timezone: owner.timezone,
     });
-    await ctx.reply("Навигация", { reply_markup: navigationKeyboard() });
   });
   bot.command("plan", async (ctx) => {
     const owner = requireOwner(ctx);
@@ -431,7 +435,6 @@ export function registerCommands(bot: Bot<BotContext>) {
       chatId: ctx.chat.id,
       timezone: owner.timezone,
     });
-    await ctx.reply("Навигация", { reply_markup: navigationKeyboard() });
   });
   bot.command("reminders", async (ctx) => {
     const owner = requireOwner(ctx);
@@ -840,6 +843,32 @@ export function registerCommands(bot: Bot<BotContext>) {
         `Stale edit sessions: ${preview.staleEditSessions.length}`,
         "",
         "Для применения: /admin_repair_v270 apply",
+      ].join("\n"),
+    );
+  });
+  bot.command("admin_repair_v280", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV280ProductionRepair({ userId: owner.id })
+        : await previewV280ProductionRepair({ userId: owner.id });
+    const preview = "preview" in result ? result.preview : result;
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.8.0 repair применён." : "V2.8.0 repair preview:",
+        `Cadence-only garbage tasks: ${preview.garbageCadenceTasks.length}`,
+        `Candidate target items: ${preview.targetItems.length}`,
+        `Safe to attach: ${preview.safeToAttach ? "yes" : "no"}`,
+        `Stale reminder-edit sessions: ${preview.staleSessions.length}`,
+        ...(mode === "apply"
+          ? [
+              `Archived garbage tasks: ${"archivedIds" in result ? result.archivedIds.length : 0}`,
+              `Created policies: ${"policyIds" in result ? result.policyIds.length : 0}`,
+            ]
+          : ["Для применения: /admin_repair_v280 apply"]),
+        "События Яндекс.Календаря не удалялись.",
       ].join("\n"),
     );
   });

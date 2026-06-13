@@ -56,6 +56,38 @@ npm run build -> passed
 git diff --check -> passed
 ```
 
+## V2.8.0 reminder policy UX, snooze and Plan routing
+
+V2.8.0 makes reminder policies feel like part of their tasks instead of exposing policy-engine
+internals. `/plan` and `/dashboard` now render Plan directly, policies are shown inline with a
+persistent `❗` marker, and user-facing dates include weekdays.
+
+Reminder-edit context now binds cadence-only replies to the selected item. Global cadence-only text
+asks what to remind about instead of creating a garbage task. The known complex three-reminder
+production phrase produces a safe three-intent preview with targeted clarification.
+
+Real policy/item snooze was added through `snoozed_until` fields. Claims, reconciliation,
+materialization and a final runner pre-delivery check all respect the mute, preventing intermediate
+or already-claimed reminders from leaking during snooze. A conservative `/admin_repair_v280`
+preview/apply path archives only the known cadence-only garbage task when exactly one safe target
+exists and never deletes Yandex Calendar events.
+
+Production rollout and acceptance are pending.
+
+Pre-deployment validation completed:
+
+```text
+drizzle/0008_reminder_policy_snooze.sql applied to production Neon
+planner_items.snoozed_until verified
+reminder_policies.snoozed_until verified
+reminder_policies.snooze_scope verified
+npm test -> 51 files, 202 tests passed
+npm run lint -> passed
+npx tsc --noEmit -> passed
+npm run build -> passed
+git diff --check -> passed
+```
+
 ## V2.7.0 reminder capture and calendar import hygiene
 
 V2.7.0 fixes the production regressions discovered after inbound Yandex Calendar import.

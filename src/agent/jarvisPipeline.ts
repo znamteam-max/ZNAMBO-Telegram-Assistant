@@ -21,6 +21,7 @@ import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
 import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
 import { handleItemEditTurn } from "@/bot/itemEditFlow";
 import { handleExternalCalendarEditTurn } from "@/bot/externalCalendarEditFlow";
+import { handleReminderPolicyEditTurn } from "@/bot/reminderPolicyEditFlow";
 import {
   campaignCompletionGuardKeyboard,
   conflictKeyboard,
@@ -87,6 +88,12 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
   };
 
   try {
+    const reminderPolicyEditHandled = await handleReminderPolicyEditTurn(ctx, text, timezone);
+    if (reminderPolicyEditHandled) {
+      trace.finalAction = "reminder_policy_edit_session_handled";
+      trace.toolCallsExecuted = ["reminder_policy_edit_session"];
+      return;
+    }
     const externalCalendarEditHandled = await handleExternalCalendarEditTurn(ctx, text, timezone);
     if (externalCalendarEditHandled) {
       trace.finalAction = "external_calendar_edit_session_handled";

@@ -58,6 +58,7 @@ export function resolvePolicyReconcileTarget(
   now: Date,
 ): ReconcileTarget | null {
   if (policy.status !== "active") return null;
+  if (policy.snoozedUntil && policy.snoozedUntil > now) return null;
   if (isIntervalPolicy(policy)) return resolveIntervalTarget(policy, now);
 
   const configured = policy.nextFireAt;

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   claimDueReminders: vi.fn(),
   createReminderIfMissing: vi.fn(),
+  isReminderStillDeliverable: vi.fn(),
   markReminderFailed: vi.fn(),
   markReminderSent: vi.fn(),
   recordReminderDelivery: vi.fn(),
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/db/queries/reminders", () => ({
   claimDueReminders: mocks.claimDueReminders,
   createReminderIfMissing: mocks.createReminderIfMissing,
+  isReminderStillDeliverable: mocks.isReminderStillDeliverable,
   markReminderFailed: mocks.markReminderFailed,
   markReminderSent: mocks.markReminderSent,
   recordReminderDelivery: mocks.recordReminderDelivery,
@@ -94,6 +96,7 @@ describe("runDueReminders", () => {
     mocks.recordRunnerStarted.mockResolvedValue(undefined);
     mocks.recordPolicyReconcile.mockResolvedValue(undefined);
     mocks.recordRunnerFinished.mockResolvedValue(undefined);
+    mocks.isReminderStillDeliverable.mockResolvedValue(true);
     mocks.acquireRuntimeLease.mockResolvedValue({
       key: "reminder_runner",
       ownerToken: "lease-owner",
@@ -279,6 +282,44 @@ describe("runDueReminders", () => {
       inline_keyboard: Array<Array<{ text: string }>>;
     };
     expect(keyboard.inline_keyboard.flat().map((button) => button.text)).toContain("📝 Итоги");
+  });
+
+  it("does not send a reminder that was snoozed after the runner claimed it", async () => {
+    const now = new Date("2026-06-15T07:15:00.000Z");
+    const reminder = {
+      id: "claimed-before-snooze-id",
+      userId: "user-id",
+      plannerItemId: "item-id",
+      policyId: "policy-id",
+      type: "until_ack",
+      scheduledAt: now,
+      status: "claimed",
+      claimedAt: now,
+      sentAt: null,
+      telegramMessageId: null,
+      attemptCount: 1,
+      lastError: null,
+      repeatUntilAck: true,
+      ackedAt: null,
+      parentReminderId: null,
+      recurrenceKey: null,
+      payload: {},
+      createdAt: now,
+      updatedAt: now,
+    };
+    mocks.claimDueReminders.mockResolvedValue([reminder]);
+    mocks.isReminderStillDeliverable.mockResolvedValue(false);
+    const sender = { sendMessage: vi.fn() };
+
+    await expect(runDueReminders({ now, sender })).resolves.toEqual({
+      claimed: 1,
+      sent: 0,
+      failed: 0,
+    });
+
+    expect(sender.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.markReminderSent).not.toHaveBeenCalled();
+    expect(mocks.recordReminderDelivery).not.toHaveBeenCalled();
   });
 
   it("skips a concurrent runner when the distributed lease is already active", async () => {

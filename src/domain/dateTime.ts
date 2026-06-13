@@ -39,6 +39,7 @@ export function formatLocalDateTime(
   options: DateTimeFormatOptions = DateTime.DATETIME_MED,
 ): string {
   if (!date) return "без времени";
+  if (options === DateTime.DATETIME_MED) return formatRuWeekdayDateTime(date, timezone);
   return utcDateToLocal(date, timezone).setLocale("ru").toLocaleString(options);
 }
 
@@ -48,12 +49,34 @@ export function formatLocalDateRange(
   timezone: string,
 ): string {
   if (!start && !end) return "без времени";
-  if (!start) return `до ${formatLocalDateTime(end, timezone)}`;
-  if (!end) return formatLocalDateTime(start, timezone);
-  const startLocal = utcDateToLocal(start, timezone).setLocale("ru");
-  const endLocal = utcDateToLocal(end, timezone).setLocale("ru");
-  if (startLocal.hasSame(endLocal, "day")) {
-    return `${startLocal.toLocaleString(DateTime.DATE_MED)}, ${startLocal.toFormat("HH:mm")}–${endLocal.toFormat("HH:mm")}`;
-  }
-  return `${startLocal.toLocaleString(DateTime.DATETIME_MED)} – ${endLocal.toLocaleString(DateTime.DATETIME_MED)}`;
+  if (!start) return `до ${formatRuWeekdayDateTime(end, timezone)}`;
+  return formatRuWeekdayDateRange(start, end, timezone);
+}
+
+const RU_WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+
+export function formatRuWeekdayDateTime(
+  date: Date | null | undefined,
+  timezone: string,
+  options?: { includeYear?: boolean; timeOnly?: boolean },
+) {
+  if (!date) return "без времени";
+  const local = utcDateToLocal(date, timezone);
+  if (options?.timeOnly) return local.toFormat("HH:mm");
+  return `${RU_WEEKDAYS[local.weekday - 1]}, ${local.toFormat(options?.includeYear ? "dd.LL.yyyy HH:mm" : "dd.LL HH:mm")}`;
+}
+
+export function formatRuWeekdayDateRange(
+  start: Date | null | undefined,
+  end: Date | null | undefined,
+  timezone: string,
+) {
+  if (!start) return "без времени";
+  const startLocal = utcDateToLocal(start, timezone);
+  const prefix = `${RU_WEEKDAYS[startLocal.weekday - 1]}, ${startLocal.toFormat("dd.LL HH:mm")}`;
+  if (!end) return prefix;
+  const endLocal = utcDateToLocal(end, timezone);
+  return startLocal.hasSame(endLocal, "day")
+    ? `${prefix}–${endLocal.toFormat("HH:mm")}`
+    : `${prefix} – ${formatRuWeekdayDateTime(end, timezone)}`;
 }

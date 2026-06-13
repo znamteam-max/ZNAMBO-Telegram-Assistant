@@ -11,6 +11,7 @@ import {
   archiveDeliveredTestItem,
   claimDueReminders,
   createReminderIfMissing,
+  isReminderStillDeliverable,
   markReminderFailed,
   markReminderSent,
   recordReminderDelivery,
@@ -20,6 +21,7 @@ import { getUserById } from "@/db/queries/users";
 import { formatReminderMessage } from "@/bot/formatters";
 import {
   eventReactionKeyboard,
+  normalReminderMenuKeyboard,
   reminderActionKeyboard,
   reminderMenuKeyboard,
   singleItemManagementKeyboard,
@@ -103,6 +105,11 @@ export async function runDueReminders(params?: {
 
     for (const reminder of due) {
       try {
+        const deliverable = await isReminderStillDeliverable({
+          reminderId: reminder.id,
+          now: new Date(),
+        });
+        if (!deliverable) continue;
         const compactDelivery = !params?.sender && !isDigestReminder(reminder);
         const sentMessage = await sendReminder(reminder, sender, {
           compact: compactDelivery,
@@ -305,6 +312,7 @@ function buildReminderKeyboard(
   if (item?.metadata?.managementButtonsRequested === true) {
     return singleItemManagementKeyboard(item.id);
   }
+  if (item) return normalReminderMenuKeyboard(reminder.id, item.id);
   return undefined;
 }
 

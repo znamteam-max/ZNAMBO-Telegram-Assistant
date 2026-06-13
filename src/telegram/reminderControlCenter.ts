@@ -1,5 +1,3 @@
-import { DateTime } from "luxon";
-
 import {
   getReminderPolicyById,
   listReminderPoliciesByStatus,
@@ -21,6 +19,8 @@ import {
 import { buildUserTimelineView } from "@/services/userTimeline";
 import { reconcileActiveReminderPolicies } from "@/services/reminderPolicyReconciler";
 import { logger } from "@/lib/logger";
+import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
+import { formatRuWeekdayDateTime } from "@/domain/dateTime";
 
 export async function renderReminderControlCenter(params: {
   userId: string;
@@ -103,9 +103,9 @@ export async function renderReminderPolicyCard(params: {
   if (!policy || policy.userId !== params.userId) return null;
   const now = params.now ?? new Date();
   const next = policy.nextFireAt
-    ? DateTime.fromJSDate(policy.nextFireAt, { zone: "utc" })
-        .setZone(policy.timezone || params.timezone)
-        .toFormat("dd.LL.yyyy HH:mm")
+    ? formatRuWeekdayDateTime(policy.nextFireAt, policy.timezone || params.timezone, {
+        includeYear: true,
+      })
     : "нет";
   const window = [formatDate(policy.startsAt, policy.timezone), formatDate(policy.endsAt, policy.timezone)]
     .filter(Boolean)
@@ -116,13 +116,15 @@ export async function renderReminderPolicyCard(params: {
       policy.title,
       "",
       `Статус: ${policy.status}`,
-      `Тип: ${policy.policyType}`,
+      `Напоминания: ${formatHumanReminderPolicy(policy, policy.timezone, { includeNext: true, now })}`,
       `Важность: ${importanceLabel(getBasePriority({ policy }))}`,
       `Сейчас: ${importanceLabel(getEffectivePriority({ policy }, now, params.timezone))}; ${urgencyExplanation(getUrgencyBoost({ policy }, now, params.timezone))}`,
       `Частота: ${policy.intervalMinutes ? `каждые ${policy.intervalMinutes} мин` : policy.recurrenceRule ?? "один раз"}`,
       `Окно: ${window || "без ограничений"}`,
       `До выполнения: ${policy.requireAck ? "да" : "нет"}`,
-      `Следующее: ${next}`,
+      policy.snoozedUntil && policy.snoozedUntil > now
+        ? `Отложено до: ${formatRuWeekdayDateTime(policy.snoozedUntil, policy.timezone)}`
+        : `Следующее: ${next}`,
       `Категория: ${policy.category}`,
     ].join("\n"),
     keyboard: reminderPolicyCardKeyboard(policy),
@@ -144,18 +146,13 @@ function policyMatchesScope(policy: ReminderPolicy, scope: string, now: Date, ti
 }
 
 function formatPolicyLine(policy: ReminderPolicy, now: Date, timezone: string) {
-  const next = policy.nextFireAt
-    ? DateTime.fromJSDate(policy.nextFireAt, { zone: "utc" })
-        .setZone(policy.timezone || timezone)
-        .toFormat("dd.LL HH:mm")
-    : "нет следующего";
   const marker = importanceMarker(getBasePriority({ policy })).split(" ")[0];
-  return `${marker ? `${marker} · ` : ""}${policy.title}\n   ${policy.policyType} · ${next}`;
+  return `${marker ? `${marker} · ` : ""}${policy.title}\n   ${formatHumanReminderPolicy(policy, timezone, { includeNext: true, now })}`;
 }
 
 function formatDate(value: Date | null, timezone: string) {
   return value
-    ? DateTime.fromJSDate(value, { zone: "utc" }).setZone(timezone).toFormat("dd.LL HH:mm")
+    ? formatRuWeekdayDateTime(value, timezone)
     : null;
 }
 

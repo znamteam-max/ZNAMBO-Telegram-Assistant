@@ -202,6 +202,7 @@ function externalEventAsPlannerItem(event: ExternalCalendarEvent): PlannerItem {
     category: "calendar_external",
     visibility: "active",
     sourcePolicyId: null,
+    snoozedUntil: null,
     priority: 3,
     source: "yandex_external",
     metadata: event.metadata,

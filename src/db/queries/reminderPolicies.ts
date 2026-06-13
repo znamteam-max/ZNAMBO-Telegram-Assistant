@@ -25,6 +25,8 @@ export type CreateReminderPolicyInput = {
   windowEndInclusive?: boolean;
   catchUpMode?: string;
   onWindowEnd?: string;
+  snoozedUntil?: Date | null;
+  snoozeScope?: string | null;
   quietHours?: Record<string, unknown> | null;
   metadata?: Record<string, unknown>;
   idempotencyKey: string;
@@ -64,6 +66,8 @@ export async function createReminderPolicyIfMissing(
       windowEndInclusive: input.windowEndInclusive ?? true,
       catchUpMode: input.catchUpMode ?? "one_immediate_then_resume",
       onWindowEnd: input.onWindowEnd ?? "expire_silently",
+      snoozedUntil: input.snoozedUntil,
+      snoozeScope: input.snoozeScope,
       quietHours: input.quietHours,
       metadata: { ...(input.metadata ?? {}), idempotencyKey: input.idempotencyKey },
     })
@@ -191,6 +195,8 @@ export async function updateReminderPolicy(params: {
   windowEndInclusive?: boolean;
   catchUpMode?: string;
   onWindowEnd?: string;
+  snoozedUntil?: Date | null;
+  snoozeScope?: string | null;
   quietHours?: Record<string, unknown> | null;
   metadata?: Record<string, unknown>;
 }) {
@@ -212,6 +218,8 @@ export async function updateReminderPolicy(params: {
         : {}),
       ...(params.catchUpMode !== undefined ? { catchUpMode: params.catchUpMode } : {}),
       ...(params.onWindowEnd !== undefined ? { onWindowEnd: params.onWindowEnd } : {}),
+      ...(params.snoozedUntil !== undefined ? { snoozedUntil: params.snoozedUntil } : {}),
+      ...(params.snoozeScope !== undefined ? { snoozeScope: params.snoozeScope } : {}),
       ...(params.quietHours !== undefined ? { quietHours: params.quietHours } : {}),
       ...(params.metadata
         ? {

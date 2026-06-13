@@ -9,6 +9,7 @@ import { cancelPendingRemindersForPolicy } from "@/db/queries/reminders";
 import { updatePlannerItemDetails } from "@/db/queries/items";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
+import { formatRuWeekdayDateRange } from "@/domain/dateTime";
 
 import { parseRussianDateTime, parseRussianTimeRange } from "./russianDateTime";
 
@@ -394,7 +395,7 @@ function formatItemVariant(params: {
   const end = params.endAt
     ? DateTime.fromJSDate(params.endAt, { zone: "utc" }).setZone(params.timezone)
     : null;
-  return `${params.title} — ${start.toFormat("dd.LL HH:mm")}${end ? `–${end.toFormat("HH:mm")}` : ""}`;
+  return `${params.title} — ${formatRuWeekdayDateRange(start.toUTC().toJSDate(), end?.toUTC().toJSDate(), params.timezone)}`;
 }
 
 function formatMutationVariant(params: {

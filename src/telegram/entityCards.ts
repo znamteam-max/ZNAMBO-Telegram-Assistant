@@ -23,6 +23,8 @@ import {
 import { getItemCalendarSyncState } from "@/db/queries/googleCalendar";
 import { safeCalendarErrorClass } from "@/services/calendarDiagnostics";
 import { getCalendarProvider } from "@/lib/env";
+import { formatRuWeekdayDateTime } from "@/domain/dateTime";
+import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
 
 const itemKindLabels: Record<string, string> = {
   event: "встреча",
@@ -76,7 +78,12 @@ async function renderItemCard(params: {
       `Когда: ${formatDate(when, item.timezone) || "без времени"}`,
       `Важность: ${visibleImportanceLabel({ item })}`,
       `Сейчас: ${importanceLabel(effective)}; ${urgencyExplanation(boost)}`,
-      `Напоминания: ${policies.filter((policy) => policy.status === "active").length}`,
+      ...policies
+        .filter((policy) => policy.status === "active")
+        .map((policy) => `Напоминания: ${formatHumanReminderPolicy(policy, item.timezone, { now })}`),
+      item.snoozedUntil && item.snoozedUntil > now
+        ? `Отложено до: ${formatRuWeekdayDateTime(item.snoozedUntil, item.timezone)}`
+        : null,
       ["event", "training", "tentative_event"].includes(item.kind)
         ? `Календарь: ${formatCalendarState(calendar?.status, safeCalendarErrorClass(calendar?.lastError), calendar?.provider)}`
         : null,
@@ -151,9 +158,11 @@ async function renderPolicyCard(params: {
       policy.title,
       "",
       `Статус: ${policy.status}`,
-      `Тип: ${policy.policyType}`,
+      `Напоминания: ${formatHumanReminderPolicy(policy, policy.timezone, { includeNext: true })}`,
       `Важность: ${importanceLabel(getBasePriority({ policy }))}`,
-      `Следующее: ${formatDate(policy.nextFireAt, policy.timezone) || "нет"}`,
+      policy.snoozedUntil && policy.snoozedUntil > (params.now ?? new Date())
+        ? `Отложено до: ${formatRuWeekdayDateTime(policy.snoozedUntil, policy.timezone)}`
+        : null,
       `Окно: ${formatDate(policy.startsAt, policy.timezone) || "без начала"} - ${formatDate(policy.endsAt, policy.timezone) || "без конца"}`,
       `Категория: ${policy.category}`,
     ].join("\n"),
@@ -190,6 +199,6 @@ async function renderCampaignCard(params: {
 
 function formatDate(value: Date | null, timezone: string) {
   return value
-    ? DateTime.fromJSDate(value, { zone: "utc" }).setZone(timezone).toFormat("dd.LL.yyyy HH:mm")
+    ? formatRuWeekdayDateTime(value, timezone, { includeYear: true })
     : null;
 }

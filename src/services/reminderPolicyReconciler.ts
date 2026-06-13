@@ -21,6 +21,7 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
   let expired = 0;
 
   for (const policy of policies) {
+    if (policy.snoozedUntil && policy.snoozedUntil > now) continue;
     if (
       ["interval_window", "nag_until_ack"].includes(policy.policyType) &&
       policy.endsAt &&

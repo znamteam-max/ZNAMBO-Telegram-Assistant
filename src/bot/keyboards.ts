@@ -228,17 +228,26 @@ export function eventReactionKeyboard(itemId: string, kind = "event") {
 export function reminderMenuKeyboard(reminderId: string, plannerItemId?: string | null) {
   const keyboard = new InlineKeyboard()
     .text("✅ Сделал", `reminder:ack:${reminderId}`)
-    .text("10 мин", `reminder:snooze:${reminderId}:10`)
-    .text("30 мин", `reminder:snooze:${reminderId}:30`)
+    .text("😴 30 мин", `reminder:snooze:${reminderId}:30`)
     .row()
-    .text("1 час", `reminder:snooze:${reminderId}:60`)
-    .text("До вечера", `reminder:snooze_evening:${reminderId}`)
-    .text("На завтра", `reminder:snooze_tomorrow:${reminderId}`)
+    .text("😴 1 час", `reminder:snooze:${reminderId}:60`)
+    .text("😴 2 часа", `reminder:snooze:${reminderId}:120`)
     .row()
-    .text("🛠 Изменить", `reminder:edit:${reminderId}`)
+    .text("😴 до завтра", `reminder:snooze_tomorrow:${reminderId}`)
+    .row()
+    .text("✏️ Изменить", `reminder:edit:${reminderId}`)
     .text("🔕 Остановить", `reminder:delete:${reminderId}`);
   if (plannerItemId) keyboard.row().text("🔙 К плану", "dashboard:refresh");
   return keyboard;
+}
+
+export function normalReminderMenuKeyboard(reminderId: string, plannerItemId: string) {
+  return new InlineKeyboard()
+    .text("✅ Сделал", `reminder:ack:${reminderId}`)
+    .text("😴 1 час", `reminder:snooze:${reminderId}:60`)
+    .row()
+    .text("✏️ Изменить", `manage:edit:${plannerItemId}`)
+    .text("🔙 К плану", "dashboard:refresh");
 }
 
 export function reminderPolicyMenuKeyboard(itemId: string) {

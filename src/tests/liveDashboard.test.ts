@@ -262,12 +262,12 @@ describe("live dashboard lifecycle", () => {
       now: new Date("2026-06-09T05:00:00.000Z"),
     });
 
-    expect(result.text).toContain("Ближайшие правила:");
+    expect(result.text).toContain("Неразобранные напоминания:");
     expect(result.text).toContain("Записаться к Дрик");
-    expect(result.text).toContain("Долгосрочные правила:");
+    expect(result.text).not.toContain("Долгосрочные правила:");
     expect(result.text).toContain("Заменить зеркало");
     expect(result.text.indexOf("Записаться к Дрик")).toBeLessThan(
-      result.text.indexOf("Долгосрочные правила:"),
+      result.text.indexOf("Заменить зеркало"),
     );
   });
 
