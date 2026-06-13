@@ -859,6 +859,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       [
         mode === "apply" ? "V2.8.0 repair применён." : "V2.8.0 repair preview:",
         `Cadence-only garbage tasks: ${preview.garbageCadenceTasks.length}`,
+        `Cadence-only garbage policies: ${preview.garbageCadencePolicies.length}`,
         `Candidate target items: ${preview.targetItems.length}`,
         `Safe to attach: ${preview.safeToAttach ? "yes" : "no"}`,
         `Stale reminder-edit sessions: ${preview.staleSessions.length}`,
@@ -866,6 +867,7 @@ export function registerCommands(bot: Bot<BotContext>) {
           ? [
               `Archived garbage tasks: ${"archivedIds" in result ? result.archivedIds.length : 0}`,
               `Created policies: ${"policyIds" in result ? result.policyIds.length : 0}`,
+              `Stopped garbage policies: ${"stoppedPolicyIds" in result ? result.stoppedPolicyIds.length : 0}`,
             ]
           : ["Для применения: /admin_repair_v280 apply"]),
         "События Яндекс.Календаря не удалялись.",

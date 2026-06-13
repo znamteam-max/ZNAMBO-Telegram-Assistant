@@ -3,7 +3,13 @@ import { DateTime } from "luxon";
 import { listPendingAgentActionsByTypes, updateAgentAction } from "@/db/queries/agentActions";
 import { writeAudit } from "@/db/queries/audit";
 import { cancelPlannerItemWithMetadata, listManageableItems } from "@/db/queries/items";
-import { createReminderPolicyIfMissing, listReminderPoliciesForItem } from "@/db/queries/reminderPolicies";
+import {
+  createReminderPolicyIfMissing,
+  listActiveReminderPolicies,
+  listReminderPoliciesForItem,
+  updateReminderPolicy,
+} from "@/db/queries/reminderPolicies";
+import { cancelPendingRemindersForPolicy } from "@/db/queries/reminders";
 import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
 
 const CADENCE_ONLY = /^кажд(?:ый|ые)\s+час(?:\s+с\s+8(?:[:.]00)?\s+(?:утра\s+)?до\s+18(?:[:.]00)?)?$/i;
@@ -18,8 +24,9 @@ export function isV280RepairSafe(garbageCount: number, targetCount: number) {
 
 export async function previewV280ProductionRepair(params: { userId: string; now?: Date }) {
   const now = params.now ?? new Date();
-  const [items, sessions] = await Promise.all([
+  const [items, policies, sessions] = await Promise.all([
     listManageableItems(params.userId, 400),
+    listActiveReminderPolicies(params.userId, 400),
     listPendingAgentActionsByTypes({
       userId: params.userId,
       actionTypes: ["reminder_policy_edit_session"],
@@ -31,6 +38,9 @@ export async function previewV280ProductionRepair(params: { userId: string; now?
       item.kind === "task" &&
       isV280CadenceOnlyGarbageTitle(item.title),
   );
+  const garbageCadencePolicies = policies.filter((policy) =>
+    isV280CadenceOnlyGarbageTitle(policy.title),
+  );
   const targetItems = items.filter(
     (item) => item.status === "active" && /перенест.*ортодонт|ортодонт.*перенест/i.test(item.title),
   );
@@ -40,6 +50,7 @@ export async function previewV280ProductionRepair(params: { userId: string; now?
   });
   return {
     garbageCadenceTasks,
+    garbageCadencePolicies,
     targetItems,
     safeToAttach: isV280RepairSafe(garbageCadenceTasks.length, targetItems.length),
     staleSessions,
@@ -51,6 +62,7 @@ export async function applyV280ProductionRepair(params: { userId: string; now?: 
   const preview = await previewV280ProductionRepair({ ...params, now });
   const archivedIds: string[] = [];
   const policyIds: string[] = [];
+  const stoppedPolicyIds: string[] = [];
   if (preview.safeToAttach) {
     const target = preview.targetItems[0];
     const anchor = DateTime.fromJSDate(target.startAt ?? target.dueAt ?? now, { zone: "utc" })
@@ -119,6 +131,28 @@ export async function applyV280ProductionRepair(params: { userId: string; now?: 
       }
     }
   }
+  for (const policy of preview.garbageCadencePolicies) {
+    await cancelPendingRemindersForPolicy({
+      userId: params.userId,
+      policyId: policy.id,
+    });
+    const stopped = await updateReminderPolicy({
+      userId: params.userId,
+      policyId: policy.id,
+      status: "cancelled",
+      nextFireAt: null,
+    });
+    if (stopped) {
+      stoppedPolicyIds.push(stopped.id);
+      await writeAudit({
+        userId: params.userId,
+        action: "assistant.v280_repair_policy_cancelled",
+        entityType: "reminder_policy",
+        entityId: stopped.id,
+        details: { repairVersion: "2.8.0", reason: "cadence_only_generated_policy" },
+      }).catch(() => undefined);
+    }
+  }
   const clearedSessionIds: string[] = [];
   for (const action of preview.staleSessions) {
     const cleared = await updateAgentAction({
@@ -129,5 +163,5 @@ export async function applyV280ProductionRepair(params: { userId: string; now?: 
     });
     if (cleared) clearedSessionIds.push(cleared.id);
   }
-  return { preview, archivedIds, policyIds, clearedSessionIds };
+  return { preview, archivedIds, policyIds, stoppedPolicyIds, clearedSessionIds };
 }
