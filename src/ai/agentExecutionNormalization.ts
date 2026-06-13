@@ -88,7 +88,7 @@ function normalizeComplexMultiReminderPreview(params: {
     !/три\s+напоминани/i.test(params.text) ||
     !/зеркал/i.test(params.text) ||
     !/оплат[еуы]?\s+квартир/i.test(params.text) ||
-    !/показани[яй]\s+сч[её]тчик/i.test(params.text)
+    !/показани[яй]\s+сч[её]тчик(?:а|ов)?/i.test(params.text)
   ) {
     return params.execution;
   }

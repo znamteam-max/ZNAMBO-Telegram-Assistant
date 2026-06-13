@@ -164,6 +164,35 @@ describe("mandatory OpenAI agent execution proposal", () => {
     expect(result.telemetry.toolCallsProposed).toEqual(["create_recurring_policy"]);
   });
 
+  it("normalizes the complex three-reminder request through the real OpenAI proposal path", async () => {
+    mocks.create.mockResolvedValue(
+      responseFor({
+        intent: "clarify",
+        reply: "Уточни.",
+        actionPlan: null,
+        viewScope: null,
+        resetMode: null,
+        itemUpdates: [],
+        reminderPolicies: [],
+        memoryFacts: [],
+        clarificationQuestions: ["Уточни."],
+      }),
+    );
+
+    const result = await proposeAgentExecution({
+      text: "Три напоминания: напоминай каждый понедельник весь день раз в час решить вопрос с зеркалом для машины, с 20-го числа каждый день об оплате квартиры, а 17-18-19 июня каждый час внести показания счётчиков. Каждый месяц с 15 по 19 число давай такие напоминания.",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-13T13:43:00.000Z"),
+      activeContext: "none",
+    });
+
+    expect(mocks.create).toHaveBeenCalledOnce();
+    expect(result.execution.actionPlan?.requiresConfirmation).toBe(true);
+    expect(result.execution.actionPlan?.actions).toHaveLength(3);
+    expect(result.telemetry.aiCalled).toBe(true);
+    expect(result.telemetry.toolCallsProposed).toEqual(["create_action_plan"]);
+  });
+
   it("fails closed when OpenAI fails", async () => {
     mocks.create.mockRejectedValue(new Error("network down"));
 
