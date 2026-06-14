@@ -9,15 +9,75 @@ Last updated: 2026-06-14
 ## Current Production
 
 ```text
-Application version: 2.9.0
+Application version: 2.10.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 9de4c1a53c2160b447e10899e0eb40c3eec76b3c
+Validated application deployment commit: 6abad3f886dabfbcc1e2bb15ace86fbb0d12caeb
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
 Reconciler: enabled
 Runner lock: enabled
 Production scheduler: cron-job.org
+```
+
+## Latest Deployment - V2.10.0
+
+V2.10.0 completes recurring reminder execution without replacing the mandatory OpenAI planner,
+ActionPlan, reminder runner, or CalDAV integration.
+
+Implemented:
+
+- Weekly weekday reminders use canonical rules such as `weekly:MO@10:00`.
+- Monthly day-range reminders use one logical rule such as
+  `monthly_days:15,16,17,18,19@12:00`.
+- Missing reminder time creates a typed draft and targeted clarification instead of a generic
+  failed-closed response.
+- Multi-reminder messages preserve separate action titles and policies.
+- Cadence-only phrases such as `Каждый понедельник` cannot become task titles.
+- Reminder setup accepts stop-condition-only replies such as `Пока не выполню` and asks only for
+  the next missing interval or window field.
+- Weekly and monthly policies advance after delivery in the user's timezone.
+- `сегодня до конца дня` and `завтра до конца дня` resolve to local 23:59.
+- `/debuglast` includes safe recurring tool failure reason and field.
+- `/admin_repair_v2100 preview|apply` archives only the known cadence-title garbage task and its
+  generated policy, with no Yandex Calendar deletion.
+- No database migration was required.
+
+## V2.10.0 Production Acceptance
+
+```text
+Production application commit: 6abad3f886dabfbcc1e2bb15ace86fbb0d12caeb
+GitHub push and Vercel auto-deploy: passed
+/api/health: ok, appVersion 2.10.0, deployment commit matched
+Pipeline: jarvis, OpenAI configured and required for natural language
+OpenAI health: real call succeeded, structured output valid, tool call accepted
+Weekly missing-time probe: recurring_task, rule weekly:MO, requireAck true
+Weekly timed probe: recurring_task, rule weekly:MO@10:00, requireAck true
+Monthly range probe: recurring_task, rule monthly_days:15,16,17,18,19
+Multi-reminder probe: two recurring_task actions and two separate recurrence rules
+End-of-day probe: task due 2026-06-14T23:59:00 Europe/Moscow
+Telegram webhook: correct production URL, pending updates 0, no last error
+V2.10 repair before apply: 1 cadence-title task, 1 generated policy, safe yes
+V2.10 repair apply: archived 1 task and 1 policy, calendar objects changed 0
+V2.10 repair after apply: 0 tasks and 0 policies
+Automatic reminder smoke: sent to Telegram and test item auto-archived
+cron-job.org runner: last run succeeded, policiesMissingNextReminder 0
+Local tests: 53 files, 234 tests passed
+Lint: passed
+TypeScript: passed
+Build: passed
+git diff --check: passed
+Secret scan: passed
+Database migration: not required
+```
+
+Remaining V2.10 acceptance:
+
+```text
+The read-only production probes prove the same mandatory OpenAI normalization path. The owner has
+not yet manually completed the Telegram time-selection draft for a new weekly/monthly policy.
+Vercel connector deployment listing lacks the project team scope; production was verified through
+the live health commit and runtime acceptance endpoints.
 ```
 
 ## Latest Deployment - V2.9.0
@@ -486,6 +546,7 @@ V2.6.0 - Plan UI and Yandex inbound calendar import
 V2.7.0 - Reminder capture regression fix and calendar import hygiene
 V2.8.0 - Reminder policy UX, real policy snooze and Plan routing
 V2.9.0 - Deadline semantics, due-task rendering and safe production repair
+V2.10.0 - Weekly/monthly recurring execution, typed clarification and local end-of-day semantics
 ```
 
 ## Remaining Limitations

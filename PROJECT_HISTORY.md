@@ -49,6 +49,28 @@ git diff --check -> passed
 
 No secrets were written to project history.
 
+Production rollout completed:
+
+```text
+active production commit -> 6abad3f886dabfbcc1e2bb15ace86fbb0d12caeb
+/api/health -> appVersion 2.10.0 and matching deployment commit
+OpenAI health -> real call succeeded, structured output valid
+weekly missing-time probe -> recurring_task, weekly:MO, requireAck true
+weekly timed probe -> recurring_task, weekly:MO@10:00, requireAck true
+monthly range probe -> recurring_task, monthly_days:15,16,17,18,19
+multi-reminder probe -> two recurring_task actions and two policies
+end-of-day probe -> local due time 2026-06-14 23:59 Europe/Moscow
+Telegram webhook -> pending 0, no last error
+repair before apply -> 1 garbage task, 1 garbage policy, safe yes
+repair apply -> archived 1 task and 1 policy, 0 calendar objects changed
+repair after apply -> 0 candidates
+automatic reminder smoke -> sent and auto-archived
+cron-job.org runner -> succeeded, policiesMissingNextReminder 0
+```
+
+The owner still needs to manually walk through one Telegram recurring draft and select its time.
+No secrets were written to history.
+
 ## Update 2026-06-12 - V2.6.0 Plan UI and Yandex Inbound Calendar
 
 Implemented in the release working tree:

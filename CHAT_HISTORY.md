@@ -939,3 +939,12 @@ delivery, and resolves local end-of-day deadlines to 23:59. Safe production repa
 
 Pre-deployment validation passed 53 test files and 234 tests, lint, TypeScript, build, and diff
 checks. No database migration is required. No secrets were written to history.
+
+V2.10.0 was pushed to GitHub and deployed to production at commit
+`6abad3f886dabfbcc1e2bb15ace86fbb0d12caeb`. Live health reported the matching version and commit.
+Real UTF-8 OpenAI probes confirmed weekly, timed weekly, monthly 15-19, two-policy, and local
+end-of-day normalization. The safe repair archived one cadence-title task and one generated policy,
+changed no Yandex objects, and became clean on the second preview.
+
+A two-minute production reminder smoke was delivered automatically through cron-job.org and the
+test item was auto-archived. Telegram webhook status was clean. No secrets were written to history.
