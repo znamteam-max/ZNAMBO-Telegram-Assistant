@@ -88,17 +88,21 @@ export function formatDeadlineDateTime(value: Date, timezone: string, includeYea
 export function buildDeadlineReminderFireAt(params: {
   dueAt: Date;
   timezone: string;
-  preset: "morning" | "2h" | "30m";
+  preset: "soon" | "morning" | "2h" | "1h" | "30m";
   now?: Date;
 }) {
   const due = DateTime.fromJSDate(params.dueAt, { zone: "utc" }).setZone(params.timezone);
-  const fire =
-    params.preset === "morning"
-      ? due.startOf("day").set({ hour: 9 })
-      : due.minus({ minutes: params.preset === "2h" ? 120 : 30 });
   const now = DateTime.fromJSDate(params.now ?? new Date(), { zone: "utc" }).setZone(
     params.timezone,
   );
+  const fire =
+    params.preset === "soon"
+      ? now.plus({ minutes: 10 })
+      : params.preset === "morning"
+        ? due.startOf("day").set({ hour: 9 })
+        : due.minus({
+            minutes: params.preset === "2h" ? 120 : params.preset === "1h" ? 60 : 30,
+          });
   return fire > now && fire < due ? fire.toUTC().toJSDate() : null;
 }
 

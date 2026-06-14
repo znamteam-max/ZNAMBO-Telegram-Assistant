@@ -1123,9 +1123,16 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await sendPolicyEditorMessage(ctx, "Выбери видимую важность:", priorityEditorKeyboard("item", ctx.match[1]));
   });
 
-  bot.callbackQuery(/^deadline_reminder:(morning|2h|30m|none|custom):(.+)$/, async (ctx) => {
+  bot.callbackQuery(/^deadline_reminder:(soon|morning|2h|1h|30m|none|custom):(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
-    const preset = ctx.match[1] as "morning" | "2h" | "30m" | "none" | "custom";
+    const preset = ctx.match[1] as
+      | "soon"
+      | "morning"
+      | "2h"
+      | "1h"
+      | "30m"
+      | "none"
+      | "custom";
     const item = await getPlannerItemById(owner.id, ctx.match[2]);
     if (!item?.dueAt || item.status !== "active") {
       await ctx.answerCallbackQuery("Задача не найдена");

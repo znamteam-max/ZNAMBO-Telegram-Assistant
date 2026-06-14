@@ -150,7 +150,7 @@ describe("V2.9.0 deadline semantics", () => {
   });
 
   it("offers deadline reminder presets and calculates their fire times", () => {
-    const labels = postCreateTriageKeyboard([makeDeadlineItem()]).inline_keyboard
+    const labels = postCreateTriageKeyboard([makeDeadlineItem()], now).inline_keyboard
       .flat()
       .map((button) => button.text);
     expect(labels).toEqual(
@@ -172,6 +172,33 @@ describe("V2.9.0 deadline semantics", () => {
         now,
       }),
     ).toEqual(new Date("2026-06-15T09:00:00.000Z"));
+
+    const todayItem = {
+      ...makeDeadlineItem(),
+      dueAt: new Date("2026-06-14T15:00:00.000Z"),
+    };
+    const todayLabels = postCreateTriageKeyboard([todayItem], now).inline_keyboard
+      .flat()
+      .map((button) => button.text);
+    expect(todayLabels).toEqual(
+      expect.arrayContaining(["Скоро", "За час", "За 30 минут", "Не надо", "Настроить"]),
+    );
+    expect(
+      buildDeadlineReminderFireAt({
+        dueAt: todayItem.dueAt,
+        timezone,
+        preset: "soon",
+        now,
+      }),
+    ).toEqual(new Date("2026-06-14T09:34:00.000Z"));
+    expect(
+      buildDeadlineReminderFireAt({
+        dueAt: todayItem.dueAt,
+        timezone,
+        preset: "1h",
+        now,
+      }),
+    ).toEqual(new Date("2026-06-14T14:00:00.000Z"));
   });
 
   it("edits and clears a deadline inside the current item context", () => {

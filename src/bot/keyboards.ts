@@ -1,4 +1,5 @@
 import { InlineKeyboard, Keyboard } from "grammy";
+import { DateTime } from "luxon";
 
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { entityRefCallback, type EntityRef } from "@/domain/entityRefs";
@@ -106,9 +107,9 @@ export function reminderEmptyKeyboard() {
     .text("➕ Добавить напоминание", "reminders:add");
 }
 
-export function postCreateTriageKeyboard(items: PlannerItem[]) {
+export function postCreateTriageKeyboard(items: PlannerItem[], now = new Date()) {
   if (items.length === 1 && items[0]?.dueAt && !items[0].startAt) {
-    return deadlineReminderSuggestionKeyboard(items[0].id);
+    return deadlineReminderSuggestionKeyboard(items[0], now);
   }
   const keyboard = new InlineKeyboard();
   for (const [index, item] of items.slice(0, 8).entries()) {
@@ -183,15 +184,25 @@ export function itemMenuKeyboard(
     .text("⚙️ Ещё", `item:more:${itemId}`);
 }
 
-export function deadlineReminderSuggestionKeyboard(itemId: string) {
+export function deadlineReminderSuggestionKeyboard(item: PlannerItem, now = new Date()) {
+  const timezone = item.timezone || "Europe/Moscow";
+  const dueLocal = DateTime.fromJSDate(item.dueAt!, { zone: "utc" }).setZone(timezone);
+  const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
+  const dueToday = dueLocal.hasSame(nowLocal, "day");
   return new InlineKeyboard()
-    .text("Утром", `deadline_reminder:morning:${itemId}`)
-    .text("За 2 часа", `deadline_reminder:2h:${itemId}`)
+    .text(
+      dueToday ? "Скоро" : "Утром",
+      `deadline_reminder:${dueToday ? "soon" : "morning"}:${item.id}`,
+    )
+    .text(
+      dueToday ? "За час" : "За 2 часа",
+      `deadline_reminder:${dueToday ? "1h" : "2h"}:${item.id}`,
+    )
     .row()
-    .text("За 30 минут", `deadline_reminder:30m:${itemId}`)
-    .text("Не надо", `deadline_reminder:none:${itemId}`)
+    .text("За 30 минут", `deadline_reminder:30m:${item.id}`)
+    .text("Не надо", `deadline_reminder:none:${item.id}`)
     .row()
-    .text("Настроить", `deadline_reminder:custom:${itemId}`);
+    .text("Настроить", `deadline_reminder:custom:${item.id}`);
 }
 
 export function itemMoreKeyboard(itemId: string) {
