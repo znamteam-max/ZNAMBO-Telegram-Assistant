@@ -10,6 +10,7 @@ const RELATIVE_DEADLINE =
 const DATE_DEADLINE = /до\s+\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?(?:\s+(?:в\s+)?)?\d{1,2}(?:[.:]\d{2})?/i;
 const WEEKDAY_DEADLINE =
   /до\s+(?:понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья)\s+(?:в\s+)?\d{1,2}(?:[.:]\d{2})?/i;
+const END_OF_DAY_DEADLINE = /(?:сегодня|завтра)\s+до\s+конца\s+дня/i;
 
 export type DeadlineSemantics = {
   dueLocal: DateTime;
@@ -28,6 +29,20 @@ export function parseDeadlineSemantics(params: {
   const text = params.text.trim();
   const explicitRange = parseRussianTimeRange(params);
   if (!hasDeadlineIntent(text, Boolean(explicitRange))) return null;
+  const endOfDay = parseEndOfDayDeadline({
+    text,
+    timezone: params.timezone,
+    now: params.now,
+  });
+  if (endOfDay) {
+    return {
+      dueLocal: endOfDay,
+      scheduledStartLocal: null,
+      scheduledEndLocal: null,
+      title: extractDeadlineTitle(text),
+      deadlineOnly: true,
+    };
+  }
 
   const deadlineSegment = extractDeadlineSegment(text, Boolean(explicitRange));
   if (!deadlineSegment) return null;
@@ -63,6 +78,7 @@ export function parseDeadlineSemantics(params: {
 }
 
 export function hasDeadlineIntent(text: string, hasExplicitRange = false) {
+  if (END_OF_DAY_DEADLINE.test(text)) return true;
   if (EXPLICIT_DEADLINE_MARKER.test(text)) return true;
   if (hasExplicitRange) return false;
   if (DATE_DEADLINE.test(text)) return true;
@@ -162,6 +178,18 @@ function normalizeDeadlineWeekdayCase(weekday: string) {
 }
 
 function extractDeadlineTitle(text: string) {
+  const endOfDay = text.match(END_OF_DAY_DEADLINE);
+  if (endOfDay) {
+    const after = text
+      .slice((endOfDay.index ?? 0) + endOfDay[0].length)
+      .replace(/^[,;:\s]*(?:нужно|надо|успеть|сделать)?\s*/i, "")
+      .trim();
+    if (after) {
+      const title = /^(?:план|текст|обзор|задач)/i.test(after) ? `Сделать ${after}` : after;
+      const normalized = normalizeKnownProjectNames(title.replace(/[.;,\s]+$/g, ""));
+      return normalized.replace(/^./u, (character) => character.toLocaleUpperCase("ru"));
+    }
+  }
   let title = text;
   const explicitIndex = title.search(/\s*[,;]?\s*(?:дедлайн|deadline|срок|к\s+дедлайну)/i);
   if (explicitIndex >= 0) {
@@ -179,4 +207,19 @@ function extractDeadlineTitle(text: string) {
   }
   title = title.replace(/\s*[,;]\s*$/, "").trim();
   return title ? normalizeKnownProjectNames(title) : null;
+}
+
+function parseEndOfDayDeadline(params: {
+  text: string;
+  timezone: string;
+  now?: Date;
+}) {
+  const match = params.text.match(END_OF_DAY_DEADLINE);
+  if (!match) return null;
+  const nowLocal = DateTime.fromJSDate(params.now ?? new Date(), { zone: "utc" }).setZone(
+    params.timezone,
+  );
+  return (/завтра/i.test(match[0]) ? nowLocal.plus({ days: 1 }) : nowLocal)
+    .startOf("day")
+    .set({ hour: 23, minute: 59, second: 0, millisecond: 0 });
 }

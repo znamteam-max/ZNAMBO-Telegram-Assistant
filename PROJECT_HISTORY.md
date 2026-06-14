@@ -2297,3 +2297,31 @@ cron-job.org runner -> healthy after deployment
 
 The inline deadline reminder buttons were validated by automated tests. They were not manually
 clicked in the owner's Telegram chat during this rollout. No secrets were written to history.
+
+## V2.10.0 recurring policy execution and end-of-day fix
+
+V2.10.0 completes the recurring-policy path already produced by the mandatory OpenAI planner.
+Weekly weekday rules and monthly day ranges are stored as canonical typed recurrence strings,
+materialized by the existing policy engine, and advanced after delivery in the user's timezone.
+
+Missing reminder time no longer causes a generic failed-closed response. The bot stores a typed
+draft, shows one multi-policy summary, and asks only for the missing time. Cadence phrases are not
+allowed to become task titles. Reminder setup sessions also accept stop-condition-only replies and
+continue with the next missing interval or window field.
+
+The release fixes local `сегодня до конца дня` and `завтра до конца дня` semantics at 23:59,
+adds targeted recurring tool diagnostics to `/debuglast`, and introduces the conservative
+`/admin_repair_v2100 preview|apply` command. The repair changes no Yandex Calendar objects.
+
+Pre-deployment validation:
+
+```text
+npm test -> 53 files, 234 tests passed
+npm run lint -> passed
+npx tsc --noEmit -> passed
+npm run build -> passed
+git diff --check -> passed
+database migration -> not required
+```
+
+No secrets were written to project history.

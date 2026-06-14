@@ -1,5 +1,6 @@
 import { writeAudit } from "@/db/queries/audit";
 import { logger } from "@/lib/logger";
+import { UserFacingError } from "@/lib/errors";
 
 import type { BotContext } from "@/bot/context";
 import { requireOwner } from "@/bot/context";
@@ -28,6 +29,11 @@ import {
   entityListKeyboard,
 } from "@/bot/keyboards";
 import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
+import {
+  handleRecurringPolicyDraftTurn,
+  hasIncompleteRecurringPolicies,
+  presentRecurringPolicyClarification,
+} from "@/bot/recurringPolicyDraftFlow";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
 import { detectHardManagementIntent } from "./hardManagementIntent";
@@ -85,9 +91,18 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     naturalLanguagePlanAttemptAt: now.toISOString(),
     naturalLanguagePlanResult: "started",
     plannerGuardBlockReason: null,
+    toolExecutionFailed: null,
+    toolFailureReason: null,
+    toolFailureField: null,
   };
 
   try {
+    const recurringDraftHandled = await handleRecurringPolicyDraftTurn(ctx, text, timezone);
+    if (recurringDraftHandled) {
+      trace.finalAction = "recurring_policy_draft_handled";
+      trace.toolCallsExecuted = ["complete_recurring_policy_draft"];
+      return;
+    }
     const reminderPolicyEditHandled = await handleReminderPolicyEditTurn(ctx, text, timezone);
     if (reminderPolicyEditHandled) {
       trace.finalAction = "reminder_policy_edit_session_handled";
@@ -145,6 +160,26 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       (bound.execution.actionPlan?.actions.length ?? 0) +
       bound.execution.itemUpdates.length +
       bound.execution.reminderPolicies.length;
+    if (hasIncompleteRecurringPolicies(bound.execution)) {
+      const presented = await presentRecurringPolicyClarification({
+        ctx,
+        execution: bound.execution,
+        timezone,
+        now,
+      });
+      trace.toolCallsExecuted = presented
+        ? ["create_recurring_policy:targeted_clarification"]
+        : [];
+      trace.validationWarnings = [
+        ...bound.warnings,
+        "recurring_policy_missing_time",
+      ];
+      trace.finalAction = presented
+        ? "targeted_recurring_time_clarification"
+        : "recurring_time_clarification_failed";
+      trace.naturalLanguagePlanResult = trace.finalAction;
+      return;
+    }
     const executionResult = await executeAgentProposal({
       ctx,
       execution: bound.execution,
@@ -190,14 +225,27 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       trace.committedMutationCount = 0;
       trace.partialMutationDetected = false;
     }
-    trace.errorCode = "execution";
-    trace.safeErrorMessage = "Agent tool execution failed safely.";
+    const userError = error instanceof UserFacingError ? error : null;
+    const recurringFailure = userError?.code.startsWith("recurring_policy_") === true;
+    trace.errorCode = userError?.code ?? "execution";
+    trace.safeErrorMessage = userError?.message ?? "Agent tool execution failed safely.";
+    if (recurringFailure) {
+      trace.toolExecutionFailed = "create_recurring_policy";
+      trace.toolFailureReason = userError?.code.includes("missing")
+        ? "missing_time"
+        : "validation_error";
+      trace.toolFailureField = userError?.code.includes("reminderTime")
+        ? "reminderTime"
+        : "unknown";
+    }
     logger.warn("Mandatory agent execution failed closed", {
       error: error instanceof Error ? error.message : String(error),
     });
     await replyAndRecord(
       ctx,
-      "Не получилось безопасно выполнить предложенные действия. Ничего дополнительно не создаю. Проверь /debuglast.",
+      recurringFailure
+        ? userError!.message
+        : "Не смог сохранить предложенные действия из-за внутренней ошибки. Ничего не создал. Ошибка записана в /debuglast.",
     );
   } finally {
     await writeAudit({

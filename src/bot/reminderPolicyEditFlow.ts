@@ -13,10 +13,13 @@ import {
   updateReminderPolicy,
 } from "@/db/queries/reminderPolicies";
 import { formatRuWeekdayDateRange } from "@/domain/dateTime";
+import { parseStopCondition } from "@/domain/recurringPolicySemantics";
 import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
 import {
   clearActiveReminderPolicyEditSession,
   getActiveReminderPolicyEditSession,
+  updateReminderPolicyEditSessionDraft,
+  type ReminderPolicyEditDraft,
 } from "@/services/reminderPolicyEditSessions";
 
 export async function handleReminderPolicyEditTurn(
@@ -27,17 +30,73 @@ export async function handleReminderPolicyEditTurn(
   const owner = requireOwner(ctx);
   const session = await getActiveReminderPolicyEditSession({ userId: owner.id }).catch(() => null);
   if (!session) return false;
-  const parsed = parseReminderCadence({
+  const input = parseReminderPolicyDraftInput(text);
+  const stop = parseStopCondition(text);
+  const fullCadence = parseReminderCadence({
     text,
     itemAnchor: session.item.startAt ?? session.item.dueAt,
     timezone: session.item.timezone || timezone,
     now: new Date(),
   });
-  if (!parsed) {
+  const draft: ReminderPolicyEditDraft = {
+    ...session.draft,
+    ...(input.intervalMinutes ? { intervalMinutes: input.intervalMinutes } : {}),
+    ...(input.windowStart ? { windowStart: input.windowStart } : {}),
+    ...(input.windowEnd !== undefined ? { windowEnd: input.windowEnd } : {}),
+    ...(stop
+      ? {
+          stopCondition: stop.stopCondition,
+          ackAliases: stop.ackAliases,
+        }
+      : {}),
+  };
+  if (fullCadence) {
+    draft.intervalMinutes = fullCadence.intervalMinutes;
+    draft.windowStart = fullCadence.windowStart;
+    draft.windowEnd = fullCadence.windowEnd;
+  }
+  if (!fullCadence && !stop && !input.intervalMinutes && input.windowEnd === undefined) {
     await replyAndRecord(
       ctx,
-      `Я настраиваю напоминания для «${session.item.title}». Напиши интервал и окно, например: «каждый час с 8 до 18, пока не отмечу».`,
+      `Я настраиваю напоминания для «${session.item.title}». Напиши интервал, границу или условие остановки.`,
     );
+    return true;
+  }
+  await updateReminderPolicyEditSessionDraft({
+    userId: owner.id,
+    actionId: session.action.id,
+    draft,
+  });
+  if (!draft.intervalMinutes) {
+    await replyAndRecord(
+      ctx,
+      [
+        "Ок, буду напоминать, пока не отметишь выполненным.",
+        "Как часто напоминать?",
+        "Можно написать: «каждый час» или «каждые 30 минут».",
+      ].join("\n"),
+    );
+    return true;
+  }
+  if (draft.windowEnd === undefined) {
+    await replyAndRecord(
+      ctx,
+      [
+        `Ок, интервал: ${formatInterval(draft.intervalMinutes)}${draft.stopCondition ? ", пока не отметишь выполненным" : ""}.`,
+        "До какого времени в день напоминать?",
+        "Можно написать: «до 18:00», «до 21:00» или «без ограничения».",
+      ].join("\n"),
+    );
+    return true;
+  }
+  const parsed = materializeReminderPolicyDraft({
+    draft,
+    itemAnchor: session.item.startAt ?? session.item.dueAt,
+    timezone: session.item.timezone || timezone,
+    now: new Date(),
+  });
+  if (!parsed) {
+    await replyAndRecord(ctx, "Не смог определить окно напоминаний. Укажи время окончания, например «до 18:00».");
     return true;
   }
   const active = (await listReminderPoliciesForItem(owner.id, session.item.id, 30)).find(
@@ -46,8 +105,9 @@ export async function handleReminderPolicyEditTurn(
   const metadata = {
     activeWindowStart: parsed.windowStart,
     activeWindowEnd: parsed.windowEnd,
-    stopCondition: "until_done",
+    stopCondition: draft.stopCondition ?? "until_done",
     stopOnItemComplete: true,
+    ackAliases: draft.ackAliases ?? ["done"],
     mutationSource: "reminder_policy_edit_session",
   };
   const policy = active
@@ -91,12 +151,89 @@ export async function handleReminderPolicyEditTurn(
       "Готово:",
       session.item.title,
       "",
-      `Напоминания: ❗ ${parsed.intervalMinutes === 60 ? "каждый час" : `каждые ${parsed.intervalMinutes} мин`} с ${parsed.windowStart} до ${parsed.windowEnd}, пока не отмечу`,
-      `Окно: ${formatRuWeekdayDateRange(parsed.startsAt, parsed.endsAt, session.item.timezone || timezone)}`,
+      `Напоминания: ❗ ${
+        parsed.intervalMinutes === 60 ? "каждый час" : `каждые ${parsed.intervalMinutes} мин`
+      } с ${parsed.windowStart}${
+        parsed.windowEnd ? ` до ${parsed.windowEnd}` : ", без ограничения"
+      }, пока не отмечу`,
+      `Окно: ${
+        parsed.endsAt
+          ? formatRuWeekdayDateRange(
+              parsed.startsAt,
+              parsed.endsAt,
+              session.item.timezone || timezone,
+            )
+          : `с ${parsed.windowStart}, без ограничения`
+      }`,
     ].join("\n"),
     { reply_markup: itemMenuKeyboard(session.item.id) },
   );
   return true;
+}
+
+export function parseReminderPolicyDraftInput(text: string) {
+  const normalized = text.toLocaleLowerCase("ru").replace(/ё/g, "е").trim();
+  const intervalMinutes =
+    /кажд(?:ый|ые)\s+час|раз\s+в\s+час/i.test(normalized)
+      ? 60
+      : /кажд(?:ые|ый)\s+(?:полчаса|30\s*мин)/i.test(normalized)
+        ? 30
+        : Number(normalized.match(/кажд(?:ые|ый)\s+(\d{1,3})\s*мин/i)?.[1] ?? 0) || undefined;
+  const end = normalized.match(/до\s+(\d{1,2})(?:[.:](\d{2}))?/i);
+  const start = normalized.match(/с\s+(\d{1,2})(?:[.:](\d{2}))?/i);
+  return {
+    intervalMinutes,
+    windowStart: start ? clock(Number(start[1]), Number(start[2] ?? 0)) : undefined,
+    windowEnd: /без\s+огранич/i.test(normalized)
+      ? null
+      : end
+        ? clock(Number(end[1]), Number(end[2] ?? 0))
+        : undefined,
+  };
+}
+
+export function materializeReminderPolicyDraft(params: {
+  draft: ReminderPolicyEditDraft;
+  itemAnchor?: Date | null;
+  timezone: string;
+  now: Date;
+}) {
+  if (!params.draft.intervalMinutes || params.draft.windowEnd === undefined) return null;
+  const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
+  const anchorLocal = params.itemAnchor
+    ? DateTime.fromJSDate(params.itemAnchor, { zone: "utc" }).setZone(params.timezone)
+    : nowLocal;
+  const startParts = (params.draft.windowStart ?? nowLocal.plus({ minutes: 1 }).toFormat("HH:mm"))
+    .split(":")
+    .map(Number);
+  let starts = anchorLocal.startOf("day").set({
+    hour: startParts[0],
+    minute: startParts[1],
+    second: 0,
+    millisecond: 0,
+  });
+  if (starts <= nowLocal) {
+    starts =
+      params.itemAnchor && anchorLocal > nowLocal
+        ? anchorLocal
+        : nowLocal.plus({ minutes: 1 }).set({ second: 0, millisecond: 0 });
+  }
+  const ends = params.draft.windowEnd
+    ? starts.startOf("day").set({
+        hour: Number(params.draft.windowEnd.slice(0, 2)),
+        minute: Number(params.draft.windowEnd.slice(3, 5)),
+        second: 0,
+        millisecond: 0,
+      })
+    : null;
+  if (ends && ends <= starts) return null;
+  return {
+    intervalMinutes: params.draft.intervalMinutes,
+    startsAt: starts.toUTC().toJSDate(),
+    endsAt: ends?.toUTC().toJSDate() ?? null,
+    windowStart: starts.toFormat("HH:mm"),
+    windowEnd: params.draft.windowEnd,
+  };
 }
 
 export function parseReminderCadence(params: {
@@ -132,4 +269,13 @@ export function parseReminderCadence(params: {
     windowStart: start.toFormat("HH:mm"),
     windowEnd: adjustedEnd.toFormat("HH:mm"),
   };
+}
+
+function clock(hour: number, minute: number) {
+  if (hour > 23 || minute > 59) return undefined;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function formatInterval(minutes: number) {
+  return minutes === 60 ? "каждый час" : `каждые ${minutes} минут`;
 }

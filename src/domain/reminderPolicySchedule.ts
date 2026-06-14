@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
 
 import type { ReminderPolicy } from "@/db/schema";
+import { nextRecurringOccurrence } from "@/domain/recurringPolicySemantics";
 
 export type ReconcileTarget = {
   scheduledFor: Date;
@@ -171,6 +172,8 @@ function nextRecurringSlot(policy: ReminderPolicy, after: Date, now: Date) {
 }
 
 function nextFromRule(rule: string | null, after: Date, timezone: string) {
+  const canonical = nextRecurringOccurrence({ rule, after, timezone });
+  if (canonical) return canonical;
   const local = DateTime.fromJSDate(after, { zone: "utc" }).setZone(timezone);
   const normalized = (rule ?? "").toLowerCase();
   if (/every[_ ]?2[_ ]?weeks|biweekly|2 weeks/.test(normalized)) {

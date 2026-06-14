@@ -87,6 +87,10 @@ import {
   applyV290ProductionRepair,
   previewV290ProductionRepair,
 } from "@/services/v290ProductionRepair";
+import {
+  applyV2100ProductionRepair,
+  previewV2100ProductionRepair,
+} from "@/services/v2100ProductionRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -159,6 +163,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v270 preview|apply — гигиена календаря, reconciler и stale edit sessions",
         "/admin_repair_v280 preview|apply — cadence-only garbage task и reminder-edit sessions",
         "/admin_repair_v290 preview|apply — исправить ошибочный deadline-блок 14 июня",
+        "/admin_repair_v2100 preview|apply — убрать cadence-title garbage task",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -911,6 +916,39 @@ export function registerCommands(bot: Bot<BotContext>) {
       });
     }
   });
+  bot.command("admin_repair_v2100", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2100ProductionRepair({ userId: owner.id })
+        : await previewV2100ProductionRepair({ userId: owner.id });
+    const preview = "preview" in result ? result.preview : result;
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.10 repair applied:" : "V2.10 repair preview:",
+        `• cadence-title garbage tasks: ${preview.garbageTasks.length}`,
+        `• generated garbage policies: ${preview.garbagePolicies.length}`,
+        "• Yandex objects to delete: 0",
+        `• safe: ${preview.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• archived garbage tasks: ${"archivedItemIds" in result ? result.archivedItemIds.length : 0}`,
+              `• archived garbage policies: ${"archivedPolicyIds" in result ? result.archivedPolicyIds.length : 0}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2100 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
   bot.command("admin_state_v252", async (ctx) => {
     const owner = requireOwner(ctx);
     const state = await getProductionStateV252({
@@ -1074,6 +1112,9 @@ export function registerCommands(bot: Bot<BotContext>) {
         `Created items: ${formatList(details.createdItemIds)}`,
         `Updated items: ${formatList(details.updatedItemIds)}`,
         `Warnings: ${formatList(details.validationWarnings)}`,
+        `Tool execution failed: ${String(details.toolExecutionFailed ?? "none")}`,
+        `Reason: ${String(details.toolFailureReason ?? "none")}`,
+        `Field: ${String(details.toolFailureField ?? "none")}`,
         `Final action: ${String(details.finalAction ?? "unknown")}`,
         `Error: ${String(details.errorCode ?? "none")}`,
       ].join("\n"),

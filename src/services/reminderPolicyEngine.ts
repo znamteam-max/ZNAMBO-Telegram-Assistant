@@ -21,6 +21,7 @@ import {
   computeNextPolicySlotAfterDelivery,
 } from "@/domain/reminderPolicySchedule";
 import { getUserById } from "@/db/queries/users";
+import { nextRecurringOccurrence } from "@/domain/recurringPolicySemantics";
 
 export async function applyAgentReminderPolicies(params: {
   userId: string;
@@ -89,6 +90,10 @@ export async function applyAgentReminderPolicies(params: {
           operation: proposal.operation,
           minutesBefore: proposal.minutesBefore,
           stopOnItemComplete: proposal.requireAck,
+          stopCondition: proposal.requireAck ? "until_done" : null,
+          recurrenceRuleVersion: proposal.recurrenceRule?.includes(":")
+            ? "canonical-v2100"
+            : "legacy",
           allowDuringQuietHours: proposal.allowDuringQuietHours,
           basePriority: target?.priority ?? 3,
           campaignGroup: target?.metadata?.campaignGroup ?? null,
@@ -256,6 +261,12 @@ function determineInitialFire(params: {
     return params.item.endAt ?? params.item.startAt ?? params.item.dueAt;
   }
   if (params.startsAt) return params.startsAt;
+  const canonical = nextRecurringOccurrence({
+    rule: params.proposal.recurrenceRule,
+    after: params.now,
+    timezone: params.timezone,
+  });
+  if (canonical) return canonical;
   return nextFromRule(params.proposal.recurrenceRule, params.now, params.timezone);
 }
 

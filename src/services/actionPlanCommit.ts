@@ -17,6 +17,10 @@ import { localIsoToUtcDate } from "@/domain/dateTime";
 import type { MaterializedItem, MaterializedReminder } from "@/domain/types";
 import { UserFacingError } from "@/lib/errors";
 import { isHardManagementText } from "@/agent/hardManagementIntent";
+import {
+  nextRecurringOccurrence,
+  recurringRuleMissingField,
+} from "@/domain/recurringPolicySemantics";
 
 import { storePlanMemoryFacts } from "./memory";
 
@@ -313,9 +317,11 @@ export async function commitStoredActionPlan(params: {
                 campaignGroup: target?.metadata?.campaignGroup ?? null,
                 campaignSequence: target?.metadata?.campaignSequence ?? null,
                 campaignState: target?.metadata?.campaignState ?? null,
-                stopOnItemComplete:
-                  proposal.requireAck &&
-                  ["interval_window", "nag_until_ack"].includes(proposal.policyType),
+                stopOnItemComplete: proposal.requireAck,
+                stopCondition: proposal.requireAck ? "until_done" : null,
+                recurrenceRuleVersion: proposal.recurrenceRule?.includes(":")
+                  ? "canonical-v2100"
+                  : "legacy",
               },
             })
             .returning();
@@ -434,6 +440,21 @@ function determinePolicyInitialFire(params: {
       : null;
   }
   if (params.startsAt) return params.startsAt;
+  if (["recurring", "long_term"].includes(params.proposal.policyType)) {
+    const missingField = recurringRuleMissingField(params.proposal.recurrenceRule);
+    if (missingField) {
+      throw new UserFacingError(
+        `Понял повторяющееся напоминание, но не хватает времени: ${params.proposal.title}`,
+        `recurring_policy_missing_${missingField}`,
+      );
+    }
+    const next = nextRecurringOccurrence({
+      rule: params.proposal.recurrenceRule,
+      after: params.now,
+      timezone: params.timezone,
+    });
+    if (next) return next;
+  }
   return null;
 }
 

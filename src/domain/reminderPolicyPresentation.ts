@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 
 import type { ReminderPolicy } from "@/db/schema";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
+import { formatRecurringRuleHuman } from "@/domain/recurringPolicySemantics";
 
 export function isPersistentReminderPolicy(policy: ReminderPolicy) {
   return (
@@ -50,6 +51,8 @@ export function formatHumanReminderPolicy(
 }
 
 function humanRecurrence(value: string | null) {
+  const canonical = formatRecurringRuleHuman(value);
+  if (canonical) return canonical;
   const rule = (value ?? "").toLowerCase();
   if (!rule) return null;
   if (/monthly|month/.test(rule)) return "каждый месяц";

@@ -11,6 +11,10 @@ import {
   normalizeKnownProjectNames,
   parseDeadlineSemantics,
 } from "@/domain/deadlineSemantics";
+import {
+  nextRecurringOccurrence,
+  parseRecurringPolicyIntents,
+} from "@/domain/recurringPolicySemantics";
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 
@@ -22,9 +26,13 @@ export function normalizeAgentExecutionProposal(params: {
   activeContext: string;
 }): AgentExecution {
   const complexReminder = normalizeComplexMultiReminderPreview(params);
-  const cadenceOnly = normalizeCadenceOnlyWithoutContext({
+  const recurringIntent = normalizeRecurringPolicySemantics({
     ...params,
     execution: complexReminder,
+  });
+  const cadenceOnly = normalizeCadenceOnlyWithoutContext({
+    ...params,
+    execution: recurringIntent,
   });
   const deadline = normalizeDeadlineSemantics({ ...params, execution: cadenceOnly });
   const centralPark = normalizeCentralPark({ ...params, execution: deadline });
@@ -65,6 +73,13 @@ function normalizeDeadlineSemantics(params: {
   timezone: string;
   now: Date;
 }) {
+  if (
+    params.execution.reminderPolicies.some((policy) =>
+      ["recurring", "long_term"].includes(policy.policyType),
+    )
+  ) {
+    return params.execution;
+  }
   if ((params.execution.actionPlan?.actions.length ?? 0) > 1) return params.execution;
   const parsed = parseDeadlineSemantics(params);
   if (!parsed) return params.execution;
@@ -118,6 +133,111 @@ function normalizeDeadlineSemantics(params: {
     },
     itemUpdates: [],
     reminderPolicies: [],
+    clarificationQuestions: [],
+  };
+}
+
+function normalizeRecurringPolicySemantics(params: {
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+}) {
+  if (
+    params.execution.actionPlan?.actions.some(
+      (action) => action.metadata?.sourceNormalization === "complex_multi_reminder_v280",
+    )
+  ) {
+    return params.execution;
+  }
+  const intents = parseRecurringPolicyIntents(params.text).filter(
+    (intent) => !intent.missingFields.includes("title"),
+  );
+  if (!intents.length) return params.execution;
+
+  const actions = intents.map((intent): ActionPlanItem => ({
+    ...buildSyntheticReminderAction(intent.title, params.timezone),
+    actionType: "recurring_task",
+    kind: "recurring_task",
+    title: normalizeKnownProjectNames(intent.title),
+    priority: intent.requireAck ? 4 : 3,
+    confidence: 0.98,
+    risk: "low",
+    requiresConfirmation: intents.length > 1,
+    recurrence:
+      intent.recurrenceKind === "weekly"
+        ? {
+            frequency: "weekly",
+            daysOfWeek: [intent.weekday as "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU"],
+            timeLocal: intent.timeLocal,
+            repeatUntilAck: intent.requireAck,
+          }
+        : null,
+    metadata: {
+      sourceNormalization: "recurring_policy_v2100",
+      recurrenceRule: intent.recurrenceRule,
+      recurrenceKind: intent.recurrenceKind,
+      monthDays: intent.monthDays,
+      stopCondition: intent.requireAck ? "until_done" : null,
+      ackAliases: intent.ackAliases,
+      timeUnspecified: !intent.timeLocal,
+    },
+  }));
+  const policies = intents.map((intent): AgentReminderPolicy => {
+    const next = intent.timeLocal
+      ? nextRecurringOccurrence({
+          rule: intent.recurrenceRule,
+          after: params.now,
+          timezone: params.timezone,
+        })
+      : null;
+    return {
+      operation: "create_recurring_policy",
+      itemIds: [],
+      itemTitle: normalizeKnownProjectNames(intent.title),
+      title: normalizeKnownProjectNames(intent.title),
+      category: recurringCategory(intent.title),
+      policyType: "recurring",
+      startsAtLocal: null,
+      endsAtLocal: null,
+      nextFireAtLocal: next
+        ? DateTime.fromJSDate(next, { zone: "utc" })
+            .setZone(params.timezone)
+            .toFormat("yyyy-MM-dd'T'HH:mm:ss")
+        : null,
+      recurrenceRule: intent.recurrenceRule,
+      intervalMinutes: null,
+      requireAck: intent.requireAck,
+      maxOccurrences: null,
+      minutesBefore: null,
+      windowEndInclusive: true,
+      catchUpMode: "one_immediate_then_resume",
+      onWindowEnd: "expire_silently",
+      quietHoursStart: null,
+      quietHoursEnd: null,
+      allowDuringQuietHours: false,
+    };
+  });
+  const missingTime = intents.some((intent) => !intent.timeLocal);
+  return {
+    ...params.execution,
+    intent: "create_plan" as const,
+    reply: null,
+    actionPlan: {
+      intent: "plan" as const,
+      summary:
+        intents.length > 1
+          ? `${intents.length} повторяющихся напоминания`
+          : intents[0].title,
+      reply: null,
+      confidence: 0.98,
+      requiresConfirmation: intents.length > 1 || missingTime,
+      actions,
+      memoryCandidates: [],
+      clarificationQuestions: [],
+    },
+    itemUpdates: [],
+    reminderPolicies: policies,
     clarificationQuestions: [],
   };
 }
@@ -230,6 +350,13 @@ function normalizeClearReminderIntent(params: {
   timezone: string;
   now: Date;
 }): AgentExecution {
+  if (
+    params.execution.reminderPolicies.some((policy) =>
+      ["recurring", "long_term"].includes(policy.policyType),
+    )
+  ) {
+    return params.execution;
+  }
   if (!/(?:напомни|напоминай|напомняй)/i.test(params.text)) return params.execution;
   if (
     (params.execution.actionPlan?.actions.length ?? 0) > 1 ||

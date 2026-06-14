@@ -116,10 +116,35 @@ import {
 import { formatCommittedPlanSummary, formatCreatedItem } from "./formatters";
 import { cancelItemEditPreview, confirmItemEditPreview } from "./itemEditFlow";
 import { startExternalCalendarEditSession } from "./externalCalendarEditFlow";
+import { applyRecurringPolicyDraftTime } from "./recurringPolicyDraftFlow";
+import { finishRecurringPolicyDraftSession } from "@/services/recurringPolicyDraftSessions";
 
 export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery("noop", async (ctx) => {
     await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^recurring_draft:time:(\d{2}:\d{2}):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    await ctx.answerCallbackQuery("Сохраняю");
+    await applyRecurringPolicyDraftTime(ctx, ctx.match[2], ctx.match[1], owner.timezone);
+  });
+
+  bot.callbackQuery(/^recurring_draft:custom:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Напиши время, например: «09:30». Для нескольких правил можно написать «оба в 09:30».");
+  });
+
+  bot.callbackQuery(/^recurring_draft:cancel:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    await finishRecurringPolicyDraftSession({
+      userId: owner.id,
+      actionId: ctx.match[1],
+      status: "cancelled",
+      details: { cancelledReason: "user_cancelled" },
+    });
+    await ctx.answerCallbackQuery("Отменено");
+    await ctx.reply("Черновик повторяющихся напоминаний отменён.");
   });
 
   bot.callbackQuery(/^calendar:retry:(.+)$/, async (ctx) => {

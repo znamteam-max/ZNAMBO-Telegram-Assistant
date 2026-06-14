@@ -925,3 +925,17 @@ through cron-job.org and auto-archived.
 
 Final validation passed 52 test files and 217 tests, lint, TypeScript, build, diff check, and secret
 scan. No secrets were written to chat or project history.
+
+### Turn: V2.10.0 recurring policy execution and end-of-day fix
+
+The attached V2.10.0 brief was implemented on top of V2.9.0. The mandatory OpenAI path remains
+unchanged, while its recurring-policy proposals now normalize into executable weekly and monthly
+rules or a typed targeted-clarification draft.
+
+The bot separates two recurring reminders from one message, never uses `Каждый понедельник` as a
+task title, accepts `Пока не выполню` inside reminder setup, advances monthly 15-19 policies after
+delivery, and resolves local end-of-day deadlines to 23:59. Safe production repair and targeted
+`/debuglast` fields were added.
+
+Pre-deployment validation passed 53 test files and 234 tests, lint, TypeScript, build, and diff
+checks. No database migration is required. No secrets were written to history.

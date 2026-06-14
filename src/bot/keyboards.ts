@@ -205,6 +205,18 @@ export function deadlineReminderSuggestionKeyboard(item: PlannerItem, now = new 
     .text("Настроить", `deadline_reminder:custom:${item.id}`);
 }
 
+export function recurringTimeClarificationKeyboard(actionId: string, multiple = false) {
+  const prefix = multiple ? "Оба в " : "";
+  return new InlineKeyboard()
+    .text(`${prefix}09:00`, `recurring_draft:time:09:00:${actionId}`)
+    .text(`${prefix}12:00`, `recurring_draft:time:12:00:${actionId}`)
+    .row()
+    .text(`${prefix}18:00`, `recurring_draft:time:18:00:${actionId}`)
+    .text("Указать", `recurring_draft:custom:${actionId}`)
+    .row()
+    .text("Отмена", `recurring_draft:cancel:${actionId}`);
+}
+
 export function itemMoreKeyboard(itemId: string) {
   return new InlineKeyboard()
     .text("Календарь / повторить sync", `calendar:retry:${itemId}`)
