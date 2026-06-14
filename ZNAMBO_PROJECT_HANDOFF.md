@@ -4,20 +4,75 @@ This is the single canonical file to attach to a new Codex chat after every depl
 It contains the current production state, cumulative implementation history, validation results,
 and remaining limitations. It must never contain secrets.
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 ## Current Production
 
 ```text
-Application version: 2.8.0
+Application version: 2.9.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: d2ccd86f5cc4b74144b0938513e78f4bcf23757d
+Validated application deployment commit: 9de4c1a53c2160b447e10899e0eb40c3eec76b3c
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
 Reconciler: enabled
 Runner lock: enabled
 Production scheduler: cron-job.org
+```
+
+## Latest Deployment - V2.9.0
+
+V2.9.0 fixes deadline semantics without rewriting the mandatory OpenAI planner, reminder policy
+engine, runner, or CalDAV integration.
+
+Implemented:
+
+- Deadline phrases such as `дедлайн завтра до 14:00`, `сдать до`, `успеть до`, weekday deadlines,
+  and explicit dates create a task with `dueAt`.
+- Deadline-only tasks have no invented `startAt/endAt` block. A task can still have both an
+  explicit work interval and a later deadline.
+- Plan and task cards render scheduled time and deadline separately. Deadline-only tasks cannot be
+  classified as `Сейчас / идёт`.
+- Future deadlines offer `Утром`, `За 2 часа`, and `За 30 минут`; same-day deadlines offer
+  `Скоро`, `За час`, and `За 30 минут`. No reminder is auto-created.
+- Item-card edits support setting, changing, clearing, and combining a deadline with a work block.
+- Project names are conservatively normalized, including `Больше`, `Централ Парк`, and `ЧМ-26`.
+- `/admin_repair_v290 preview|apply` repairs only the exact known June 14 deadline misparse and
+  never deletes a Yandex Calendar object.
+- No database migration was required; the existing separate `start_at`, `end_at`, and `due_at`
+  fields are used.
+
+## V2.9.0 Production Acceptance
+
+```text
+Production application commit: 9de4c1a53c2160b447e10899e0eb40c3eec76b3c
+GitHub/Vercel deployment: passed
+/api/health: ok, appVersion 2.9.0, deployment commit matched
+Pipeline: jarvis, OpenAI configured and required for natural language
+Exact production AI probe: AI called and succeeded, response ID present, structured output valid
+Probe result: one task, title normalized to эфир Больше, startAt null, dueAt June 15 at 14:00
+Telegram webhook: correct production URL, pending updates 0, no last error
+V2.9 repair before apply: 1 exact candidate, safe yes, calendar updates needed 0
+V2.9 repair apply: same item updated, calendar objects changed 0
+V2.9 repair after apply: 0 candidates
+Planner snapshot: repaired task has startAt null, endAt null, dueAt 2026-06-15T11:00:00Z
+Plan snapshot: Пн, 15.06 до 14:00 visible; accidental 12:00-14:00 range absent
+Automatic reminder smoke: sent to Telegram and test item auto-archived
+cron-job.org runner: succeeded after final deployment
+Local tests: 52 files, 217 tests passed
+Lint: passed
+TypeScript: passed
+Build: passed
+git diff --check: passed
+Secret scan: passed
+Database migration: not required
+```
+
+Remaining V2.9 acceptance:
+
+```text
+The inline deadline reminder buttons are covered by automated tests and deployed, but were not
+manually clicked in the owner's Telegram chat during this rollout.
 ```
 
 ## Latest Deployment - V2.8.0
@@ -430,6 +485,7 @@ V2.5.4.1 - Item-card edit sessions, compound edits and Russian date fixes
 V2.6.0 - Plan UI and Yandex inbound calendar import
 V2.7.0 - Reminder capture regression fix and calendar import hygiene
 V2.8.0 - Reminder policy UX, real policy snooze and Plan routing
+V2.9.0 - Deadline semantics, due-task rendering and safe production repair
 ```
 
 ## Remaining Limitations
@@ -441,8 +497,8 @@ V2.8.0 - Reminder policy UX, real policy snooze and Plan routing
   retry acceptance proved that the existing object URL is reused.
 - The destructive confirmation callback was covered by regression tests and deployed, but no
   intentional production item deletion was performed during acceptance.
-- Vercel connector access to the team scope still returns 403; GitHub auto-deploy completed and
-  was verified through the production health commit.
+- Vercel connector team listing is not available in this session; GitHub auto-deploy completed and
+  was verified through Vercel commit status and the production health commit.
 
 ## Handoff Rule
 

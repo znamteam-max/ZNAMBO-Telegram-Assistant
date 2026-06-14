@@ -842,6 +842,7 @@ build passed
 ```
 
 No secrets were written to chat or project history.
+
 ### Turn: V2.6.0 Plan UI and Yandex inbound import implementation
 
 The attached V2.6.0 brief was implemented as a major release rather than another parser hotfix.
@@ -903,3 +904,24 @@ delivery checks. High-frequency reminders expose 30-minute, one-hour, two-hour a
 buttons. A safe V2.8 repair command and complex three-reminder preview were added.
 
 No secrets were written to chat or project history.
+
+### Turn: V2.9.0 deadline semantics and due-task production rollout
+
+The attached V2.9.0 brief was implemented without replacing the mandatory OpenAI planner or the
+V2.8 reminder engine. Deadline language now creates a task with a separate `dueAt`, while
+`startAt/endAt` are preserved only for an explicit work interval.
+
+Plan and task cards display deadlines with `до HH:mm`, deadline-only tasks cannot appear as
+currently running, and item edits support setting or clearing a deadline. Newly created deadline
+tasks offer useful before-deadline presets, including same-day `Скоро`, `За час`, and
+`За 30 минут`.
+
+Production V2.9.0 was deployed at commit
+`9de4c1a53c2160b447e10899e0eb40c3eec76b3c`. A real OpenAI probe returned one task with no
+scheduled block and a June 15 14:00 deadline. The safe repair converted the exact June 14 bad item
+in place, changed no calendar objects, and became clean on the second preview. Plan showed the
+Monday deadline without the accidental 12:00-14:00 range. A two-minute reminder smoke was delivered
+through cron-job.org and auto-archived.
+
+Final validation passed 52 test files and 217 tests, lint, TypeScript, build, diff check, and secret
+scan. No secrets were written to chat or project history.

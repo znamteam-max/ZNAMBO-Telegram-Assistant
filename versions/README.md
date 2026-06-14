@@ -27,3 +27,4 @@ Version index:
 - `V2.6.0.md` - cleaner live Plan UI, robust compound time edits and inbound Yandex Calendar import.
 - `V2.7.0.md` - reminder capture regression fix and external-calendar import hygiene.
 - `V2.8.0.md` - reminder policy UX, real snooze/mute and Plan routing repair.
+- `V2.9.0.md` - deadline semantics, due-task rendering and safe production repair.

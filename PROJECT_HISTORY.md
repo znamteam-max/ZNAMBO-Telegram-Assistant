@@ -2257,3 +2257,43 @@ npx tsc --noEmit -> passed
 npm run build -> passed
 git diff --check -> passed
 ```
+
+## V2.9.0 deadline semantics and due-task production rollout
+
+V2.9.0 introduced explicit deadline semantics on top of the existing mandatory OpenAI planner.
+Deadline phrases now persist to `planner_items.due_at`; `start_at/end_at` are used only when the
+user explicitly names a work interval. No database migration was required.
+
+Implemented:
+
+```text
+deadline parser and post-AI semantic normalization
+separate Plan and task-card rendering for scheduled time and due time
+deadline reminder presets for future and same-day deadlines
+item-context set/change/clear deadline edits
+safe /admin_repair_v290 preview|apply
+project-name normalization for Больше, Централ Парк and ЧМ-26
+```
+
+Validation and production acceptance:
+
+```text
+npm test -> 52 files, 217 tests passed
+npm run lint -> passed
+npx tsc --noEmit -> passed
+npm run build -> passed
+git diff --check -> passed
+secret scan -> passed
+active production commit -> 9de4c1a53c2160b447e10899e0eb40c3eec76b3c
+/api/health -> appVersion 2.9.0, matching deployment commit
+Telegram webhook -> correct URL, pending 0, no last error
+exact production AI probe -> one task, no scheduled block, due June 15 at 14:00
+repair -> one exact bad item converted in place; zero calendar objects changed
+repair preview after apply -> zero candidates
+Plan snapshot -> Monday deadline visible; accidental 12:00-14:00 range absent
+automatic reminder smoke -> sent to Telegram and auto-archived
+cron-job.org runner -> healthy after deployment
+```
+
+The inline deadline reminder buttons were validated by automated tests. They were not manually
+clicked in the owner's Telegram chat during this rollout. No secrets were written to history.
