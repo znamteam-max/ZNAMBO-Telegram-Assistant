@@ -9,9 +9,9 @@ Last updated: 2026-06-14
 ## Current Production
 
 ```text
-Application version: 2.11.0
+Application version: 2.12.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 7598f93e8877722c625f1a0fbc957a2d4e48ff53
+Validated application deployment commit: 411aaea1f6872c566b128169a9d984b684f4f558
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -20,7 +20,67 @@ Runner lock: enabled
 Production scheduler: cron-job.org
 ```
 
-## Latest Deployment - V2.11.0
+## Latest Deployment - V2.12.0
+
+V2.12.0 cleans up recurring reminder UX after the V2.11 state-machine fixes. It does not replace
+the mandatory OpenAI planner, ActionPlan execution, reminder runner, Yandex CalDAV integration, or
+existing snooze system.
+
+Implemented:
+
+- Weekly recurring reminders with missing time remain typed drafts until the user explicitly chooses
+  or provides a time; smart commit and policy execution now have missing-time guards.
+- Russian natural reminder windows now parse `с 8 утра до 8 вечера`, `с восьми утра до восьми
+  вечера`, `с 10 утра до 6 вечера`, numeric `с 8 до 20`, and local end-of-day phrases.
+- Editing cadence on a recurring item updates the recurring policy (`weekly:MO@08:00` plus
+  interval/window metadata) instead of creating a one-day local nag window.
+- The policy scheduler now supports recurring interval windows, so a weekly 08:00-20:00 hourly rule
+  advances hourly inside the window and then to the next weekly window.
+- Monthly `15-19 число` recurring reminders become typed drafts when time is missing and use
+  `monthly_days:15,16,17,18,19@HH:mm` when time is present.
+- Plan/reminder rendering no longer duplicates `❗` in row and detail, no longer prints `без
+  времени` for unscheduled recurring rows, and formats `300 мин` as `5 часов`.
+- Item cards now include `❗ Маркер` controls with Auto / Show / Hide stored in item metadata.
+- Recurring filler titles such as `О том, чтобы я решил вопрос...` normalize to human task titles.
+- `/admin_repair_v2120 preview|apply` repairs the production mirror task/policies and moves the
+  broken Fedotov reminder to review/paused without touching Yandex Calendar.
+- `/debuglast` now reports recurring missing-time failures as field `time` with a safe next prompt.
+- No database migration was required.
+
+## V2.12.0 Production Acceptance
+
+```text
+Production application commit: 411aaea1f6872c566b128169a9d984b684f4f558
+GitHub push and Vercel auto-deploy: passed
+/api/health: ok, appVersion 2.12.0, deployment commit matched
+Telegram webhook: ok, pending updates 0, no last error
+OpenAI health: real call succeeded, structured output valid, tool call accepted
+V2.12 repair preview before apply: 1 mirror item, 2 malformed mirror policies, 1 Fedotov policy, safe yes
+V2.12 repair apply: renamed 1 item, normalized 1 target policy, superseded 1 duplicate, moved 1 Fedotov policy to review, calendar objects changed 0
+V2.12 repair preview after apply: malformed 0, Fedotov 0, stale sessions 0
+Dashboard snapshot: no "без времени", no "🔔 ❗", no Fedotov, no 02:59, no 300 мин
+Monthly 15-19 agent probe: AI called, structured output valid, rule monthly_days:15,16,17,18,19, no start/due
+Reminder smoke: runner endpoint sent 1 due reminder through /api/reminders/run; health later showed schedulerConfigured true and lastRunnerSucceeded true
+Local tests: 55 files, 262 tests passed
+Lint: passed
+Build: passed
+git diff --check: passed
+Database migration: not required
+```
+
+Remaining V2.12 notes:
+
+```text
+The repair and probes were run through protected production diagnostics. The exact Telegram
+multi-turn monthly draft conversation and marker button clicks were covered by automated tests and
+server-side probes, not manually driven in the owner chat during this rollout.
+cron-job.org remains the production scheduler; the V2.12 smoke reminder was completed by an
+explicit protected runner call, while health confirms the scheduler is configured and the last
+runner pass succeeded.
+Yandex Calendar remains best-effort and must not block planner/reminder writes.
+```
+
+## Previous Deployment - V2.11.0
 
 V2.11.0 fixes the reminder setup state machine and stale-session routing without replacing the
 mandatory OpenAI planner, ActionPlan execution, reminder runner, CalDAV integration, or recurrence

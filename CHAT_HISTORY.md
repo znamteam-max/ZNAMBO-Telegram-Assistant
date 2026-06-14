@@ -970,3 +970,27 @@ Validation passed 54 test files and 247 tests, lint, build, and diff check. Verc
 commit `7598f93e8877722c625f1a0fbc957a2d4e48ff53`; production health, Telegram webhook, OpenAI
 health, UTF-8 monthly/weekly probes, and a cron-job.org reminder smoke all passed. No secrets were
 written to history.
+
+### Turn: V2.12.0 recurring UX cleanup, marker controls and production repair
+
+The attached V2.12.0 brief was implemented on top of V2.11.0. The release fixed recurring UX
+cleanup without replacing the mandatory OpenAI planner, ActionPlan execution, reminder runner,
+Yandex CalDAV integration, or existing snooze behavior.
+
+The bot now keeps weekly recurring reminders without time as typed drafts, parses natural Russian
+windows such as `с 8 утра до 8 вечера`, merges cadence edits into the existing recurring policy,
+supports recurring interval execution inside weekly windows, and handles monthly 15-19 reminders as
+drafts when time is missing. Plan rendering no longer shows duplicate `❗`, no longer prefixes
+unscheduled recurring rows with `без времени`, and item cards expose Auto / Show / Hide marker
+controls.
+
+V2.12.0 also added `/admin_repair_v2120 preview|apply`. Production preview found one mirror item,
+two malformed mirror policies and one broken Fedotov policy. Apply renamed the mirror item,
+normalized one target Monday 08:00-20:00 hourly policy, superseded one duplicate, moved Fedotov to
+review/paused, and changed zero Yandex Calendar objects. A second preview was clean.
+
+Validation passed 55 test files and 262 tests, lint, build, and diff check. Vercel auto-deployed
+commit `411aaea1f6872c566b128169a9d984b684f4f558`; production health, webhook, OpenAI health,
+dashboard snapshot and monthly 15-19 agent probe passed. A protected runner smoke delivered one due
+reminder through `/api/reminders/run`; cron-job.org remains configured and health showed the last
+runner pass succeeded. No secrets were written to history.

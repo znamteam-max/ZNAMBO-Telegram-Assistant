@@ -49,6 +49,64 @@ git diff --check -> passed
 
 No secrets were written to project history.
 
+## V2.12.0 recurring UX cleanup, marker controls, monthly drafts and production repair
+
+V2.12.0 was implemented on top of V2.11.0 without replacing the mandatory OpenAI planner,
+ActionPlan execution, reminder runner, Yandex CalDAV integration, or snooze system. No database
+migration was required.
+
+Implemented:
+
+```text
+weekly missing-time recurring reminders stay typed drafts until explicit time selection
+commit and policy-execution guards reject canonical recurring rules without time
+Russian AM/PM windows parse: 8 утра-8 вечера, восьми утра-восьми вечера, 10 утра-6 вечера
+recurring item cadence edits update the weekly recurring policy instead of creating a one-day window
+runner supports recurring interval windows, including weekly hourly 08:00-20:00 until done
+monthly 15-19 day-range reminders draft cleanly when time is missing
+Plan/reminder rendering removes duplicate ❗ and omits "без времени" for unscheduled recurring rows
+item card marker controls: Auto / Show / Hide
+filler recurring titles normalize to human task titles
+/admin_repair_v2120 preview|apply repairs mirror/Fedotov production state without Yandex changes
+```
+
+Validation:
+
+```text
+npm test -> 55 files passed, 262 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+secret scan -> no live secrets added
+```
+
+Production rollout:
+
+```text
+application version -> 2.12.0
+production commit -> 411aaea1f6872c566b128169a9d984b684f4f558
+production URL -> https://znambo-telegram-assistant.vercel.app
+/api/health -> appVersion and deployment commit matched
+Telegram webhook -> correct URL, pending updates 0, no last error
+OpenAI health -> real call succeeded, structured output valid
+V2.12 repair before apply -> mirror item 1, malformed mirror policies 2, Fedotov broken policies 1, safe yes
+V2.12 repair apply -> renamed 1 item, normalized 1 target policy, superseded 1 duplicate, moved 1 Fedotov policy to review, calendar objects changed 0
+V2.12 repair after apply -> malformed 0, Fedotov 0, stale sessions 0
+dashboard snapshot -> no "без времени", no "🔔 ❗", no Fedotov, no 02:59, no 300 мин
+monthly 15-19 agent probe -> AI called and succeeded, rule monthly_days:15,16,17,18,19, no start/due
+reminder runner smoke -> protected POST /api/reminders/run sent 1 due reminder; health shows scheduler configured and last runner succeeded
+```
+
+Remaining limitations:
+
+```text
+The exact Telegram monthly draft conversation and marker button clicks were covered by automated
+tests/probes, not manually driven in the owner chat during this rollout.
+The smoke reminder was completed by an explicit protected runner call; cron-job.org remains
+configured as production scheduler and health reported lastRunnerSucceeded true.
+Yandex Calendar remains best-effort and must not block planner/reminder writes.
+```
+
 ## V2.11.0 reminder setup state machine and session escape fix
 
 V2.11.0 was implemented on top of V2.10.0 without replacing the mandatory OpenAI planner,
