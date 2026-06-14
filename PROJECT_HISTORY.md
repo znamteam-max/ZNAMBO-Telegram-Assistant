@@ -49,6 +49,53 @@ git diff --check -> passed
 
 No secrets were written to project history.
 
+## V2.11.0 reminder setup state machine and session escape fix
+
+V2.11.0 was implemented on top of V2.10.0 without replacing the mandatory OpenAI planner,
+ActionPlan execution, recurrence engine, reminder runner, or Yandex CalDAV integration.
+
+The release adds a shared session router for natural-language turns. Cancel phrases now clear
+active item edit, reminder setup, recurring draft, and external calendar edit sessions. New global
+weekly/monthly reminder creation requests escape stale item sessions and proceed through the AI
+planner instead of being parsed as an edit to the previous task.
+
+Reminder setup now persists collected fields across turns and understands local end-of-day
+boundaries in setup context. `do kontsa dnya`, `do kontsa segodnyashnego dnya`, and `do 23.59`
+complete the active reminder window as `23:59`; full cadence phrases can apply in one turn.
+
+The safe `/admin_repair_v2110 preview|apply` repair restores only the known World Cup recap task
+deadline to `2026-06-14 23:59 Europe/Moscow`, keeps the intended 30-minute policy, detaches no
+unrelated policies in the observed production state, clears stale sessions when present, and changes
+zero Yandex Calendar objects.
+
+Pre-deployment validation:
+
+```text
+npm test -> 54 files, 247 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+database migration -> not required
+```
+
+Production acceptance:
+
+```text
+active production commit -> 7598f93e8877722c625f1a0fbc957a2d4e48ff53
+/api/health -> appVersion 2.11.0, matching deployment commit
+Telegram webhook -> ok, pending 0, no last error
+OpenAI health -> real call succeeded, response ID present
+V2.11 repair preview -> 1 target, wrong dueAt detected, safe yes
+V2.11 repair apply -> updated 1 item, normalized 1 policy, calendar objects changed 0
+planner snapshot -> World Cup recap dueAt 2026-06-14T20:59:00.000Z
+dashboard snapshot -> no wrong 15.06 08:00 World Cup recap block
+UTF-8 monthly probe -> monthly_days:15,16,17,18,19
+UTF-8 weekly timed probe -> weekly:MO@10:00, requireAck true
+automatic reminder smoke -> sent through cron-job.org and test item auto-cancelled
+```
+
+No secrets were written to project history.
+
 Production rollout completed:
 
 ```text

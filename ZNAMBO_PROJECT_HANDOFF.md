@@ -9,9 +9,9 @@ Last updated: 2026-06-14
 ## Current Production
 
 ```text
-Application version: 2.10.0
+Application version: 2.11.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 6abad3f886dabfbcc1e2bb15ace86fbb0d12caeb
+Validated application deployment commit: 7598f93e8877722c625f1a0fbc957a2d4e48ff53
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -20,7 +20,64 @@ Runner lock: enabled
 Production scheduler: cron-job.org
 ```
 
-## Latest Deployment - V2.10.0
+## Latest Deployment - V2.11.0
+
+V2.11.0 fixes the reminder setup state machine and stale-session routing without replacing the
+mandatory OpenAI planner, ActionPlan execution, reminder runner, CalDAV integration, or recurrence
+engine.
+
+Implemented:
+
+- Active reminder setup now keeps collected fields across turns.
+- In reminder setup, `do kontsa dnya`, `do kontsa segodnyashnego dnya`, and `do 23.59` fill the
+  reminder window end as local `23:59`.
+- Full phrases like `s 20.00 kazhdye 30 min, poka ne otmechu, do kontsa segodnyashnego dnya`
+  apply immediately to the selected item.
+- `otmena`, `/cancel`, `cancel`, `stop`, `zakryt`, `vyiti`, and `ne nado` clear active edit,
+  reminder setup, recurring draft, and external calendar edit sessions.
+- New weekly/monthly/global reminder creation intents escape stale item-edit/reminder sessions and
+  continue through the mandatory AI planner.
+- Reminder setup mutates only reminder policies/reminders, not unrelated task due/start/end fields.
+- `/admin_repair_v2110 preview|apply` safely restores the known World Cup recap task deadline to
+  2026-06-14 23:59 Europe/Moscow, normalizes the intended 30-minute reminder policy, clears stale
+  sessions, and changes zero Yandex Calendar objects.
+- `/debuglast` now includes a safe suggested next prompt for recurring tool failures.
+- No database migration was required.
+
+## V2.11.0 Production Acceptance
+
+```text
+Production application commit: 7598f93e8877722c625f1a0fbc957a2d4e48ff53
+GitHub push and Vercel auto-deploy: passed
+/api/health: ok, appVersion 2.11.0, deployment commit matched
+Telegram webhook: ok, pending updates 0, no last error
+OpenAI health: real call succeeded, model gpt-4o-mini-2024-07-18, response ID present
+V2.11 repair preview: 1 target task, wrong dueAt detected, 1 intended policy, safe yes
+V2.11 repair apply: updated 1 item, normalized 1 policy, detached 0, cleared 0, calendar objects changed 0
+V2.11 repair after apply: wrongDue false, alreadyExpected true
+Planner snapshot: World Cup recap dueAt 2026-06-14T20:59:00.000Z, no wrong 15.06 08:00 dashboard block
+UTF-8 monthly probe: recurring_task, rule monthly_days:15,16,17,18,19, no item update
+UTF-8 weekly timed probe: recurring_task, rule weekly:MO@10:00, requireAck true, no item update
+Automatic reminder smoke: sent through cron-job.org, delivery status sent, test item auto-cancelled
+Local tests: 54 files, 247 tests passed
+Lint: passed
+Build: passed
+git diff --check: passed
+Database migration: not required
+```
+
+Remaining V2.11 notes:
+
+```text
+The reminder setup state machine and session escape are covered by automated tests and production
+probes. The exact multi-turn Telegram reminder-setup conversation was not manually driven in the
+owner chat during this rollout.
+Vercel CLI is unavailable locally, but GitHub auto-deploy was verified through the live health
+commit and runtime acceptance endpoints.
+Yandex Calendar remains best-effort and must not block planner/reminder writes.
+```
+
+## Previous Deployment - V2.10.0
 
 V2.10.0 completes recurring reminder execution without replacing the mandatory OpenAI planner,
 ActionPlan, reminder runner, or CalDAV integration.

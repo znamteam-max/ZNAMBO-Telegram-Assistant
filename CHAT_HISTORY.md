@@ -948,3 +948,25 @@ changed no Yandex objects, and became clean on the second preview.
 
 A two-minute production reminder smoke was delivered automatically through cron-job.org and the
 test item was auto-archived. Telegram webhook status was clean. No secrets were written to history.
+
+### Turn: V2.11.0 reminder setup state machine and session escape fix
+
+The attached V2.11.0 brief was implemented on top of V2.10.0. The core fix is not another
+regex-only task parser: active reminder/edit sessions now have a shared routing guard. Cancel text
+clears all active interaction sessions, while new global weekly/monthly reminder intents escape
+stale item edit/reminder setup sessions and continue through mandatory OpenAI planning.
+
+Reminder setup now keeps collected interval/start/stop fields across turns and parses local
+end-of-day replies as `23:59` inside setup context. Full phrases such as `s 20.00 kazhdye 30 min,
+poka ne otmechu, do kontsa segodnyashnego dnya` apply immediately instead of asking again for the
+end boundary.
+
+V2.11.0 also added `/admin_repair_v2110 preview|apply`. Production preview found the known World
+Cup recap task with wrong dueAt and one intended 30-minute policy. Apply restored the task to
+2026-06-14 23:59 Europe/Moscow, normalized the policy, changed zero Yandex Calendar objects, and
+left the dashboard without the incorrect 15.06 08:00 block.
+
+Validation passed 54 test files and 247 tests, lint, build, and diff check. Vercel auto-deployed
+commit `7598f93e8877722c625f1a0fbc957a2d4e48ff53`; production health, Telegram webhook, OpenAI
+health, UTF-8 monthly/weekly probes, and a cron-job.org reminder smoke all passed. No secrets were
+written to history.
