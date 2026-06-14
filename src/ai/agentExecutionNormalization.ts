@@ -12,6 +12,7 @@ import {
   parseDeadlineSemantics,
 } from "@/domain/deadlineSemantics";
 import {
+  normalizeRecurringReminderTitle,
   nextRecurringOccurrence,
   parseRecurringPolicyIntents,
 } from "@/domain/recurringPolicySemantics";
@@ -154,12 +155,16 @@ function normalizeRecurringPolicySemantics(params: {
     (intent) => !intent.missingFields.includes("title"),
   );
   if (!intents.length) return params.execution;
+  const normalizedIntents = intents.map((intent) => ({
+    ...intent,
+    title: normalizeKnownProjectNames(normalizeRecurringReminderTitle(intent.title)),
+  }));
 
-  const actions = intents.map((intent): ActionPlanItem => ({
+  const actions = normalizedIntents.map((intent): ActionPlanItem => ({
     ...buildSyntheticReminderAction(intent.title, params.timezone),
     actionType: "recurring_task",
     kind: "recurring_task",
-    title: normalizeKnownProjectNames(intent.title),
+    title: intent.title,
     priority: intent.requireAck ? 4 : 3,
     confidence: 0.98,
     risk: "low",
@@ -183,7 +188,7 @@ function normalizeRecurringPolicySemantics(params: {
       timeUnspecified: !intent.timeLocal,
     },
   }));
-  const policies = intents.map((intent): AgentReminderPolicy => {
+  const policies = normalizedIntents.map((intent): AgentReminderPolicy => {
     const next = intent.timeLocal
       ? nextRecurringOccurrence({
           rule: intent.recurrenceRule,
@@ -194,8 +199,8 @@ function normalizeRecurringPolicySemantics(params: {
     return {
       operation: "create_recurring_policy",
       itemIds: [],
-      itemTitle: normalizeKnownProjectNames(intent.title),
-      title: normalizeKnownProjectNames(intent.title),
+      itemTitle: intent.title,
+      title: intent.title,
       category: recurringCategory(intent.title),
       policyType: "recurring",
       startsAtLocal: null,
@@ -218,7 +223,7 @@ function normalizeRecurringPolicySemantics(params: {
       allowDuringQuietHours: false,
     };
   });
-  const missingTime = intents.some((intent) => !intent.timeLocal);
+  const missingTime = normalizedIntents.some((intent) => !intent.timeLocal);
   return {
     ...params.execution,
     intent: "create_plan" as const,
@@ -226,12 +231,12 @@ function normalizeRecurringPolicySemantics(params: {
     actionPlan: {
       intent: "plan" as const,
       summary:
-        intents.length > 1
-          ? `${intents.length} повторяющихся напоминания`
-          : intents[0].title,
+        normalizedIntents.length > 1
+          ? `${normalizedIntents.length} повторяющихся напоминания`
+          : normalizedIntents[0].title,
       reply: null,
       confidence: 0.98,
-      requiresConfirmation: intents.length > 1 || missingTime,
+      requiresConfirmation: normalizedIntents.length > 1 || missingTime,
       actions,
       memoryCandidates: [],
       clarificationQuestions: [],

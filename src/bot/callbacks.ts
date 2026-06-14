@@ -105,6 +105,7 @@ import {
   externalCalendarDeleteKeyboard,
   oneTimeReminderMenuKeyboard,
   policyFrequencyKeyboard,
+  persistentMarkerKeyboard,
   priorityEditorKeyboard,
   postCreateTriageKeyboard,
   conflictKeyboard,
@@ -1148,6 +1149,26 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await sendPolicyEditorMessage(ctx, "Выбери видимую важность:", priorityEditorKeyboard("item", ctx.match[1]));
   });
 
+  bot.callbackQuery(/^item:marker:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendPolicyEditorMessage(ctx, "Как показывать ❗ у этой записи?", persistentMarkerKeyboard(ctx.match[1]));
+  });
+
+  bot.callbackQuery(/^item:set_marker:(.+):(auto|show|hide)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = ctx.match[2] as "auto" | "show" | "hide";
+    const updated = await updatePlannerItemDetails({
+      userId: owner.id,
+      itemId: ctx.match[1],
+      metadata: { persistentMarkerMode: mode },
+    });
+    await ctx.answerCallbackQuery(updated ? "Маркер обновлён" : "Запись не найдена");
+    if (updated) {
+      await ctx.reply(markerModeConfirmation(updated.title, mode));
+    }
+    await refreshAfterCallback(ctx, updated?.id);
+  });
+
   bot.callbackQuery(/^deadline_reminder:(soon|morning|2h|1h|30m|none|custom):(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const preset = ctx.match[1] as
@@ -1419,6 +1440,12 @@ async function sendPolicyEditorMessage(
     messageId: sent.message_id,
     purpose: "policy_editor",
   });
+}
+
+function markerModeConfirmation(title: string, mode: "auto" | "show" | "hide") {
+  if (mode === "hide") return `Ок, скрыл ❗ у «${title}».`;
+  if (mode === "show") return `Ок, буду показывать ❗ у «${title}».`;
+  return "Ок, маркер ❗ будет появляться автоматически.";
 }
 
 async function editOrReply(ctx: BotContext, text: string, keyboard: InlineKeyboard) {

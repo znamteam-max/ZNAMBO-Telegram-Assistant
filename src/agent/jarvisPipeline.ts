@@ -280,12 +280,16 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
         ? "missing_time"
         : "validation_error";
       trace.toolFailureField = userError?.code.includes("reminderTime")
-        ? "reminderTime"
+        ? "time"
         : "unknown";
       trace.suggestedNextPrompt =
-        trace.toolFailureField === "reminderTime"
+        trace.toolFailureField === "time"
           ? "Напиши время для повторяющегося напоминания, например: 09:00."
           : "Уточни недостающее поле и пришли сообщение еще раз.";
+      if (trace.toolFailureReason === "missing_time") {
+        trace.finalAction = "recurring_policy_needs_clarification";
+        trace.naturalLanguagePlanResult = "recurring_policy_needs_clarification";
+      }
     }
     logger.warn("Mandatory agent execution failed closed", {
       error: error instanceof Error ? error.message : String(error),

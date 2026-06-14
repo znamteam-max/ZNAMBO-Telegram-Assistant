@@ -116,10 +116,14 @@ export async function renderReminderPolicyCard(params: {
       policy.title,
       "",
       `Статус: ${policy.status}`,
-      `Напоминания: ${formatHumanReminderPolicy(policy, policy.timezone, { includeNext: true, now })}`,
+      `Напоминания: ${formatHumanReminderPolicy(policy, policy.timezone, {
+        includeNext: true,
+        now,
+        includeMarker: false,
+      })}`,
       `Важность: ${importanceLabel(getBasePriority({ policy }))}`,
       `Сейчас: ${importanceLabel(getEffectivePriority({ policy }, now, params.timezone))}; ${urgencyExplanation(getUrgencyBoost({ policy }, now, params.timezone))}`,
-      `Частота: ${policy.intervalMinutes ? `каждые ${policy.intervalMinutes} мин` : policy.recurrenceRule ?? "один раз"}`,
+      `Частота: ${formatFrequency(policy)}`,
       `Окно: ${window || "без ограничений"}`,
       `До выполнения: ${policy.requireAck ? "да" : "нет"}`,
       policy.snoozedUntil && policy.snoozedUntil > now
@@ -147,7 +151,21 @@ function policyMatchesScope(policy: ReminderPolicy, scope: string, now: Date, ti
 
 function formatPolicyLine(policy: ReminderPolicy, now: Date, timezone: string) {
   const marker = importanceMarker(getBasePriority({ policy })).split(" ")[0];
-  return `${marker ? `${marker} · ` : ""}${policy.title}\n   ${formatHumanReminderPolicy(policy, timezone, { includeNext: true, now })}`;
+  return `${marker ? `${marker} · ` : ""}${policy.title}\n   ${formatHumanReminderPolicy(policy, timezone, {
+    includeNext: true,
+    now,
+    includeMarker: false,
+  })}`;
+}
+
+function formatFrequency(policy: ReminderPolicy) {
+  if (!policy.intervalMinutes) return policy.recurrenceRule ?? "один раз";
+  if (policy.intervalMinutes === 60) return "каждый час";
+  if (policy.intervalMinutes % 60 === 0) {
+    const hours = policy.intervalMinutes / 60;
+    return hours <= 4 ? `каждые ${hours} часа` : `каждые ${hours} часов`;
+  }
+  return `каждые ${policy.intervalMinutes} мин`;
 }
 
 function formatDate(value: Date | null, timezone: string) {

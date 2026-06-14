@@ -12,8 +12,16 @@ import {
   listReminderPoliciesForItem,
   updateReminderPolicy,
 } from "@/db/queries/reminderPolicies";
+import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { formatRuWeekdayDateRange } from "@/domain/dateTime";
-import { parseStopCondition } from "@/domain/recurringPolicySemantics";
+import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
+import {
+  nextRecurringOccurrence,
+  parseCanonicalRecurrenceRule,
+  parseStopCondition,
+  withRecurringPolicyTime,
+} from "@/domain/recurringPolicySemantics";
+import { parseReminderWindowText } from "@/domain/reminderTimeWindow";
 import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
 import {
   clearActiveReminderPolicyEditSession,
@@ -93,6 +101,17 @@ export async function handleReminderPolicyEditTurn(
     );
     return true;
   }
+  const activePolicies = await listReminderPoliciesForItem(owner.id, session.item.id, 30);
+  const recurringApplied = await applyRecurringItemCadencePolicy({
+    ctx,
+    userId: owner.id,
+    item: session.item,
+    policies: activePolicies,
+    draft,
+    timezone: session.item.timezone || timezone,
+    now: new Date(),
+  });
+  if (recurringApplied) return true;
   const parsed = materializeReminderPolicyDraft({
     draft,
     itemAnchor: session.item.startAt ?? session.item.dueAt,
@@ -103,7 +122,7 @@ export async function handleReminderPolicyEditTurn(
     await replyAndRecord(ctx, "Не смог определить окно напоминаний. Укажи время окончания, например «до 18:00».");
     return true;
   }
-  const active = (await listReminderPoliciesForItem(owner.id, session.item.id, 30)).find(
+  const active = activePolicies.find(
     (policy) => policy.status === "active" && policy.policyType === "nag_until_ack",
   );
   const metadata = {
@@ -183,27 +202,12 @@ export function parseReminderPolicyDraftInput(text: string) {
       : /кажд(?:ые|ый)\s+(?:полчаса|30\s*мин)/i.test(normalized)
         ? 30
         : Number(normalized.match(/кажд(?:ые|ый)\s+(\d{1,3})\s*мин/i)?.[1] ?? 0) || undefined;
-  const endOfDay = normalized.match(/до\s+конца(?:\s+(сегодняшнего|завтрашнего))?\s+дня/i);
-  const end = normalized.match(/до\s+(\d{1,2})(?:[.:](\d{2}))?/i);
-  const start = normalized.match(/с\s+(\d{1,2})(?:[.:](\d{2}))?/i);
-  const windowEnd = /без\s+огранич/i.test(normalized)
-    ? null
-    : endOfDay
-      ? "23:59"
-      : end
-        ? clock(Number(end[1]), Number(end[2] ?? 0))
-        : undefined;
+  const window = parseReminderWindowText(normalized);
   return {
     intervalMinutes,
-    windowStart: start ? clock(Number(start[1]), Number(start[2] ?? 0)) : undefined,
-    windowEnd,
-    windowEndDayOffset: endOfDay
-      ? endOfDay[1] === "завтрашнего"
-        ? 1
-        : endOfDay[1] === "сегодняшнего"
-          ? 0
-          : undefined
-      : undefined,
+    windowStart: window.windowStart,
+    windowEnd: window.windowEnd,
+    windowEndDayOffset: window.windowEndDayOffset,
   };
 }
 
@@ -262,25 +266,27 @@ export function parseReminderCadence(params: {
   now: Date;
 }) {
   const normalized = params.text.toLowerCase().replace(/ё/g, "е");
+  const input = parseReminderPolicyDraftInput(normalized);
+  const window = parseReminderWindowText(normalized);
   const cadenceOnly =
     /(кажд(?:ый|ые)\s+(?:час|полчаса|\d+\s*мин)|раз\s+в\s+час)/i.test(normalized) &&
-    /с\s*\d{1,2}(?:[.:]\d{2})?\s*(?:утра)?\s+до\s*\d{1,2}(?:[.:]\d{2})?/i.test(normalized);
+    Boolean(input.windowStart && input.windowEnd);
   if (!cadenceOnly) return null;
-  const range = normalized.match(
-    /с\s*(\d{1,2})(?:[.:](\d{2}))?\s*(?:утра)?\s+до\s*(\d{1,2})(?:[.:](\d{2}))?/i,
-  );
-  if (!range) return null;
-  const intervalMinutes = /полчаса|30\s*мин/i.test(normalized) ? 30 : 60;
+  if (window.overnightCandidate) return null;
+  const intervalMinutes = input.intervalMinutes ?? (/полчаса|30\s*мин/i.test(normalized) ? 30 : 60);
   const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
   const anchorLocal = params.itemAnchor
     ? DateTime.fromJSDate(params.itemAnchor, { zone: "utc" }).setZone(params.timezone)
     : nowLocal;
+  const [startHour, startMinute] = input.windowStart!.split(":").map(Number);
+  const [endHour, endMinute] = input.windowEnd!.split(":").map(Number);
   let start = anchorLocal.startOf("day").set({
-    hour: Number(range[1]),
-    minute: Number(range[2] ?? 0),
+    hour: startHour,
+    minute: startMinute,
   });
   if (start <= nowLocal) start = start.plus({ days: 1 });
-  const adjustedEnd = start.set({ hour: Number(range[3]), minute: Number(range[4] ?? 0) });
+  const adjustedEnd = start.set({ hour: endHour, minute: endMinute });
+  if (adjustedEnd <= start) return null;
   return {
     intervalMinutes,
     startsAt: start.toUTC().toJSDate(),
@@ -290,11 +296,153 @@ export function parseReminderCadence(params: {
   };
 }
 
-function clock(hour: number, minute: number) {
-  if (hour > 23 || minute > 59) return undefined;
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-}
-
 function formatInterval(minutes: number) {
   return minutes === 60 ? "каждый час" : `каждые ${minutes} минут`;
+}
+
+async function applyRecurringItemCadencePolicy(params: {
+  ctx: BotContext;
+  userId: string;
+  item: PlannerItem;
+  policies: ReminderPolicy[];
+  draft: ReminderPolicyEditDraft;
+  timezone: string;
+  now: Date;
+}) {
+  const baseRule = recurringRuleForItemOrPolicies(params.item, params.policies);
+  if (!baseRule || !params.draft.intervalMinutes || params.draft.windowEnd === undefined) {
+    return false;
+  }
+  const parsedBase = parseCanonicalRecurrenceRule(baseRule);
+  if (!parsedBase || parsedBase.kind === "legacy") return false;
+  const windowStart = params.draft.windowStart ?? parsedBase.timeLocal;
+  if (!windowStart) return false;
+  const recurrenceRule = withRecurringPolicyTime(baseRule, windowStart);
+  const nextFireAt = nextRecurringOccurrence({
+    rule: recurrenceRule,
+    after: params.now,
+    timezone: params.timezone,
+  });
+  if (!nextFireAt) return false;
+
+  const primaryPolicies = params.policies.filter(isPrimaryRecurringReminderPolicy);
+  const target =
+    primaryPolicies.find((policy) => {
+      const parsed = parseCanonicalRecurrenceRule(policy.recurrenceRule);
+      return parsed?.kind === parsedBase.kind;
+    }) ?? primaryPolicies[0];
+  const preservedSnooze = latestFutureSnooze(primaryPolicies, params.now);
+  const metadata = {
+    activeWindowStart: windowStart,
+    activeWindowEnd: params.draft.windowEnd,
+    stopCondition: params.draft.stopCondition ?? "until_done",
+    stopOnItemComplete: true,
+    ackAliases: params.draft.ackAliases ?? ["done"],
+    recurrenceRuleVersion: "canonical-v2100",
+    mutationSource: "recurring_item_reminder_policy_edit_session",
+  };
+  const policy = target
+    ? await updateReminderPolicy({
+        userId: params.userId,
+        policyId: target.id,
+        itemId: params.item.id,
+        title: params.item.title,
+        category: params.item.category ?? "recurring_task",
+        policyType: "recurring",
+        startsAt: null,
+        endsAt: null,
+        nextFireAt,
+        recurrenceRule,
+        intervalMinutes: params.draft.intervalMinutes,
+        requireAck: true,
+        onWindowEnd: "keep_open",
+        catchUpMode: "one_immediate_then_resume",
+        snoozedUntil: preservedSnooze,
+        snoozeScope: preservedSnooze ? "policy" : null,
+        metadata,
+      })
+    : await createReminderPolicyIfMissing({
+        userId: params.userId,
+        itemId: params.item.id,
+        title: params.item.title,
+        category: params.item.category ?? "recurring_task",
+        policyType: "recurring",
+        timezone: params.timezone,
+        startsAt: null,
+        endsAt: null,
+        nextFireAt,
+        recurrenceRule,
+        intervalMinutes: params.draft.intervalMinutes,
+        requireAck: true,
+        onWindowEnd: "keep_open",
+        catchUpMode: "one_immediate_then_resume",
+        snoozedUntil: preservedSnooze,
+        snoozeScope: preservedSnooze ? "policy" : null,
+        idempotencyKey: `${params.item.id}:recurring-edit:${recurrenceRule}:${params.draft.intervalMinutes}:${windowStart}:${params.draft.windowEnd ?? "open"}`,
+        metadata,
+      });
+  if (!policy) return false;
+
+  await cancelPendingRemindersForPolicy({ userId: params.userId, policyId: policy.id });
+  for (const duplicate of primaryPolicies.filter((candidate) => candidate.id !== policy.id)) {
+    await cancelPendingRemindersForPolicy({ userId: params.userId, policyId: duplicate.id });
+    await updateReminderPolicy({
+      userId: params.userId,
+      policyId: duplicate.id,
+      status: "cancelled",
+      nextFireAt: null,
+      metadata: {
+        supersededByPolicyId: policy.id,
+        supersededBy: "recurring_item_reminder_policy_edit_session",
+        supersededAt: params.now.toISOString(),
+      },
+    });
+  }
+  await materializeNextPolicyReminder(policy, nextFireAt, { now: params.now });
+  await clearActiveReminderPolicyEditSession({ userId: params.userId, reason: "policy_applied" });
+  await replyAndRecord(
+    params.ctx,
+    [
+      "Готово:",
+      params.item.title,
+      "",
+      `🔔 ${formatHumanReminderPolicy(policy, params.timezone, {
+        now: params.now,
+        includeMarker: false,
+      })}`,
+    ].join("\n"),
+    { reply_markup: itemMenuKeyboard(params.item.id) },
+  );
+  return true;
+}
+
+function recurringRuleForItemOrPolicies(item: PlannerItem, policies: ReminderPolicy[]) {
+  const metadataRule =
+    typeof item.metadata?.recurrenceRule === "string" ? item.metadata.recurrenceRule : null;
+  if (isCanonicalRecurringRule(metadataRule)) return metadataRule;
+  return (
+    policies.find((policy) => policy.status === "active" && isCanonicalRecurringRule(policy.recurrenceRule))
+      ?.recurrenceRule ?? null
+  );
+}
+
+function isPrimaryRecurringReminderPolicy(policy: ReminderPolicy) {
+  return (
+    policy.status === "active" &&
+    (isCanonicalRecurringRule(policy.recurrenceRule) ||
+      (policy.policyType === "nag_until_ack" && Boolean(policy.intervalMinutes) && policy.requireAck))
+  );
+}
+
+function isCanonicalRecurringRule(rule: string | null) {
+  const parsed = parseCanonicalRecurrenceRule(rule);
+  return Boolean(parsed && parsed.kind !== "legacy");
+}
+
+function latestFutureSnooze(policies: ReminderPolicy[], now: Date) {
+  const snoozes = policies
+    .map((policy) => policy.snoozedUntil)
+    .filter((date): date is Date => Boolean(date && date > now))
+    .sort((left, right) => right.getTime() - left.getTime());
+  return snoozes[0] ?? null;
 }

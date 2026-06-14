@@ -1,7 +1,10 @@
 import { DateTime } from "luxon";
 
 import type { ReminderPolicy } from "@/db/schema";
-import { nextRecurringOccurrence } from "@/domain/recurringPolicySemantics";
+import {
+  nextRecurringOccurrence,
+  parseCanonicalRecurrenceRule,
+} from "@/domain/recurringPolicySemantics";
 
 export type ReconcileTarget = {
   scheduledFor: Date;
@@ -60,6 +63,7 @@ export function resolvePolicyReconcileTarget(
 ): ReconcileTarget | null {
   if (policy.status !== "active") return null;
   if (policy.snoozedUntil && policy.snoozedUntil > now) return null;
+  if (isRecurringIntervalPolicy(policy)) return resolveRecurringIntervalTarget(policy, now);
   if (isIntervalPolicy(policy)) return resolveIntervalTarget(policy, now);
 
   const configured = policy.nextFireAt;
@@ -78,6 +82,10 @@ export function computeNextPolicySlotAfterDelivery(params: {
   scheduledFor: Date;
   now: Date;
 }) {
+  if (isRecurringIntervalPolicy(params.policy)) {
+    return computeNextRecurringIntervalSlot(params.policy, params.scheduledFor, params.now);
+  }
+
   if (isIntervalPolicy(params.policy)) {
     const intervalMinutes = params.policy.intervalMinutes ?? 30;
     return nextGridSlot({
@@ -171,6 +179,108 @@ function nextRecurringSlot(policy: ReminderPolicy, after: Date, now: Date) {
   return candidate;
 }
 
+function resolveRecurringIntervalTarget(
+  policy: ReminderPolicy,
+  now: Date,
+): ReconcileTarget | null {
+  const window = findRecurringIntervalWindow(policy, now);
+  if (!window) return null;
+  if (now < window.start) {
+    return { scheduledFor: window.start, deliveryAt: window.start, catchUp: false };
+  }
+
+  const configured = policy.nextFireAt;
+  if (configured && configured > now && isInsideConcreteWindow(configured, window)) {
+    return { scheduledFor: configured, deliveryAt: configured, catchUp: false };
+  }
+
+  const intervalMinutes = policy.intervalMinutes ?? 30;
+  const elapsed = Math.max(0, now.getTime() - window.start.getTime());
+  const latest = new Date(
+    window.start.getTime() + Math.floor(elapsed / (intervalMinutes * 60 * 1000)) * intervalMinutes * 60 * 1000,
+  );
+  if (!isInsideConcreteWindow(latest, window)) return null;
+  if (policy.catchUpMode !== "none") {
+    return { scheduledFor: latest, deliveryAt: now, catchUp: latest < now };
+  }
+  const next = nextGridSlot({
+    anchor: window.start,
+    intervalMinutes,
+    after: now,
+    endsAt: window.end,
+    inclusiveEnd: policy.windowEndInclusive,
+  });
+  return next ? { scheduledFor: next, deliveryAt: next, catchUp: false } : null;
+}
+
+function computeNextRecurringIntervalSlot(
+  policy: ReminderPolicy,
+  scheduledFor: Date,
+  now: Date,
+) {
+  const window = findRecurringIntervalWindow(policy, scheduledFor);
+  const intervalMinutes = policy.intervalMinutes ?? 30;
+  if (window) {
+    const nextInWindow = nextGridSlot({
+      anchor: window.start,
+      intervalMinutes,
+      after: now,
+      endsAt: window.end,
+      inclusiveEnd: policy.windowEndInclusive,
+    });
+    if (nextInWindow) return nextInWindow;
+  }
+  const reference = window?.end ?? scheduledFor;
+  return findRecurringIntervalWindow(policy, new Date(reference.getTime() + 60_000))?.start ?? null;
+}
+
+function findRecurringIntervalWindow(policy: ReminderPolicy, reference: Date) {
+  const parsed = parseCanonicalRecurrenceRule(policy.recurrenceRule);
+  if (!parsed || parsed.kind === "legacy" || !parsed.timeLocal) return null;
+  const timezone = policy.timezone || "Europe/Moscow";
+  let cursor = DateTime.fromJSDate(reference, { zone: "utc" })
+    .setZone(timezone)
+    .minus({ days: 370 })
+    .toUTC()
+    .toJSDate();
+  for (let index = 0; index < 760; index += 1) {
+    const start = nextRecurringOccurrence({
+      rule: policy.recurrenceRule,
+      after: cursor,
+      timezone,
+    });
+    if (!start) return null;
+    const window = buildRecurringIntervalWindow(policy, start, timezone);
+    if (!window.end || window.end >= reference) return window;
+    cursor = new Date(start.getTime() + 60_000);
+  }
+  return null;
+}
+
+function buildRecurringIntervalWindow(policy: ReminderPolicy, start: Date, timezone: string) {
+  const startLocal = DateTime.fromJSDate(start, { zone: "utc" }).setZone(timezone);
+  const endClock =
+    typeof policy.metadata?.activeWindowEnd === "string"
+      ? policy.metadata.activeWindowEnd
+      : null;
+  if (!endClock) {
+    return { start, end: null };
+  }
+  const [endHour, endMinute] = parseClock(endClock, 23, 59);
+  let end = startLocal
+    .startOf("day")
+    .set({ hour: endHour, minute: endMinute, second: 0, millisecond: 0 });
+  if (end <= startLocal) end = end.plus({ days: 1 });
+  return { start, end: end.toUTC().toJSDate() };
+}
+
+function isInsideConcreteWindow(
+  candidate: Date,
+  window: { start: Date; end: Date | null },
+) {
+  return candidate >= window.start && (!window.end || candidate <= window.end);
+}
+
 function nextFromRule(rule: string | null, after: Date, timezone: string) {
   const canonical = nextRecurringOccurrence({ rule, after, timezone });
   if (canonical) return canonical;
@@ -192,6 +302,11 @@ function nextFromRule(rule: string | null, after: Date, timezone: string) {
 
 function isIntervalPolicy(policy: ReminderPolicy) {
   return ["interval_window", "nag_until_ack"].includes(policy.policyType);
+}
+
+function isRecurringIntervalPolicy(policy: ReminderPolicy) {
+  const parsed = parseCanonicalRecurrenceRule(policy.recurrenceRule);
+  return Boolean(parsed && parsed.kind !== "legacy" && parsed.timeLocal && policy.intervalMinutes);
 }
 
 function isInsideWindow(policy: ReminderPolicy, candidate: Date) {

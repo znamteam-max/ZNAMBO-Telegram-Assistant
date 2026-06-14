@@ -173,6 +173,8 @@ export function itemMenuKeyboard(
     .text("🔔 Напоминание", `item:remind:${itemId}`)
     .row()
     .text("⭐ Важность", `item:priority:${itemId}`)
+    .text("❗ Маркер", `item:marker:${itemId}`)
+    .row()
     .text("🗑 Удалить", `manage:delete:${itemId}`);
   if (["failed", "error", "pending_retry"].includes(calendarStatus ?? "")) {
     keyboard.row().text("Повторить sync", `calendar:retry:${itemId}`);
@@ -182,6 +184,15 @@ export function itemMenuKeyboard(
     .row()
     .text("↩️ К плану", "dashboard:refresh")
     .text("⚙️ Ещё", `item:more:${itemId}`);
+}
+
+export function persistentMarkerKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("Авто", `item:set_marker:${itemId}:auto`)
+    .text("Показывать", `item:set_marker:${itemId}:show`)
+    .row()
+    .text("Скрыть", `item:set_marker:${itemId}:hide`)
+    .text("Назад", `entity:open:planner_item:${itemId}`);
 }
 
 export function deadlineReminderSuggestionKeyboard(item: PlannerItem, now = new Date()) {

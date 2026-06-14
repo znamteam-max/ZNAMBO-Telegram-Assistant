@@ -87,6 +87,10 @@ import {
   applyV2110ProductionRepair,
   previewV2110ProductionRepair,
 } from "@/services/v2110ProductionRepair";
+import {
+  applyV2120ProductionRepair,
+  previewV2120ProductionRepair,
+} from "@/services/v2120ProductionRepair";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 
 export const runtime = "nodejs";
@@ -253,6 +257,18 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       result: await applyV2110ProductionRepair({ userId: owner.id }),
+    });
+  }
+  if (body.action === "v2120_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV2120ProductionRepair({ userId: owner.id }),
+    });
+  }
+  if (body.action === "v2120_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV2120ProductionRepair({ userId: owner.id }),
     });
   }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {

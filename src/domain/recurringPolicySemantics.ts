@@ -241,9 +241,9 @@ function parseWeeklyIntent(text: string): RecurringPolicyIntent | null {
 }
 
 function parseMonthlyIntent(text: string): RecurringPolicyIntent | null {
-  const monthly = text.match(/кажд(?:ый|ую)\s+месяц/i);
+  const monthly = text.match(/(?:кажд(?:ый|ую)\s+месяц|каждого\s+месяца)/i);
   if (!monthly) return null;
-  const source = text.slice(monthly.index ?? 0);
+  const source = text.slice(monthlySourceStart(text, monthly.index ?? 0));
   const days = extractMonthDays(source);
   if (!days.length) return null;
   const title = extractActionTitle(source, "meter");
@@ -266,7 +266,7 @@ function parseMonthlyIntent(text: string): RecurringPolicyIntent | null {
 }
 
 function extractMonthDays(text: string) {
-  const range = text.match(/с\s+(\d{1,2})\s+по\s+(\d{1,2})\s+чис/i);
+  const range = text.match(/с\s+(\d{1,2})(?:\s+числа?)?\s+по\s+(\d{1,2})(?:\s+числ[оа]?)?/i);
   if (range) {
     const start = Number(range[1]);
     const end = Number(range[2]);
@@ -291,6 +291,11 @@ function extractReminderTime(text: string) {
 
 function extractActionTitle(text: string, hint: "mirror" | "meter") {
   const normalized = text.replace(/\s+/g, " ").trim();
+  const subjunctive = normalized.match(
+    /о\s+том,\s+чтобы\s+(?:я\s+)?(.+?)(?=[,.](?:\s|$)|\s+кажд(?:ый|ую)\b|\s+до\s+тех\s+пор|\s+пока\s+|$)/i,
+  )?.[1];
+  if (subjunctive) return cleanTitle(subjunctive);
+
   const explicit = normalized.match(
     /о\s+том,\s+что\s+нужно\s+(.+?)(?=[,.](?:\s|$)|\s+кажд(?:ый|ую)\b|\s+до\s+тех\s+пор|\s+пока\s+|$)/i,
   )?.[1];
@@ -311,13 +316,33 @@ function extractActionTitle(text: string, hint: "mirror" | "meter") {
 }
 
 function cleanTitle(value: string) {
-  return value
+  const cleaned = value
     .replace(/^(?:мне\s+)?/i, "")
+    .replace(/^(?:то,\s+)?что\s+нужно\s+/i, "")
+    .replace(/^нужно\s+/i, "")
     .replace(/\s+(?:кажд(?:ый|ую)\s+(?:понедельник|месяц)).*$/i, "")
     .replace(/\s+(?:до\s+тех\s+пор|пока\s+).*/i, "")
     .replace(/[.;,\s]+$/g, "")
-    .trim()
-    .replace(/^./u, (character) => character.toLocaleUpperCase("ru"));
+    .trim();
+  return normalizeRecurringReminderTitle(cleaned);
+}
+
+export function normalizeRecurringReminderTitle(value: string) {
+  const cleaned = value
+    .replace(/^о\s+том,\s+чтобы\s+(?:я\s+)?/i, "")
+    .replace(/^о\s+том,\s+что\s+нужно\s+/i, "")
+    .replace(/^(?:то,\s+)?что\s+нужно\s+/i, "")
+    .replace(/^нужно\s+/i, "")
+    .replace(/^решил(\s+вопрос)/i, "решить$1")
+    .replace(/^решила(\s+вопрос)/i, "решить$1")
+    .trim();
+  return cleaned.replace(/^./u, (character) => character.toLocaleUpperCase("ru"));
+}
+
+function monthlySourceStart(text: string, monthlyIndex: number) {
+  const before = text.slice(0, monthlyIndex);
+  const rangeIndex = before.search(/с\s+\d{1,2}(?:\s+числа?)?\s+по\s+\d{1,2}/i);
+  return rangeIndex >= 0 ? rangeIndex : monthlyIndex;
 }
 
 function normalizeMonthDays(days: number[]) {

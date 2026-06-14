@@ -21,7 +21,11 @@ import {
   computeNextPolicySlotAfterDelivery,
 } from "@/domain/reminderPolicySchedule";
 import { getUserById } from "@/db/queries/users";
-import { nextRecurringOccurrence } from "@/domain/recurringPolicySemantics";
+import {
+  nextRecurringOccurrence,
+  recurringRuleMissingField,
+} from "@/domain/recurringPolicySemantics";
+import { UserFacingError } from "@/lib/errors";
 
 export async function applyAgentReminderPolicies(params: {
   userId: string;
@@ -261,6 +265,15 @@ function determineInitialFire(params: {
     return params.item.endAt ?? params.item.startAt ?? params.item.dueAt;
   }
   if (params.startsAt) return params.startsAt;
+  if (["recurring", "long_term"].includes(params.proposal.policyType)) {
+    const missingField = recurringRuleMissingField(params.proposal.recurrenceRule);
+    if (missingField) {
+      throw new UserFacingError(
+        `Понял повторяющееся напоминание, но не хватает времени: ${params.proposal.title}`,
+        `recurring_policy_missing_${missingField}`,
+      );
+    }
+  }
   const canonical = nextRecurringOccurrence({
     rule: params.proposal.recurrenceRule,
     after: params.now,

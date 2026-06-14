@@ -31,6 +31,7 @@ export function shouldAutoCommitPlan(
   smartCommitMode: string | null | undefined,
 ): boolean {
   if (plan.intent !== "plan" || !plan.actions.length) return false;
+  if (plan.actions.some((item) => item.metadata?.timeUnspecified === true)) return false;
   if (smartCommitMode === "confirm_all") return false;
   if (smartCommitMode === "auto_all_with_undo")
     return !plan.actions.some((item) => item.risk === "high");
@@ -145,6 +146,7 @@ export async function commitStoredActionPlan(params: {
           ? (payload.reminderPolicies as AgentReminderPolicy[])
           : []);
       assertPlanDoesNotContainManagementCommands(plan);
+      assertReminderPoliciesAreCompleteBeforeCommit(reminderPolicyProposals);
       const createdItems = [];
       const createdReminders: MaterializedReminder[] = [];
       const createdPolicies: Array<typeof reminderPolicies.$inferSelect> = [];
@@ -456,6 +458,19 @@ function determinePolicyInitialFire(params: {
     if (next) return next;
   }
   return null;
+}
+
+function assertReminderPoliciesAreCompleteBeforeCommit(proposals: AgentReminderPolicy[]) {
+  const incomplete = proposals.find((proposal) => {
+    if (!["recurring", "long_term"].includes(proposal.policyType)) return false;
+    return Boolean(recurringRuleMissingField(proposal.recurrenceRule));
+  });
+  if (!incomplete) return;
+  const missingField = recurringRuleMissingField(incomplete.recurrenceRule);
+  throw new UserFacingError(
+    `Понял повторяющееся напоминание, но не хватает времени: ${incomplete.title}. Напиши время, например: 09:00.`,
+    `recurring_policy_missing_${missingField ?? "reminderTime"}`,
+  );
 }
 
 function localDate(value: string | null, timezone: string) {

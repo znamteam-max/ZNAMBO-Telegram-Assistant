@@ -24,6 +24,7 @@ import {
   formatHumanReminderPolicy,
   isPersistentReminderPolicy,
 } from "@/domain/reminderPolicyPresentation";
+import { shouldShowPersistentMarker } from "@/domain/persistentMarker";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
 import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
 
@@ -141,13 +142,17 @@ export async function renderLiveDashboard(params: {
     .filter((item) => !pastTodayIds.has(item.id)),
   ].slice(0, 5);
   const conflicts = detectPlanConflicts(allItems, { now });
-  const displayPolicies = timeline.policies;
+  const displayPolicies = timeline.policies.filter(
+    (policy) => policy.metadata?.hiddenFromDashboard !== true,
+  );
   const policiesByItemId = new Map<string, ReminderPolicy[]>();
   for (const policy of displayPolicies) {
     if (!policy.itemId) continue;
     policiesByItemId.set(policy.itemId, [...(policiesByItemId.get(policy.itemId) ?? []), policy]);
   }
-  const unattachedPolicies = displayPolicies.filter((policy) => !policy.itemId).slice(0, 5);
+  const unattachedPolicies = displayPolicies
+    .filter((policy) => !policy.itemId && policy.metadata?.needsReview !== true)
+    .slice(0, 5);
 
   const lines = ["JARVIS · План"];
   const refs: EntityRef[] = [];
@@ -395,7 +400,7 @@ export function formatDashboardItem(
       ? includeDate
         ? formatDeadlineDateTime(item.dueAt, item.timezone || timezone)
         : `до ${DateTime.fromJSDate(item.dueAt, { zone: "utc" }).setZone(item.timezone || timezone).toFormat("HH:mm")}`
-      : "без времени";
+      : null;
   const end = item.endAt
     ? DateTime.fromJSDate(item.endAt, { zone: "utc" })
         .setZone(item.timezone || timezone)
@@ -403,15 +408,22 @@ export function formatDashboardItem(
     : null;
   const important =
     item.source === "yandex_external" ? "" : visibleImportanceMarker({ item }).split(" ")[0];
-  const persistent = policies.some(isPersistentReminderPolicy) ? "❗ " : "";
+  const persistent = shouldShowPersistentMarker({
+    item,
+    hasPersistentPolicy: policies.some(isPersistentReminderPolicy),
+  })
+    ? "❗ "
+    : "";
   const calendarStatus =
     ["event", "training", "tentative_event"].includes(item.kind) &&
     ["pending_retry", "failed", "error"].includes(calendar?.status ?? "")
       ? ` · Календарь: ${calendar?.lastError ?? calendar?.status}, повторю автоматически`
       : "";
   return [
-    `${time}${end ? `–${end}` : ""} · ${important ? `${important} ` : ""}${persistent}${item.title}${calendarStatus}`,
-    ...policies.map((policy) => `   🔔 ${formatHumanReminderPolicy(policy, timezone, { now })}`),
+    `${time ? `${time}${end ? `–${end}` : ""} · ` : ""}${important ? `${important} ` : ""}${persistent}${item.title}${calendarStatus}`,
+    ...policies.map(
+      (policy) => `   🔔 ${formatHumanReminderPolicy(policy, timezone, { now, includeMarker: false })}`,
+    ),
   ].join("\n");
 }
 
@@ -428,7 +440,7 @@ function compareDashboardItems(left: PlannerItem, right: PlannerItem) {
 
 function formatPolicy(policy: ReminderPolicy, timezone: string) {
   const priorityLabel = importanceMarker(getBasePriority({ policy })).split(" ")[0];
-  return `${priorityLabel ? `${priorityLabel} · ` : ""}${policy.title}\n   ${formatHumanReminderPolicy(policy, timezone, { includeNext: true })}`;
+  return `${priorityLabel ? `${priorityLabel} · ` : ""}${policy.title}\n   ${formatHumanReminderPolicy(policy, timezone, { includeNext: true, includeMarker: false })}`;
 }
 
 function policyRow(policy: ReminderPolicy, timezone: string): { text: string; ref: EntityRef } {

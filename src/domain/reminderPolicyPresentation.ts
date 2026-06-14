@@ -2,7 +2,10 @@ import { DateTime } from "luxon";
 
 import type { ReminderPolicy } from "@/db/schema";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
-import { formatRecurringRuleHuman } from "@/domain/recurringPolicySemantics";
+import {
+  formatRecurringRuleHuman,
+  parseCanonicalRecurrenceRule,
+} from "@/domain/recurringPolicySemantics";
 
 export function isPersistentReminderPolicy(policy: ReminderPolicy) {
   return (
@@ -16,15 +19,9 @@ export function isPersistentReminderPolicy(policy: ReminderPolicy) {
 export function formatHumanReminderPolicy(
   policy: ReminderPolicy,
   timezone: string,
-  options?: { includeNext?: boolean; now?: Date },
+  options?: { includeNext?: boolean; now?: Date; includeMarker?: boolean },
 ) {
-  const interval = policy.intervalMinutes
-    ? policy.intervalMinutes === 60
-      ? "каждый час"
-      : policy.intervalMinutes === 30
-        ? "каждые 30 минут"
-        : `каждые ${policy.intervalMinutes} мин`
-    : null;
+  const interval = policy.intervalMinutes ? formatInterval(policy.intervalMinutes) : null;
   const startClock = policy.startsAt
     ? DateTime.fromJSDate(policy.startsAt, { zone: "utc" })
         .setZone(policy.timezone || timezone)
@@ -35,9 +32,10 @@ export function formatHumanReminderPolicy(
         .setZone(policy.timezone || timezone)
         .toFormat("HH:mm")
     : String(policy.metadata?.activeWindowEnd ?? "");
-  const recurrence = humanRecurrence(policy.recurrenceRule);
+  const recurrence = humanRecurrence(policy.recurrenceRule, Boolean(interval));
   const parts = [
-    interval ?? recurrence ?? (policy.policyType === "before_event" ? "до события" : "один раз"),
+    [recurrence, interval].filter(Boolean).join(", ") ||
+      (policy.policyType === "before_event" ? "до события" : "один раз"),
     startClock && endClock ? `с ${startClock} до ${endClock}` : null,
     isPersistentReminderPolicy(policy) ? "пока не отмечу" : null,
   ].filter(Boolean);
@@ -47,10 +45,31 @@ export function formatHumanReminderPolicy(
   if (policy.snoozedUntil && policy.snoozedUntil > (options?.now ?? new Date())) {
     parts.push(`отложено до ${formatRuWeekdayDateTime(policy.snoozedUntil, policy.timezone || timezone)}`);
   }
-  return `${isPersistentReminderPolicy(policy) ? "❗ " : ""}${parts.join(", ")}`;
+  return `${options?.includeMarker === false || !isPersistentReminderPolicy(policy) ? "" : "❗ "}${parts.join(", ")}`;
 }
 
-function humanRecurrence(value: string | null) {
+function formatInterval(minutes: number) {
+  if (minutes === 60) return "каждый час";
+  if (minutes === 30) return "каждые 30 минут";
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    if (hours === 1) return "каждый час";
+    if (hours >= 2 && hours <= 4) return `каждые ${hours} часа`;
+    return `каждые ${hours} часов`;
+  }
+  return `каждые ${minutes} мин`;
+}
+
+function humanRecurrence(value: string | null, omitTime = false) {
+  if (omitTime) {
+    const parsed = parseCanonicalRecurrenceRule(value);
+    if (parsed?.kind === "weekly") {
+      return formatRecurringRuleHuman(`weekly:${parsed.weekday}`);
+    }
+    if (parsed?.kind === "monthly_day_range") {
+      return formatRecurringRuleHuman(`monthly_days:${parsed.monthDays.join(",")}`);
+    }
+  }
   const canonical = formatRecurringRuleHuman(value);
   if (canonical) return canonical;
   const rule = (value ?? "").toLowerCase();

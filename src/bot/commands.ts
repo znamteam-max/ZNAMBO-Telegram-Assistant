@@ -95,6 +95,10 @@ import {
   applyV2110ProductionRepair,
   previewV2110ProductionRepair,
 } from "@/services/v2110ProductionRepair";
+import {
+  applyV2120ProductionRepair,
+  previewV2120ProductionRepair,
+} from "@/services/v2120ProductionRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -171,6 +175,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v290 preview|apply — исправить ошибочный deadline-блок 14 июня",
         "/admin_repair_v2100 preview|apply — убрать cadence-title garbage task",
         "/admin_repair_v2110 preview|apply — восстановить дедлайн ЧМ и stale sessions",
+        "/admin_repair_v2120 preview|apply — recurring UX cleanup и marker repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -999,6 +1004,45 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2110 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2120", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2120ProductionRepair({ userId: owner.id })
+        : await previewV2120ProductionRepair({ userId: owner.id });
+    const preview = "preview" in result ? result.preview : result;
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.12 repair applied:" : "V2.12 repair preview:",
+        `• mirror filler-title items: ${preview.mirrorItemIds.length}`,
+        `• mirror malformed policies: ${preview.mirrorMalformedPolicyIds.length}`,
+        `• mirror target policy: ${preview.mirrorTargetPolicy}`,
+        `• Fedotov broken policies: ${preview.fedotovBrokenPolicyIds.length}`,
+        `• stale sessions: ${preview.staleSessionIds.length}`,
+        "• calendar objects to change: 0",
+        `• safe: ${preview.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• renamed mirror items: ${"renamedItemIds" in result ? result.renamedItemIds.length : 0}`,
+              `• replaced mirror policies: ${"replacedPolicyIds" in result ? result.replacedPolicyIds.length : 0}`,
+              `• target policies: ${"targetPolicyIds" in result ? result.targetPolicyIds.length : 0}`,
+              `• Fedotov moved to review: ${"fedotovMovedToReviewIds" in result ? result.fedotovMovedToReviewIds.length : 0}`,
+              `• cleared sessions: ${"clearedSessionIds" in result ? result.clearedSessionIds.length : 0}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2120 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {

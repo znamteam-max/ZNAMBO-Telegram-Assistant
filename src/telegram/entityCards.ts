@@ -83,7 +83,10 @@ async function renderItemCard(params: {
       ...(activePolicies.length
         ? activePolicies.map(
             (policy) =>
-              `Напоминания: ${formatHumanReminderPolicy(policy, item.timezone, { now })}`,
+              `Напоминания: ${formatHumanReminderPolicy(policy, item.timezone, {
+                now,
+                includeMarker: false,
+              })}`,
           )
         : ["Напоминания: нет"]),
       item.snoozedUntil && item.snoozedUntil > now
@@ -175,7 +178,10 @@ async function renderPolicyCard(params: {
       policy.title,
       "",
       `Статус: ${policy.status}`,
-      `Напоминания: ${formatHumanReminderPolicy(policy, policy.timezone, { includeNext: true })}`,
+      `Напоминания: ${formatHumanReminderPolicy(policy, policy.timezone, {
+        includeNext: true,
+        includeMarker: false,
+      })}`,
       `Важность: ${importanceLabel(getBasePriority({ policy }))}`,
       policy.snoozedUntil && policy.snoozedUntil > (params.now ?? new Date())
         ? `Отложено до: ${formatRuWeekdayDateTime(policy.snoozedUntil, policy.timezone)}`
