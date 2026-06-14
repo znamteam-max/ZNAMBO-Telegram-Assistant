@@ -83,6 +83,10 @@ import {
   applyV280ProductionRepair,
   previewV280ProductionRepair,
 } from "@/services/v280ProductionRepair";
+import {
+  applyV290ProductionRepair,
+  previewV290ProductionRepair,
+} from "@/services/v290ProductionRepair";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -154,6 +158,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v254 preview|apply — безопасный repair списка после ошибочного удаления",
         "/admin_repair_v270 preview|apply — гигиена календаря, reconciler и stale edit sessions",
         "/admin_repair_v280 preview|apply — cadence-only garbage task и reminder-edit sessions",
+        "/admin_repair_v290 preview|apply — исправить ошибочный deadline-блок 14 июня",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -873,6 +878,38 @@ export function registerCommands(bot: Bot<BotContext>) {
         "События Яндекс.Календаря не удалялись.",
       ].join("\n"),
     );
+  });
+  bot.command("admin_repair_v290", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV290ProductionRepair({ userId: owner.id })
+        : await previewV290ProductionRepair({ userId: owner.id });
+    const preview = "preview" in result ? result.preview : result;
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.9.0 repair применён." : "V2.9.0 repair preview:",
+        `Deadline-misparsed tasks: ${preview.deadlineMisparsedTasks.length}`,
+        `Scheduled block -> deadline-only: ${preview.convertScheduledBlockToDeadlineOnly}`,
+        `Calendar updates needed: ${preview.calendarUpdatesNeeded.length}`,
+        `Safe to apply: ${preview.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `Updated items: ${"updatedItemIds" in result ? result.updatedItemIds.length : 0}`,
+              "Объекты Яндекс.Календаря автоматически не удалялись.",
+            ]
+          : ["Для применения: /admin_repair_v290 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
   });
   bot.command("admin_state_v252", async (ctx) => {
     const owner = requireOwner(ctx);

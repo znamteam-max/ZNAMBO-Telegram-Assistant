@@ -25,6 +25,7 @@ import {
   isPersistentReminderPolicy,
 } from "@/domain/reminderPolicyPresentation";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
+import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
 
 import { getBot } from "@/bot/createBot";
 import { entityListKeyboard } from "@/bot/keyboards";
@@ -98,10 +99,12 @@ export async function renderLiveDashboard(params: {
         !currentIds.has(row.item.id),
     )
     .map((row) => row.item!)
+    .sort(compareDashboardItems)
     .slice(0, 8);
   const tomorrowItems = itemRows
     .filter((row) => row.dateBucket === "tomorrow")
     .map((row) => row.item!)
+    .sort(compareDashboardItems)
     .slice(0, 8);
   const soonItems = itemRows
     .filter((row) => {
@@ -110,6 +113,7 @@ export async function renderLiveDashboard(params: {
       return Boolean(anchor && anchor > now && anchor <= weekEnd);
     })
     .map((row) => row.item!)
+    .sort(compareDashboardItems)
     .slice(0, 10);
   const scheduledIds = new Set(
     [...currentItems, ...todayItems, ...tomorrowItems, ...soonItems].map((item) => item.id),
@@ -383,12 +387,15 @@ export function formatDashboardItem(
   now = new Date(),
 ) {
   if (item.status === "completed") return `✅ ${item.title} — завершено`;
-  const start = item.startAt ?? item.dueAt;
-  const time = start
+  const time = item.startAt
     ? includeDate
-      ? formatRuWeekdayDateTime(start, item.timezone || timezone)
-      : DateTime.fromJSDate(start, { zone: "utc" }).setZone(item.timezone || timezone).toFormat("HH:mm")
-    : "без времени";
+      ? formatRuWeekdayDateTime(item.startAt, item.timezone || timezone)
+      : DateTime.fromJSDate(item.startAt, { zone: "utc" }).setZone(item.timezone || timezone).toFormat("HH:mm")
+    : item.dueAt
+      ? includeDate
+        ? formatDeadlineDateTime(item.dueAt, item.timezone || timezone)
+        : `до ${DateTime.fromJSDate(item.dueAt, { zone: "utc" }).setZone(item.timezone || timezone).toFormat("HH:mm")}`
+      : "без времени";
   const end = item.endAt
     ? DateTime.fromJSDate(item.endAt, { zone: "utc" })
         .setZone(item.timezone || timezone)
@@ -406,6 +413,17 @@ export function formatDashboardItem(
     `${time}${end ? `–${end}` : ""} · ${important ? `${important} ` : ""}${persistent}${item.title}${calendarStatus}`,
     ...policies.map((policy) => `   🔔 ${formatHumanReminderPolicy(policy, timezone, { now })}`),
   ].join("\n");
+}
+
+function compareDashboardItems(left: PlannerItem, right: PlannerItem) {
+  const leftRank = left.startAt ? 0 : left.dueAt ? 1 : 2;
+  const rightRank = right.startAt ? 0 : right.dueAt ? 1 : 2;
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  return (
+    (left.startAt ?? left.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER
+  ) - (
+    (right.startAt ?? right.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER
+  );
 }
 
 function formatPolicy(policy: ReminderPolicy, timezone: string) {

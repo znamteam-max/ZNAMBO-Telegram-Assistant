@@ -42,6 +42,7 @@ import {
   formatRuWeekdayDateTime,
   startOfLocalDay,
 } from "@/domain/dateTime";
+import { buildDeadlineReminderFireAt } from "@/domain/deadlineSemantics";
 import { cancelStoredActionPlan, commitStoredActionPlan } from "@/services/actionPlanCommit";
 import {
   formatCalendarSyncFeedback,
@@ -1120,6 +1121,51 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery(/^item:priority:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     await sendPolicyEditorMessage(ctx, "Выбери видимую важность:", priorityEditorKeyboard("item", ctx.match[1]));
+  });
+
+  bot.callbackQuery(/^deadline_reminder:(morning|2h|30m|none|custom):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const preset = ctx.match[1] as "morning" | "2h" | "30m" | "none" | "custom";
+    const item = await getPlannerItemById(owner.id, ctx.match[2]);
+    if (!item?.dueAt || item.status !== "active") {
+      await ctx.answerCallbackQuery("Задача не найдена");
+      return;
+    }
+    if (preset === "none") {
+      await ctx.answerCallbackQuery("Без напоминания");
+      await ctx.reply("Хорошо, напоминание не добавляю.");
+      return;
+    }
+    if (preset === "custom") {
+      await ctx.answerCallbackQuery();
+      await ctx.reply("Как напомнить о дедлайне?", {
+        reply_markup: reminderPolicyMenuKeyboard(item.id),
+      });
+      return;
+    }
+    const fireAt = buildDeadlineReminderFireAt({
+      dueAt: item.dueAt,
+      timezone: item.timezone || owner.timezone,
+      preset,
+    });
+    const created = fireAt
+      ? await createQuickPolicy({
+          userId: owner.id,
+          itemId: item.id,
+          timezone: owner.timezone,
+          policyType: "before_event",
+          fireAt,
+        })
+      : null;
+    await ctx.answerCallbackQuery(created ? "Напоминание добавлено" : "Это время уже прошло");
+    if (created && fireAt) {
+      await ctx.reply(
+        `Напоминание: ${formatRuWeekdayDateTime(fireAt, item.timezone || owner.timezone)}`,
+      );
+    } else {
+      await ctx.reply("Не могу поставить выбранное напоминание в будущее до дедлайна.");
+    }
+    await refreshAfterCallback(ctx, item.id);
   });
 
   bot.callbackQuery(/^item:set_importance:(.+):(none|important|very_important|auto)$/, async (ctx) => {

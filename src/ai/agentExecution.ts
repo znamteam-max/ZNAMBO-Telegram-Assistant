@@ -342,6 +342,9 @@ function buildAgentInstructions(params: {
 - При update_existing_items: actionPlan=null, resetMode=null. При render_view без изменений: actionPlan=null и itemUpdates=[].
 - Поля action metadata и reminder payload всегда возвращай как пустые объекты {}. Вся исполняемая семантика должна находиться в типизированных полях.
 - Списки с конкретным временем классифицируй по смыслу: забег/эфир/встреча = event, тренировка/Z2 = training. Используй startAtLocal, не dueAtLocal 23:59.
+- "Дедлайн", "срок", "сдать до", "успеть до", "завтра до 14:00" и аналогичные формулировки означают task с dueAtLocal. Не превращай дедлайн в startAtLocal/endAtLocal и не выдумывай блок от текущего времени до срока.
+- Если явно названы и рабочий интервал, и дедлайн, сохрани оба: startAtLocal/endAtLocal для "с 10 до 12", dueAtLocal для "дедлайн до 14".
+- Пример: "Сделать цитаты для эфира Больше, дедлайн завтра до 14.00" = kind=task, startAtLocal=null, endAtLocal=null, dueAtLocal=завтра 14:00.
 - Если пользователь ссылается на "каждое событие", "их", "эти встречи", используй item IDs из контекста и intent=update_existing_items. Не создавай новый item из инструкции.
 - Для настроек напоминаний используй operation=configure, startAtLocal=null, endAtLocal=null.
 - Для "выполнено", "сделано", "поставь сделанным" используй operation=complete только для предмета текущего разговора. Если в контексте есть Latest delivered reminder/follow-up, используй только его item ID, а не все события дня.

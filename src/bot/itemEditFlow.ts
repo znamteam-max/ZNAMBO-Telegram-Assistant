@@ -253,6 +253,10 @@ function parseStoredMutation(value: unknown): ItemEditMutation | null {
       ? { scheduledForLocal: candidate.scheduledForLocal }
       : {}),
     ...(typeof candidate.endsAtLocal === "string" ? { endsAtLocal: candidate.endsAtLocal } : {}),
+    ...(typeof candidate.deadlineAtLocal === "string"
+      ? { deadlineAtLocal: candidate.deadlineAtLocal }
+      : {}),
+    ...(candidate.clearDeadline === true ? { clearDeadline: true } : {}),
     ...(candidate.reminderPolicy ? { reminderPolicy: candidate.reminderPolicy } : {}),
     changedFields: candidate.changedFields.filter((field): field is string => typeof field === "string"),
     warnings: Array.isArray(candidate.warnings)

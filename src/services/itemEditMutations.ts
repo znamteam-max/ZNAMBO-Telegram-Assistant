@@ -10,6 +10,10 @@ import { updatePlannerItemDetails } from "@/db/queries/items";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
 import { formatRuWeekdayDateRange } from "@/domain/dateTime";
+import {
+  formatDeadlineDateTime,
+  parseDeadlineSemantics,
+} from "@/domain/deadlineSemantics";
 
 import { parseRussianDateTime, parseRussianTimeRange } from "./russianDateTime";
 
@@ -27,6 +31,8 @@ export type ItemEditMutation = {
   kind?: string;
   scheduledForLocal?: string;
   endsAtLocal?: string;
+  deadlineAtLocal?: string;
+  clearDeadline?: boolean;
   reminderPolicy?: ItemEditReminderMutation;
   changedFields: string[];
   warnings: string[];
@@ -51,14 +57,34 @@ export function parseItemEditMutation(params: {
   const item = params.item;
   const timezone = item.timezone || params.timezone;
   const anchor = item.startAt ?? item.dueAt;
-  const title = parseRenamedTitle(params.text);
-  const timeRange = parseRussianTimeRange({
+  const clearDeadline = /(?:убери|удали|сними|без)\s+(?:дедлайн|срок)/i.test(params.text);
+  const deadline = clearDeadline
+    ? null
+    : parseDeadlineSemantics({
+        text: params.text,
+        timezone,
+        now,
+        baseDate: anchor,
+      });
+  const title = deadline || clearDeadline ? null : parseRenamedTitle(params.text);
+  const parsedTimeRange = parseRussianTimeRange({
     text: params.text,
     timezone,
     now,
     baseDate: anchor,
   });
+  const timeRange = deadline?.scheduledStartLocal && deadline.scheduledEndLocal
+    ? {
+        startLocal: deadline.scheduledStartLocal,
+        endLocal: deadline.scheduledEndLocal,
+        warnings: [],
+        pastConfirmationRequired: false,
+      }
+    : deadline
+      ? null
+      : parsedTimeRange;
   const dateTime = timeRange
+    || deadline
     ? null
     : parseRussianDateTime({
         text: params.text,
@@ -76,13 +102,14 @@ export function parseItemEditMutation(params: {
   });
   const kind =
     (title ? inferKind({ title, currentKind: item.kind }) : null) ??
-    (timeRange && ["task", "preparation_task"].includes(item.kind) ? "event" : null);
+    (timeRange && !deadline && ["task", "preparation_task"].includes(item.kind) ? "event" : null);
   const changedFields: string[] = [];
   const warnings = [...(timeRange?.warnings ?? dateTime?.warnings ?? [])];
 
   if (title && title !== item.title) changedFields.push("title");
   if (kind && kind !== item.kind) changedFields.push("kind");
   if (scheduledLocal) changedFields.push("schedule");
+  if (deadline || clearDeadline) changedFields.push("deadline");
   if (reminderPolicy) changedFields.push("reminder_policy");
   if (dateTime?.usedNextWeek) warnings.push("weekday_today_time_passed_used_next_week");
 
@@ -96,6 +123,10 @@ export function parseItemEditMutation(params: {
     ...(timeRange
       ? { endsAtLocal: timeRange.endLocal.toISO({ suppressMilliseconds: true }) ?? undefined }
       : {}),
+    ...(deadline
+      ? { deadlineAtLocal: deadline.dueLocal.toISO({ suppressMilliseconds: true }) ?? undefined }
+      : {}),
+    ...(clearDeadline ? { clearDeadline: true } : {}),
     ...(reminderPolicy ? { reminderPolicy } : {}),
     changedFields: [...new Set(changedFields)],
     warnings: [...new Set(warnings)],
@@ -182,8 +213,9 @@ export function formatItemEditPreview(params: {
     "Было:",
     formatItemVariant({
       title: params.item.title,
-      startAt: params.item.startAt ?? params.item.dueAt,
+      startAt: params.item.startAt,
       endAt: params.item.endAt,
+      dueAt: params.item.dueAt,
       timezone: params.item.timezone || params.timezone,
     }),
     "",
@@ -214,8 +246,9 @@ export function formatItemEditApplied(params: {
 }) {
   const lines = ["Готово:", formatItemVariant({
     title: params.item.title,
-    startAt: params.item.startAt ?? params.item.dueAt,
+    startAt: params.item.startAt,
     endAt: params.item.endAt,
+    dueAt: params.item.dueAt,
     timezone: params.item.timezone || params.timezone,
   })];
   if (params.mutation.reminderPolicy) {
@@ -291,6 +324,12 @@ function buildItemUpdate(params: {
   if (params.mutation.title) update.title = params.mutation.title;
   const kind = params.mutation.kind ?? params.item.kind;
   if (params.mutation.kind) update.kind = params.mutation.kind;
+  if (params.mutation.clearDeadline) update.dueAt = null;
+  if (params.mutation.deadlineAtLocal) {
+    update.dueAt = DateTime.fromISO(params.mutation.deadlineAtLocal, {
+      zone: params.timezone,
+    }).toUTC().toJSDate();
+  }
   if (!params.mutation.scheduledForLocal) return update;
 
   const local = DateTime.fromISO(params.mutation.scheduledForLocal, {
@@ -302,6 +341,16 @@ function buildItemUpdate(params: {
       ? params.item.endAt.getTime() - params.item.startAt.getTime()
       : null;
   const eventLike = ["event", "training", "tentative_event"].includes(kind);
+  const mixedTaskSchedule = Boolean(params.mutation.deadlineAtLocal) && !eventLike;
+  if (mixedTaskSchedule) {
+    update.startAt = startAt;
+    update.endAt = params.mutation.endsAtLocal
+      ? DateTime.fromISO(params.mutation.endsAtLocal, { zone: params.timezone }).toUTC().toJSDate()
+      : oldDurationMs && oldDurationMs > 0
+        ? new Date(startAt.getTime() + oldDurationMs)
+        : DateTime.fromJSDate(startAt, { zone: "utc" }).plus({ minutes: 60 }).toJSDate();
+    return update;
+  }
   if (eventLike) {
     update.startAt = startAt;
     update.endAt = params.mutation.endsAtLocal
@@ -388,14 +437,16 @@ function formatItemVariant(params: {
   title: string;
   startAt: Date | null;
   endAt: Date | null;
+  dueAt: Date | null;
   timezone: string;
 }) {
-  if (!params.startAt) return `${params.title} — без времени`;
-  const start = DateTime.fromJSDate(params.startAt, { zone: "utc" }).setZone(params.timezone);
-  const end = params.endAt
-    ? DateTime.fromJSDate(params.endAt, { zone: "utc" }).setZone(params.timezone)
-    : null;
-  return `${params.title} — ${formatRuWeekdayDateRange(start.toUTC().toJSDate(), end?.toUTC().toJSDate(), params.timezone)}`;
+  const schedule = params.startAt
+    ? formatRuWeekdayDateRange(params.startAt, params.endAt, params.timezone)
+    : "запланированного времени нет";
+  const deadline = params.dueAt
+    ? `дедлайн ${formatDeadlineDateTime(params.dueAt, params.timezone)}`
+    : "без дедлайна";
+  return `${params.title} — ${schedule}; ${deadline}`;
 }
 
 function formatMutationVariant(params: {
@@ -406,14 +457,20 @@ function formatMutationVariant(params: {
   const timezone = params.item.timezone || params.timezone;
   const start = params.mutation.scheduledForLocal
     ? DateTime.fromISO(params.mutation.scheduledForLocal, { zone: timezone }).toUTC().toJSDate()
-    : params.item.startAt ?? params.item.dueAt;
+    : params.item.startAt;
   const end = params.mutation.endsAtLocal
     ? DateTime.fromISO(params.mutation.endsAtLocal, { zone: timezone }).toUTC().toJSDate()
     : params.item.endAt;
+  const dueAt = params.mutation.clearDeadline
+    ? null
+    : params.mutation.deadlineAtLocal
+      ? DateTime.fromISO(params.mutation.deadlineAtLocal, { zone: timezone }).toUTC().toJSDate()
+      : params.item.dueAt;
   return formatItemVariant({
     title: params.mutation.title ?? params.item.title,
     startAt: start,
     endAt: end,
+    dueAt,
     timezone,
   });
 }

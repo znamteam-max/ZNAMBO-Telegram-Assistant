@@ -8,6 +8,7 @@ import {
   formatLocalDateTime,
   formatRuWeekdayDateRange,
 } from "@/domain/dateTime";
+import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
 
 const kindLabels: Record<string, string> = {
   event: "Встреча",
@@ -101,15 +102,19 @@ export function formatCommittedPlanSummary(params: {
 }) {
   const lines = [params.intro ?? `Добавил ${params.items.length} ${itemCountLabel(params.items.length)}:`];
   for (const [index, item] of params.items.entries()) {
-    const when = formatLocalDateRange(item.startAt, item.endAt ?? item.dueAt, item.timezone || params.timezone);
-    lines.push(`${index + 1}. ${getItemLabel(item)}: ${item.title} — ${when}`);
+    lines.push(
+      `${index + 1}. ${getItemLabel(item)}: ${item.title} — ${formatItemScheduleAndDeadline(item, params.timezone)}`,
+    );
   }
+  const hasUnremindedDeadline = params.items.some((item) => item.dueAt) && params.reminderCount === 0;
   lines.push(
     params.reminderCount
       ? `Напоминаний создано: ${params.reminderCount}.`
-      : "Будущих напоминаний не добавлял.",
+      : hasUnremindedDeadline
+        ? "Напоминаний пока нет."
+        : "Будущих напоминаний не добавлял.",
   );
-  lines.push("", "Что настроить?");
+  lines.push("", hasUnremindedDeadline ? "Напомнить?" : "Что настроить?");
   return lines.join("\n");
 }
 
@@ -247,13 +252,34 @@ function groupActions(actions: ActionPlanItem[]) {
 }
 
 function formatActionPlanItem(action: ActionPlanItem, timezone: string): string {
-  const localTime = action.startAtLocal ?? action.dueAtLocal;
-  const when = localTime ? formatProposalLocalTime(localTime, action.timezone ?? timezone) : "без времени";
+  const zone = action.timezone ?? timezone;
+  const schedule = action.startAtLocal
+    ? formatProposalLocalTime(action.startAtLocal, zone)
+    : null;
+  const deadline = action.dueAtLocal
+    ? `дедлайн ${formatProposalDeadline(action.dueAtLocal, zone)}`
+    : null;
+  const when = [schedule, deadline].filter(Boolean).join("; ") || "без времени";
   const tentative = action.tentative ? "tentative: " : "";
   const recurrence = action.recurrence
     ? `; повтор ${action.recurrence.daysOfWeek.join(",") || action.recurrence.frequency} ${action.recurrence.timeLocal ?? ""}`.trim()
     : "";
   return `${when} — ${tentative}${action.title}${action.description ? ` (${action.description})` : ""}${recurrence}`;
+}
+
+function formatItemScheduleAndDeadline(item: PlannerItem, timezone: string) {
+  const zone = item.timezone || timezone;
+  const schedule = item.startAt
+    ? formatLocalDateRange(item.startAt, item.endAt, zone)
+    : null;
+  const deadline = item.dueAt ? `дедлайн ${formatDeadlineDateTime(item.dueAt, zone)}` : null;
+  return [schedule, deadline].filter(Boolean).join("; ") || "без времени";
+}
+
+function formatProposalDeadline(localIso: string, timezone: string) {
+  const dt = DateTime.fromISO(localIso, { zone: timezone });
+  if (!dt.isValid) return localIso;
+  return `${["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][dt.weekday - 1]}, ${dt.toFormat("dd.LL")} до ${dt.toFormat("HH:mm")}`;
 }
 
 function formatProposalLocalTime(localIso: string | null | undefined, timezone: string): string {

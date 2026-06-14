@@ -13,6 +13,7 @@ import {
   listReminderPoliciesForCampaign,
   listReminderPoliciesForItem,
 } from "@/db/queries/reminderPolicies";
+import type { PlannerItem } from "@/db/schema";
 import type { EntityRef } from "@/domain/entityRefs";
 import { importanceLabel, urgencyExplanation, visibleImportanceLabel } from "@/domain/importance";
 import {
@@ -25,6 +26,7 @@ import { safeCalendarErrorClass } from "@/services/calendarDiagnostics";
 import { getCalendarProvider } from "@/lib/env";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
 import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
+import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
 
 const itemKindLabels: Record<string, string> = {
   event: "встреча",
@@ -67,20 +69,23 @@ async function renderItemCard(params: {
   ]);
   const effective = getEffectivePriority({ item }, now, params.timezone);
   const boost = getUrgencyBoost({ item }, now, params.timezone);
-  const when = item.startAt ?? item.dueAt;
   const campaignGroup = String(item.metadata?.campaignGroup ?? "");
+  const activePolicies = policies.filter((policy) => policy.status === "active");
   return {
     text: [
       item.title,
       "",
       `Статус: ${item.status}`,
       `Тип: ${itemKindLabels[item.kind] ?? item.kind}`,
-      `Когда: ${formatDate(when, item.timezone) || "без времени"}`,
+      ...formatItemTimingLines(item),
       `Важность: ${visibleImportanceLabel({ item })}`,
       `Сейчас: ${importanceLabel(effective)}; ${urgencyExplanation(boost)}`,
-      ...policies
-        .filter((policy) => policy.status === "active")
-        .map((policy) => `Напоминания: ${formatHumanReminderPolicy(policy, item.timezone, { now })}`),
+      ...(activePolicies.length
+        ? activePolicies.map(
+            (policy) =>
+              `Напоминания: ${formatHumanReminderPolicy(policy, item.timezone, { now })}`,
+          )
+        : ["Напоминания: нет"]),
       item.snoozedUntil && item.snoozedUntil > now
         ? `Отложено до: ${formatRuWeekdayDateTime(item.snoozedUntil, item.timezone)}`
         : null,
@@ -98,8 +103,20 @@ async function renderItemCard(params: {
       item.id,
       campaignGroup || null,
       calendar?.status ?? null,
+      Boolean(item.dueAt && !item.startAt),
     ),
   };
+}
+
+export function formatItemTimingLines(item: PlannerItem) {
+  return [
+    item.startAt
+      ? `Когда делать: ${formatDate(item.startAt, item.timezone)}${item.endAt ? `–${DateTime.fromJSDate(item.endAt, { zone: "utc" }).setZone(item.timezone).toFormat("HH:mm")}` : ""}`
+      : "Запланированное время: нет",
+    item.dueAt
+      ? `Дедлайн: ${formatDeadlineDateTime(item.dueAt, item.timezone, true)}`
+      : null,
+  ].filter((line): line is string => Boolean(line));
 }
 
 async function renderExternalCalendarEventCard(params: {

@@ -7,6 +7,10 @@ import type {
 } from "@/ai/schemas/agentExecution";
 import type { ActionPlanItem } from "@/ai/schemas";
 import { parseRussianWeekdayAppointment } from "@/domain/russianWeekday";
+import {
+  normalizeKnownProjectNames,
+  parseDeadlineSemantics,
+} from "@/domain/deadlineSemantics";
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 
@@ -22,7 +26,8 @@ export function normalizeAgentExecutionProposal(params: {
     ...params,
     execution: complexReminder,
   });
-  const centralPark = normalizeCentralPark({ ...params, execution: cadenceOnly });
+  const deadline = normalizeDeadlineSemantics({ ...params, execution: cadenceOnly });
+  const centralPark = normalizeCentralPark({ ...params, execution: deadline });
   const weekday = normalizeRussianWeekdaySemantics({
     ...params,
     execution: centralPark,
@@ -48,10 +53,87 @@ export function normalizeAgentExecutionProposal(params: {
     execution: recurring,
   });
   return normalizePrioritySemantics({
-    execution: configured,
+    execution: normalizeProjectNamesInExecution(configured),
     text: params.text,
     activeContext: params.activeContext,
   });
+}
+
+function normalizeDeadlineSemantics(params: {
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+}) {
+  if ((params.execution.actionPlan?.actions.length ?? 0) > 1) return params.execution;
+  const parsed = parseDeadlineSemantics(params);
+  if (!parsed) return params.execution;
+  const proposed = params.execution.actionPlan?.actions[0];
+  const title = parsed.title || proposed?.title;
+  if (!title) return params.execution;
+  const action: ActionPlanItem = {
+    ...(proposed ?? buildSyntheticReminderAction(title, params.timezone)),
+    actionType: "task",
+    kind: "task",
+    title: normalizeKnownProjectNames(title),
+    timezone: proposed?.timezone || params.timezone,
+    startAtLocal: parsed.scheduledStartLocal?.toFormat("yyyy-MM-dd'T'HH:mm:ss") ?? null,
+    endAtLocal: parsed.scheduledEndLocal?.toFormat("yyyy-MM-dd'T'HH:mm:ss") ?? null,
+    dueAtLocal: parsed.dueLocal.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    durationMinutes: null,
+    reminders: [],
+    confidence: Math.max(proposed?.confidence ?? 0, 0.98),
+    risk: "low",
+    requiresConfirmation: false,
+    metadata: {
+      ...(proposed?.metadata ?? {}),
+      sourceNormalization: "deadline_v290",
+      hasDeadline: true,
+      deadlineOnly: parsed.deadlineOnly,
+      reminderSuggestion: "offer_before_deadline",
+    },
+  };
+  return {
+    ...params.execution,
+    intent: "create_plan" as const,
+    reply: null,
+    actionPlan: {
+      ...(params.execution.actionPlan ?? {
+        intent: "plan" as const,
+        summary: action.title,
+        reply: null,
+        confidence: 0.98,
+        requiresConfirmation: false,
+        actions: [],
+        memoryCandidates: [],
+        clarificationQuestions: [],
+      }),
+      intent: "plan" as const,
+      summary: action.title,
+      reply: null,
+      confidence: Math.max(params.execution.actionPlan?.confidence ?? 0, 0.98),
+      requiresConfirmation: false,
+      actions: [action],
+      clarificationQuestions: [],
+    },
+    itemUpdates: [],
+    reminderPolicies: [],
+    clarificationQuestions: [],
+  };
+}
+
+function normalizeProjectNamesInExecution(execution: AgentExecution): AgentExecution {
+  if (!execution.actionPlan) return execution;
+  return {
+    ...execution,
+    actionPlan: {
+      ...execution.actionPlan,
+      actions: execution.actionPlan.actions.map((action) => ({
+        ...action,
+        title: normalizeKnownProjectNames(action.title),
+      })),
+    },
+  };
 }
 
 function normalizeCadenceOnlyWithoutContext(params: {

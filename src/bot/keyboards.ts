@@ -107,6 +107,9 @@ export function reminderEmptyKeyboard() {
 }
 
 export function postCreateTriageKeyboard(items: PlannerItem[]) {
+  if (items.length === 1 && items[0]?.dueAt && !items[0].startAt) {
+    return deadlineReminderSuggestionKeyboard(items[0].id);
+  }
   const keyboard = new InlineKeyboard();
   for (const [index, item] of items.slice(0, 8).entries()) {
     keyboard.text(String(index + 1), `entity:open:planner_item:${item.id}`);
@@ -159,10 +162,11 @@ export function itemMenuKeyboard(
   itemId: string,
   campaignGroup?: string | null,
   calendarStatus?: string | null,
+  deadlineOnly = false,
 ) {
   const keyboard = new InlineKeyboard()
     .text("✅ Выполнено", `done:${itemId}`)
-    .text("🕘 Время", `manage:reschedule:${itemId}`)
+    .text(deadlineOnly ? "🕘 Запланировать время" : "🕘 Время", `manage:reschedule:${itemId}`)
     .row()
     .text("✏️ Изменить", `manage:edit:${itemId}`)
     .text("🔔 Напоминание", `item:remind:${itemId}`)
@@ -177,6 +181,17 @@ export function itemMenuKeyboard(
     .row()
     .text("↩️ К плану", "dashboard:refresh")
     .text("⚙️ Ещё", `item:more:${itemId}`);
+}
+
+export function deadlineReminderSuggestionKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("Утром", `deadline_reminder:morning:${itemId}`)
+    .text("За 2 часа", `deadline_reminder:2h:${itemId}`)
+    .row()
+    .text("За 30 минут", `deadline_reminder:30m:${itemId}`)
+    .text("Не надо", `deadline_reminder:none:${itemId}`)
+    .row()
+    .text("Настроить", `deadline_reminder:custom:${itemId}`);
 }
 
 export function itemMoreKeyboard(itemId: string) {
