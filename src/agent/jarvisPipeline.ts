@@ -34,6 +34,11 @@ import {
   hasIncompleteRecurringPolicies,
   presentRecurringPolicyClarification,
 } from "@/bot/recurringPolicyDraftFlow";
+import {
+  clearActiveInteractionSessions,
+  isGlobalCreationIntent,
+  isSessionCancelText,
+} from "@/bot/sessionRouting";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
 import { detectHardManagementIntent } from "./hardManagementIntent";
@@ -94,33 +99,68 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     toolExecutionFailed: null,
     toolFailureReason: null,
     toolFailureField: null,
+    suggestedNextPrompt: null,
+    sessionRouting: null,
   };
 
   try {
-    const recurringDraftHandled = await handleRecurringPolicyDraftTurn(ctx, text, timezone);
-    if (recurringDraftHandled) {
-      trace.finalAction = "recurring_policy_draft_handled";
-      trace.toolCallsExecuted = ["complete_recurring_policy_draft"];
+    if (isSessionCancelText(text)) {
+      const cleared = await clearActiveInteractionSessions({
+        userId: owner.id,
+        reason: "user_cancel_text",
+      });
+      trace.finalAction = "session_cancelled";
+      trace.toolCallsExecuted = ["clear_active_interaction_sessions"];
+      trace.sessionRouting = { cancelled: true, cleared };
+      trace.validationWarnings = cleared.length ? [] : ["no_active_session_to_cancel"];
+      await replyAndRecord(
+        ctx,
+        cleared.length
+          ? "Ок, отменил текущую настройку или редактирование. Ничего не изменил."
+          : "Активной настройки не было. Ничего не изменил.",
+      );
       return;
     }
-    const reminderPolicyEditHandled = await handleReminderPolicyEditTurn(ctx, text, timezone);
-    if (reminderPolicyEditHandled) {
-      trace.finalAction = "reminder_policy_edit_session_handled";
-      trace.toolCallsExecuted = ["reminder_policy_edit_session"];
-      return;
-    }
-    const externalCalendarEditHandled = await handleExternalCalendarEditTurn(ctx, text, timezone);
-    if (externalCalendarEditHandled) {
-      trace.finalAction = "external_calendar_edit_session_handled";
-      trace.toolCallsExecuted = ["external_calendar_edit_session"];
-      return;
-    }
-    const itemEditHandled = await handleItemEditTurn(ctx, text, timezone);
-    if (itemEditHandled) {
-      trace.finalAction = "item_edit_session_handled";
-      trace.toolCallsExecuted = ["item_edit_session"];
-      trace.updatedItemIds = [];
-      return;
+
+    const shouldEscapeSession = isGlobalCreationIntent(text);
+    if (shouldEscapeSession) {
+      const cleared = await clearActiveInteractionSessions({
+        userId: owner.id,
+        reason: "global_creation_intent_escape",
+      });
+      trace.sessionRouting = { escaped: true, cleared };
+      if (cleared.length) {
+        trace.validationWarnings = [
+          "global_creation_intent_escaped_active_session",
+          ...cleared.map((entry) => `cleared_${entry}`),
+        ];
+      }
+    } else {
+      const recurringDraftHandled = await handleRecurringPolicyDraftTurn(ctx, text, timezone);
+      if (recurringDraftHandled) {
+        trace.finalAction = "recurring_policy_draft_handled";
+        trace.toolCallsExecuted = ["complete_recurring_policy_draft"];
+        return;
+      }
+      const reminderPolicyEditHandled = await handleReminderPolicyEditTurn(ctx, text, timezone);
+      if (reminderPolicyEditHandled) {
+        trace.finalAction = "reminder_policy_edit_session_handled";
+        trace.toolCallsExecuted = ["reminder_policy_edit_session"];
+        return;
+      }
+      const externalCalendarEditHandled = await handleExternalCalendarEditTurn(ctx, text, timezone);
+      if (externalCalendarEditHandled) {
+        trace.finalAction = "external_calendar_edit_session_handled";
+        trace.toolCallsExecuted = ["external_calendar_edit_session"];
+        return;
+      }
+      const itemEditHandled = await handleItemEditTurn(ctx, text, timezone);
+      if (itemEditHandled) {
+        trace.finalAction = "item_edit_session_handled";
+        trace.toolCallsExecuted = ["item_edit_session"];
+        trace.updatedItemIds = [];
+        return;
+      }
     }
 
     if (isAllowedDeterministicIntent(preRouterIntent?.intent)) {
@@ -171,6 +211,7 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
         ? ["create_recurring_policy:targeted_clarification"]
         : [];
       trace.validationWarnings = [
+        ...asStringArray(trace.validationWarnings),
         ...bound.warnings,
         "recurring_policy_missing_time",
       ];
@@ -199,7 +240,11 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     trace.proposedMutationCount = executionResult.proposedMutationCount;
     trace.committedMutationCount = executionResult.committedMutationCount;
     trace.partialMutationDetected = executionResult.partialMutationDetected;
-    trace.validationWarnings = [...bound.warnings, ...executionResult.validationWarnings];
+    trace.validationWarnings = [
+      ...asStringArray(trace.validationWarnings),
+      ...bound.warnings,
+      ...executionResult.validationWarnings,
+    ];
     trace.finalAction = executionResult.finalAction;
     trace.naturalLanguagePlanResult = executionResult.finalAction;
     if (executionResult.finalAction.startsWith("blocked_by_")) {
@@ -237,6 +282,10 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       trace.toolFailureField = userError?.code.includes("reminderTime")
         ? "reminderTime"
         : "unknown";
+      trace.suggestedNextPrompt =
+        trace.toolFailureField === "reminderTime"
+          ? "Напиши время для повторяющегося напоминания, например: 09:00."
+          : "Уточни недостающее поле и пришли сообщение еще раз.";
     }
     logger.warn("Mandatory agent execution failed closed", {
       error: error instanceof Error ? error.message : String(error),
@@ -566,6 +615,10 @@ function isAllowedDeterministicIntent(intent?: string | null) {
 
 function applyAiTelemetry(trace: Record<string, unknown>, telemetry: AiCallTelemetry) {
   Object.assign(trace, telemetry);
+}
+
+function asStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
 async function replyToolResult(ctx: BotContext, result: JarvisToolResult) {

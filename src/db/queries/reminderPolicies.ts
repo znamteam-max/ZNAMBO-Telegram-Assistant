@@ -182,6 +182,7 @@ export async function listActivePoliciesForReconciliation(limit = 200) {
 export async function updateReminderPolicy(params: {
   policyId: string;
   userId: string;
+  itemId?: string | null;
   status?: string;
   nextFireAt?: Date | null;
   startsAt?: Date | null;
@@ -204,6 +205,7 @@ export async function updateReminderPolicy(params: {
     .update(reminderPolicies)
     .set({
       ...(params.status ? { status: params.status } : {}),
+      ...(params.itemId !== undefined ? { itemId: params.itemId } : {}),
       ...(params.nextFireAt !== undefined ? { nextFireAt: params.nextFireAt } : {}),
       ...(params.startsAt !== undefined ? { startsAt: params.startsAt } : {}),
       ...(params.endsAt !== undefined ? { endsAt: params.endsAt } : {}),

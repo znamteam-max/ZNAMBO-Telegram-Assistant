@@ -43,6 +43,9 @@ export async function handleReminderPolicyEditTurn(
     ...(input.intervalMinutes ? { intervalMinutes: input.intervalMinutes } : {}),
     ...(input.windowStart ? { windowStart: input.windowStart } : {}),
     ...(input.windowEnd !== undefined ? { windowEnd: input.windowEnd } : {}),
+    ...(input.windowEndDayOffset !== undefined
+      ? { windowEndDayOffset: input.windowEndDayOffset }
+      : {}),
     ...(stop
       ? {
           stopCondition: stop.stopCondition,
@@ -54,6 +57,7 @@ export async function handleReminderPolicyEditTurn(
     draft.intervalMinutes = fullCadence.intervalMinutes;
     draft.windowStart = fullCadence.windowStart;
     draft.windowEnd = fullCadence.windowEnd;
+    draft.windowEndDayOffset = undefined;
   }
   if (!fullCadence && !stop && !input.intervalMinutes && input.windowEnd === undefined) {
     await replyAndRecord(
@@ -179,16 +183,27 @@ export function parseReminderPolicyDraftInput(text: string) {
       : /кажд(?:ые|ый)\s+(?:полчаса|30\s*мин)/i.test(normalized)
         ? 30
         : Number(normalized.match(/кажд(?:ые|ый)\s+(\d{1,3})\s*мин/i)?.[1] ?? 0) || undefined;
+  const endOfDay = normalized.match(/до\s+конца(?:\s+(сегодняшнего|завтрашнего))?\s+дня/i);
   const end = normalized.match(/до\s+(\d{1,2})(?:[.:](\d{2}))?/i);
   const start = normalized.match(/с\s+(\d{1,2})(?:[.:](\d{2}))?/i);
+  const windowEnd = /без\s+огранич/i.test(normalized)
+    ? null
+    : endOfDay
+      ? "23:59"
+      : end
+        ? clock(Number(end[1]), Number(end[2] ?? 0))
+        : undefined;
   return {
     intervalMinutes,
     windowStart: start ? clock(Number(start[1]), Number(start[2] ?? 0)) : undefined,
-    windowEnd: /без\s+огранич/i.test(normalized)
-      ? null
-      : end
-        ? clock(Number(end[1]), Number(end[2] ?? 0))
-        : undefined,
+    windowEnd,
+    windowEndDayOffset: endOfDay
+      ? endOfDay[1] === "завтрашнего"
+        ? 1
+        : endOfDay[1] === "сегодняшнего"
+          ? 0
+          : undefined
+      : undefined,
   };
 }
 
@@ -218,8 +233,12 @@ export function materializeReminderPolicyDraft(params: {
         ? anchorLocal
         : nowLocal.plus({ minutes: 1 }).set({ second: 0, millisecond: 0 });
   }
+  const endBase =
+    typeof params.draft.windowEndDayOffset === "number"
+      ? nowLocal.startOf("day").plus({ days: params.draft.windowEndDayOffset })
+      : starts.startOf("day");
   const ends = params.draft.windowEnd
-    ? starts.startOf("day").set({
+    ? endBase.set({
         hour: Number(params.draft.windowEnd.slice(0, 2)),
         minute: Number(params.draft.windowEnd.slice(3, 5)),
         second: 0,

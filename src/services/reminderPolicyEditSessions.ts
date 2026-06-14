@@ -23,6 +23,7 @@ export type ReminderPolicyEditDraft = {
   intervalMinutes?: number;
   windowStart?: string;
   windowEnd?: string | null;
+  windowEndDayOffset?: number;
   stopCondition?: "until_done";
   ackAliases?: string[];
 };
@@ -156,6 +157,9 @@ function parseDraft(value: unknown): ReminderPolicyEditDraft {
     ...(typeof draft.windowStart === "string" ? { windowStart: draft.windowStart } : {}),
     ...(typeof draft.windowEnd === "string" || draft.windowEnd === null
       ? { windowEnd: draft.windowEnd as string | null }
+      : {}),
+    ...(typeof draft.windowEndDayOffset === "number"
+      ? { windowEndDayOffset: draft.windowEndDayOffset }
       : {}),
     ...(draft.stopCondition === "until_done"
       ? { stopCondition: "until_done" as const }

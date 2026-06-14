@@ -2,8 +2,7 @@ import { Bot } from "grammy";
 
 import { requireEnv } from "@/lib/env";
 import { logger } from "@/lib/logger";
-import { clearActiveItemEditSession } from "@/services/itemEditSessions";
-import { clearActiveReminderPolicyEditSession } from "@/services/reminderPolicyEditSessions";
+import { clearActiveInteractionSessions } from "@/bot/sessionRouting";
 
 import type { BotContext } from "./context";
 import { attachOwner, requireAllowedOwner } from "./authorization";
@@ -22,12 +21,8 @@ export function createBot() {
   instance.use(recordUpdateOnce);
   instance.use(async (ctx, next) => {
     const text = ctx.message?.text ?? ctx.editedMessage?.text ?? "";
-    if (text.startsWith("/") && ctx.owner?.id) {
-      await clearActiveItemEditSession({
-        userId: ctx.owner.id,
-        reason: "slash_command",
-      });
-      await clearActiveReminderPolicyEditSession({
+    if (text.startsWith("/") && !text.toLowerCase().startsWith("/cancel") && ctx.owner?.id) {
+      await clearActiveInteractionSessions({
         userId: ctx.owner.id,
         reason: "slash_command",
       });
