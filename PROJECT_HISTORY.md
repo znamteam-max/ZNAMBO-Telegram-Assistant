@@ -19,6 +19,7 @@ before-event policies render concrete offsets such as za den v 09:00, za 2 chasa
 normal active past tasks are shown as overdue; unresolved is reserved for broken/review data
 missing recurring-time audit/debug fields now include reason, field and suggested prompt
 /admin_repair_v2140 preview|apply added; repair changes zero Yandex Calendar objects
+protected admin API actions v2140_repair_preview and v2140_repair_apply added
 ```
 
 Validation before deploy:

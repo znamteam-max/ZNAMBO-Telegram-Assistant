@@ -19,6 +19,7 @@ Completed:
 - normal active past tasks are classified as overdue, while unresolved is for broken/review data;
 - missing recurring-time debug/audit fields now include reason, field and suggested next prompt;
 - `/admin_repair_v2140 preview|apply` was added and changes zero Yandex Calendar objects;
+- protected admin API actions `v2140_repair_preview` and `v2140_repair_apply` were added;
 - version bumped to `2.14.0`.
 
 Validation before deploy:

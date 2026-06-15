@@ -51,6 +51,8 @@ Implemented:
 - Added `/admin_repair_v2140 preview|apply` for safe production cleanup. It repairs stale drafts,
   duplicate mirror policies, generic before-event metadata, and hidden completed rows. It changes
   zero Yandex Calendar objects.
+- Added protected admin API actions `v2140_repair_preview` and `v2140_repair_apply` for the same
+  safe repair flow.
 - No database migration was required.
 
 ## V2.14.0 Validation Before Deploy
