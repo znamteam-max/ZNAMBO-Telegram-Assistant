@@ -5,21 +5,17 @@ import { recurringTimeClarificationKeyboard } from "@/bot/keyboards";
 import { executeActionPlanForMessage } from "@/bot/messagePipeline";
 import { replyAndRecord } from "@/bot/reply";
 import {
-  formatRecurringClarification,
-  parseCanonicalRecurrenceRule,
-} from "@/domain/recurringPolicySemantics";
-import {
   applyTimeToRecurringPolicyDraft,
+  buildRecurringPolicyDraftIntents,
   finishRecurringPolicyDraftSession,
   getActiveRecurringPolicyDraftSession,
+  getIncompleteRecurringPolicies,
   startRecurringPolicyDraftSession,
 } from "@/services/recurringPolicyDraftSessions";
+import { formatRecurringClarification } from "@/domain/recurringPolicySemantics";
 
 export function hasIncompleteRecurringPolicies(execution: AgentExecution) {
-  return execution.reminderPolicies.some((policy) => {
-    const parsed = parseCanonicalRecurrenceRule(policy.recurrenceRule);
-    return parsed && parsed.kind !== "legacy" && !parsed.timeLocal;
-  });
+  return getIncompleteRecurringPolicies(execution.reminderPolicies).length > 0;
 }
 
 export async function presentRecurringPolicyClarification(params: {
@@ -39,24 +35,13 @@ export async function presentRecurringPolicyClarification(params: {
     now: params.now,
   });
   if (!action) return false;
-  const intents = params.execution.reminderPolicies.map((policy) => {
-    const parsed = parseCanonicalRecurrenceRule(policy.recurrenceRule);
-    return {
-      title: policy.title,
-      recurrenceRule: policy.recurrenceRule ?? "",
-      recurrenceKind:
-        parsed?.kind === "monthly_day_range"
-          ? ("monthly_day_range" as const)
-          : ("weekly" as const),
-      weekday: parsed?.kind === "weekly" ? parsed.weekday : null,
-      monthDays: parsed?.kind === "monthly_day_range" ? parsed.monthDays : [],
-      timeLocal: null,
-      requireAck: policy.requireAck,
-      ackAliases: [],
-      missingFields: ["reminderTime" as const],
-    };
-  });
-  await replyAndRecord(params.ctx, formatRecurringClarification(intents), {
+  const intents = buildRecurringPolicyDraftIntents(params.execution.reminderPolicies);
+  await replyAndRecord(params.ctx, [
+    "deduped" in action && action.deduped === true
+      ? "Уже держу этот черновик. Новую задачу не создаю."
+      : null,
+    formatRecurringClarification(intents),
+  ].filter(Boolean).join("\n\n"), {
     reply_markup: recurringTimeClarificationKeyboard(action.id, intents.length > 1),
   });
   return true;

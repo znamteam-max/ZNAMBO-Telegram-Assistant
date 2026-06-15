@@ -84,3 +84,20 @@ export async function getLatestPlannerGuardBlock() {
     .limit(1);
   return row ?? null;
 }
+
+export async function listRecentAuditLogs(params: {
+  userId: string;
+  since?: Date | null;
+  limit?: number;
+}) {
+  const conditions = [eq(auditLog.userId, params.userId)];
+  if (params.since) {
+    conditions.push(sql`${auditLog.createdAt} >= ${params.since.toISOString()}::timestamptz`);
+  }
+  return getDb()
+    .select()
+    .from(auditLog)
+    .where(and(...conditions))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(Math.max(1, Math.min(params.limit ?? 30, 200)));
+}

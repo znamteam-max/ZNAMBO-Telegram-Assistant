@@ -31,6 +31,7 @@ export type ItemEditMutation = {
   kind?: string;
   scheduledForLocal?: string;
   endsAtLocal?: string;
+  allDay?: boolean;
   deadlineAtLocal?: string;
   clearDeadline?: boolean;
   reminderPolicy?: ItemEditReminderMutation;
@@ -67,13 +68,21 @@ export function parseItemEditMutation(params: {
         baseDate: anchor,
       });
   const title = deadline || clearDeadline ? null : parseRenamedTitle(params.text);
+  const allDayRange = deadline
+    ? null
+    : parseAllDaySchedule({
+        text: params.text,
+        item,
+        timezone,
+        now,
+      });
   const parsedTimeRange = parseRussianTimeRange({
     text: params.text,
     timezone,
     now,
     baseDate: anchor,
   });
-  const timeRange = deadline?.scheduledStartLocal && deadline.scheduledEndLocal
+  const timeRange = allDayRange ?? (deadline?.scheduledStartLocal && deadline.scheduledEndLocal
     ? {
         startLocal: deadline.scheduledStartLocal,
         endLocal: deadline.scheduledEndLocal,
@@ -82,7 +91,7 @@ export function parseItemEditMutation(params: {
       }
     : deadline
       ? null
-      : parsedTimeRange;
+      : parsedTimeRange);
   const dateTime = timeRange
     || deadline
     ? null
@@ -102,6 +111,7 @@ export function parseItemEditMutation(params: {
   });
   const kind =
     (title ? inferKind({ title, currentKind: item.kind }) : null) ??
+    (allDayRange && ["task", "preparation_task"].includes(item.kind) ? "event" : null) ??
     (timeRange && !deadline && ["task", "preparation_task"].includes(item.kind) ? "event" : null);
   const changedFields: string[] = [];
   const warnings = [...(timeRange?.warnings ?? dateTime?.warnings ?? [])];
@@ -123,6 +133,7 @@ export function parseItemEditMutation(params: {
     ...(timeRange
       ? { endsAtLocal: timeRange.endLocal.toISO({ suppressMilliseconds: true }) ?? undefined }
       : {}),
+    ...(allDayRange ? { allDay: true } : {}),
     ...(deadline
       ? { deadlineAtLocal: deadline.dueLocal.toISO({ suppressMilliseconds: true }) ?? undefined }
       : {}),
@@ -166,6 +177,7 @@ export async function applyItemEditMutation(params: {
             mutationSource: "item_edit_session",
             itemEditSourceMessageId: params.sourceMessageId ?? null,
             itemEditUpdatedAt: now.toISOString(),
+            ...(params.mutation.allDay ? { allDay: true, timeGranularity: "all_day" } : {}),
           },
         })
       : params.item;
@@ -300,6 +312,40 @@ function parseReminderMutation(params: {
   };
 }
 
+function parseAllDaySchedule(params: {
+  text: string;
+  item: PlannerItem;
+  timezone: string;
+  now: Date;
+}) {
+  const normalized = params.text
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+  const asksAllDay =
+    /(?:^|\s)(?:целый|весь)\s+день(?:\s|$)/.test(normalized) ||
+    /(?:^|\s)на\s+весь\s+день(?:\s|$)/.test(normalized) ||
+    /\ball[-\s]?day\b/.test(normalized);
+  if (!asksAllDay) return null;
+  const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
+  const anchor = params.item.startAt ?? params.item.dueAt;
+  const anchorLocal = anchor
+    ? DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(params.timezone)
+    : nowLocal;
+  const day = /(?:^|\s)завтра(?:\s|$)/.test(normalized)
+    ? nowLocal.plus({ days: 1 })
+    : /(?:^|\s)сегодня(?:\s|$)/.test(normalized)
+      ? nowLocal
+      : anchorLocal;
+  return {
+    startLocal: day.startOf("day"),
+    endLocal: day.endOf("day").set({ millisecond: 0 }),
+    warnings: [],
+    pastConfirmationRequired: false,
+  };
+}
+
 function inferKind(params: { title: string; currentKind: string }) {
   if (!["task", "preparation_task", "recurring_task"].includes(params.currentKind)) return null;
   if (/(визит|прием|приём|встреча|созвон|эфир|запись|матч)/i.test(params.title)) {
@@ -336,6 +382,17 @@ function buildItemUpdate(params: {
     zone: params.timezone,
   });
   const startAt = local.toUTC().toJSDate();
+  if (params.mutation.allDay) {
+    update.startAt = startAt;
+    update.endAt = params.mutation.endsAtLocal
+      ? DateTime.fromISO(params.mutation.endsAtLocal, { zone: params.timezone }).toUTC().toJSDate()
+      : local.endOf("day").toUTC().toJSDate();
+    update.dueAt = null;
+    if (!update.kind && ["task", "preparation_task"].includes(params.item.kind)) {
+      update.kind = "event";
+    }
+    return update;
+  }
   const oldDurationMs =
     params.item.startAt && params.item.endAt
       ? params.item.endAt.getTime() - params.item.startAt.getTime()

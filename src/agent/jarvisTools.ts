@@ -664,7 +664,8 @@ export async function undoLastActionTool(params: ToolParams): Promise<JarvisTool
   }
 
   const restored: PlannerItem[] = [];
-  for (const item of undoItems) {
+  for (const rawItem of undoItems) {
+    const item = normalizeUndoItemSnapshot(rawItem);
     if (!item.id || !item.status) continue;
     const restoredItem =
       item.title && item.kind && item.timezone
@@ -773,6 +774,41 @@ function parseUndoDate(value?: string | null) {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function normalizeUndoItemSnapshot<T extends {
+  kind?: string;
+  status?: string;
+  title?: string;
+  startAt?: string | null;
+  endAt?: string | null;
+  visibility?: string | null;
+  metadata?: Record<string, unknown>;
+}>(item: T): T {
+  if (
+    item.status === "active" &&
+    item.kind === "task" &&
+    item.startAt &&
+    isEventLikeScheduledTitle(item.title ?? "")
+  ) {
+    return {
+      ...item,
+      kind: "event",
+      visibility: item.visibility === "history" ? "active" : item.visibility,
+      metadata: {
+        ...(item.metadata ?? {}),
+        undoKindNormalized: true,
+        undoKindNormalizedBy: "v2130",
+      },
+    };
+  }
+  return item;
+}
+
+function isEventLikeScheduledTitle(title: string) {
+  return /(визит|при[её]м|ортодонт|встреча|созвон|эфир|запись|матч|комментар|комментир)/i.test(
+    title,
+  );
 }
 
 export function parseDisplayIndexSelection(text: string): number[] {

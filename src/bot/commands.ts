@@ -99,6 +99,11 @@ import {
   applyV2120ProductionRepair,
   previewV2120ProductionRepair,
 } from "@/services/v2120ProductionRepair";
+import {
+  applyV2130ProductionRepair,
+  previewV2130ProductionRepair,
+} from "@/services/v2130ProductionRepair";
+import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -152,6 +157,8 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/cancel — отменить текущую настройку или редактирование",
         "/remindertest 2 — тестовое напоминание через N минут",
         "/aihealth — реальная проверка OpenAI Responses API и tool calling",
+        "/actionlog, /actionlog 24h, /actionlog 50, /actionlog export — безопасный журнал последних действий",
+        "/debugrecent — последние AI/debug traces и agent actions",
         "/reminders — только правила напоминаний; обычные встречи находятся в /plan",
         "/longterm — дальние и регулярные policies",
         "/cleanup_chat — убрать старые bot-карточки",
@@ -176,6 +183,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2100 preview|apply — убрать cadence-title garbage task",
         "/admin_repair_v2110 preview|apply — восстановить дедлайн ЧМ и stale sessions",
         "/admin_repair_v2120 preview|apply — recurring UX cleanup и marker repair",
+        "/admin_repair_v2130 preview|apply — draft integrity, command targeting и actionlog repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -1053,6 +1061,48 @@ export function registerCommands(bot: Bot<BotContext>) {
       });
     }
   });
+  bot.command("admin_repair_v2130", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2130ProductionRepair({ userId: owner.id })
+        : await previewV2130ProductionRepair({ userId: owner.id });
+    const preview = "preview" in result ? result.preview : result;
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.13 repair applied:" : "V2.13 repair preview:",
+        `• incomplete meter items: ${preview.incompleteMeterItemIds.length}`,
+        `• incomplete meter policies: ${preview.incompleteMeterPolicyIds.length}`,
+        `• duplicate recurring drafts: ${preview.duplicateRecurringDraftIds.length}`,
+        `• stale sessions: ${preview.staleSessionIds.length}`,
+        `• orthodontist item: ${preview.orthodontistItemId ?? "none"}`,
+        `• orthodontist needs event kind: ${preview.orthodontistNeedsEventKind ? "yes" : "no"}`,
+        `• orphan orthodontist policies: ${preview.orphanOrthodontistPolicyIds.length}`,
+        "• calendar objects to change: 0",
+        `• safe: ${preview.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• archived items: ${"archivedItemIds" in result ? result.archivedItemIds.length : 0}`,
+              `• cancelled policies: ${"cancelledPolicyIds" in result ? result.cancelledPolicyIds.length : 0}`,
+              `• cleared drafts: ${"clearedDraftIds" in result ? result.clearedDraftIds.length : 0}`,
+              `• cleared sessions: ${"clearedSessionIds" in result ? result.clearedSessionIds.length : 0}`,
+              `• normalized items: ${"normalizedItemIds" in result ? result.normalizedItemIds.length : 0}`,
+              `• retargeted policies: ${"retargetedPolicyIds" in result ? result.retargetedPolicyIds.length : 0}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2130 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
   bot.command("admin_state_v252", async (ctx) => {
     const owner = requireOwner(ctx);
     const state = await getProductionStateV252({
@@ -1148,6 +1198,35 @@ export function registerCommands(bot: Bot<BotContext>) {
             "No tasks were created.",
           ].join("\n"),
     );
+  });
+
+  bot.command("actionlog", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const options = parseActionLogArgs(String(ctx.match ?? ""));
+    const log = await buildActionLog({
+      userId: owner.id,
+      hours: options.hours,
+      limit: options.limit,
+      exportMode: options.exportMode,
+    });
+    if (options.exportMode) {
+      await ctx.replyWithDocument(
+        new InputFile(Buffer.from(log.text, "utf8"), "znambo_actionlog.txt"),
+        { caption: "Action log export без секретов." },
+      );
+      return;
+    }
+    await ctx.reply(log.text || "Action log пуст.");
+  });
+
+  bot.command("debugrecent", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const log = await buildActionLog({
+      userId: owner.id,
+      hours: 24,
+      limit: 50,
+    });
+    await ctx.reply(log.text || "Debug log пуст.");
   });
 
   bot.command("export", async (ctx) => {

@@ -127,6 +127,7 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       const cleared = await clearActiveInteractionSessions({
         userId: owner.id,
         reason: "global_creation_intent_escape",
+        preserve: ["recurring_policy_draft"],
       });
       trace.sessionRouting = { escaped: true, cleared };
       if (cleared.length) {

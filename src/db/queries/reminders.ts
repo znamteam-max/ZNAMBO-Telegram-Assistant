@@ -300,6 +300,15 @@ export async function getLatestReminderForItem(userId: string, plannerItemId: st
   return row ?? null;
 }
 
+export async function getReminderByIdForUser(params: { userId: string; reminderId: string }) {
+  const [row] = await getDb()
+    .select()
+    .from(reminders)
+    .where(and(eq(reminders.userId, params.userId), eq(reminders.id, params.reminderId)))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function getLatestReminderDelivery(reminderId: string) {
   const [row] = await getDb()
     .select()
@@ -416,14 +425,29 @@ export async function snoozeReminder(params: {
   if (!source) return null;
 
   if (source.policyId) {
-    return snoozePolicyReminder({
+    const policySnooze = await snoozePolicyReminder({
       source,
       userId: params.userId,
       minutes: params.minutes,
       now: new Date(),
     });
+    if (policySnooze) return policySnooze;
+    if (source.plannerItemId) return snoozeItemReminder(source, params, true);
+    return null;
   }
 
+  return snoozeItemReminder(source, params, false);
+}
+
+async function snoozeItemReminder(
+  source: Reminder,
+  params: {
+    userId: string;
+    reminderId: string;
+    minutes: number;
+  },
+  fallbackUsed: boolean,
+) {
   const snoozedUntil = new Date(Date.now() + params.minutes * 60 * 1000);
   if (source.plannerItemId) {
     await getDb()
@@ -447,7 +471,7 @@ export async function snoozeReminder(params: {
         ),
       );
   }
-  return createReminderIfMissing({
+  const reminder = await createReminderIfMissing({
     userId: params.userId,
     plannerItemId: source.plannerItemId,
     type: source.type,
@@ -460,8 +484,9 @@ export async function snoozeReminder(params: {
     purpose: "snooze",
     menuType: source.menuType,
     autoDeleteAfterResponse: source.autoDeleteAfterResponse,
-    payload: { ...source.payload, snoozedFrom: source.id },
+    payload: { ...source.payload, snoozedFrom: source.id, snoozeFallbackUsed: fallbackUsed },
   });
+  return reminder ? Object.assign(reminder, { snoozeTarget: "item", snoozeFallbackUsed: fallbackUsed }) : null;
 }
 
 async function snoozePolicyReminder(params: {
@@ -582,7 +607,7 @@ async function snoozePolicyReminder(params: {
       }
     }
 
-    return { ...params.source, scheduledAt: snoozeAt };
+    return Object.assign({ ...params.source, scheduledAt: snoozeAt }, { snoozeTarget: "policy" });
   });
 }
 

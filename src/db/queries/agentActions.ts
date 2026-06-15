@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { agentActions, type AgentAction } from "../schema";
@@ -115,4 +115,25 @@ export async function listPendingAgentActionsByTypes(params: {
     )
     .orderBy(desc(agentActions.createdAt))
     .limit(params.limit ?? 100);
+}
+
+export async function listRecentAgentActions(params: {
+  userId: string;
+  since?: Date | null;
+  limit?: number;
+}) {
+  const conditions = [eq(agentActions.userId, params.userId)];
+  if (params.since) {
+    conditions.push(sqlCreatedAtAfter(params.since));
+  }
+  return getDb()
+    .select()
+    .from(agentActions)
+    .where(and(...conditions))
+    .orderBy(desc(agentActions.createdAt))
+    .limit(Math.max(1, Math.min(params.limit ?? 30, 200)));
+}
+
+function sqlCreatedAtAfter(since: Date) {
+  return sql`${agentActions.createdAt} >= ${since.toISOString()}::timestamptz`;
 }

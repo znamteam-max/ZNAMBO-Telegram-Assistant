@@ -34,6 +34,7 @@ import { deleteMemoryForUser } from "@/db/queries/memories";
 import {
   ackReminderForToday,
   cancelItemReminders,
+  getReminderByIdForUser,
   snoozeReminder,
   stopRecurringReminders,
 } from "@/db/queries/reminders";
@@ -700,15 +701,37 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^reminder:snooze:([^:]+):(\d+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
+    const reminderId = ctx.match[1];
     const minutes = Number(ctx.match[2]);
+    const source = await getReminderByIdForUser({
+      userId: owner.id,
+      reminderId,
+    });
     const snoozed = await snoozeReminder({
       userId: owner.id,
-      reminderId: ctx.match[1],
+      reminderId,
       minutes,
     });
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.reminder_snooze_attempt",
+      entityType: "reminder",
+      entityId: reminderId,
+      details: {
+        minutes,
+        sourceFound: Boolean(source),
+        sourceStatus: source?.status ?? null,
+        sourcePolicyId: source?.policyId ?? null,
+        sourcePlannerItemId: source?.plannerItemId ?? null,
+        succeeded: Boolean(snoozed),
+        scheduledAt: snoozed?.scheduledAt?.toISOString() ?? null,
+        snoozeTarget: snoozed ? String((snoozed as { snoozeTarget?: unknown }).snoozeTarget ?? "unknown") : null,
+        fallbackUsed: Boolean((snoozed as { snoozeFallbackUsed?: unknown } | null)?.snoozeFallbackUsed),
+      },
+    }).catch(() => undefined);
     await ctx.answerCallbackQuery(snoozed ? "Отложил" : "Окно уже закончилось");
     if (snoozed) {
-      const row = await getPolicyForReminder(ctx.match[1]);
+      const row = await getPolicyForReminder(reminderId);
       const until = formatRuWeekdayDateTime(snoozed.scheduledAt, owner.timezone);
       await ctx.reply(`Ок, отложил «${row?.policy.title ?? "напоминание"}» до ${until}. До этого времени не буду напоминать по этой задаче.`);
     } else await ctx.reply("Не удалось отложить это напоминание.");
@@ -717,6 +740,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^reminder:snooze_(evening|tomorrow):(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
+    const reminderId = ctx.match[2];
     const nowLocal = DateTime.now().setZone(owner.timezone);
     const target =
       ctx.match[1] === "evening"
@@ -724,14 +748,36 @@ export function registerCallbacks(bot: Bot<BotContext>) {
         : nowLocal.plus({ days: 1 }).set({ hour: 9, minute: 0, second: 0, millisecond: 0 });
     const future = target > nowLocal ? target : target.plus({ days: 1 });
     const minutes = Math.max(1, Math.ceil(future.diff(nowLocal, "minutes").minutes));
+    const source = await getReminderByIdForUser({
+      userId: owner.id,
+      reminderId,
+    });
     const snoozed = await snoozeReminder({
       userId: owner.id,
-      reminderId: ctx.match[2],
+      reminderId,
       minutes,
     });
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.reminder_snooze_attempt",
+      entityType: "reminder",
+      entityId: reminderId,
+      details: {
+        preset: ctx.match[1],
+        minutes,
+        sourceFound: Boolean(source),
+        sourceStatus: source?.status ?? null,
+        sourcePolicyId: source?.policyId ?? null,
+        sourcePlannerItemId: source?.plannerItemId ?? null,
+        succeeded: Boolean(snoozed),
+        scheduledAt: snoozed?.scheduledAt?.toISOString() ?? null,
+        snoozeTarget: snoozed ? String((snoozed as { snoozeTarget?: unknown }).snoozeTarget ?? "unknown") : null,
+        fallbackUsed: Boolean((snoozed as { snoozeFallbackUsed?: unknown } | null)?.snoozeFallbackUsed),
+      },
+    }).catch(() => undefined);
     await ctx.answerCallbackQuery(snoozed ? "Отложил" : "Окно уже закончилось");
     if (snoozed) {
-      const row = await getPolicyForReminder(ctx.match[2]);
+      const row = await getPolicyForReminder(reminderId);
       const until = formatRuWeekdayDateTime(snoozed.scheduledAt, owner.timezone);
       await ctx.reply(`Ок, отложил «${row?.policy.title ?? "напоминание"}» до ${until}. До этого времени не буду напоминать по этой задаче.`);
     } else await ctx.reply("Не удалось отложить это напоминание.");

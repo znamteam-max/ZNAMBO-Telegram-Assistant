@@ -31,6 +31,12 @@ import { buildActiveContext } from "@/services/contextRetrieval";
 import { storePlanMemoryFacts } from "@/services/memory";
 import { logger } from "@/lib/logger";
 import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
+import {
+  buildRecurringPolicyDraftIntents,
+  getIncompleteRecurringPolicies,
+  startRecurringPolicyDraftSession,
+} from "@/services/recurringPolicyDraftSessions";
+import { formatRecurringClarification } from "@/domain/recurringPolicySemantics";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -39,6 +45,7 @@ import {
   actionPlanKeyboard,
   conflictKeyboard,
   postCreateTriageKeyboard,
+  recurringTimeClarificationKeyboard,
 } from "./keyboards";
 import { replyAndRecord } from "./reply";
 import { handleItemEditTurn } from "./itemEditFlow";
@@ -254,6 +261,9 @@ export async function executeActionPlanForMessage(
     };
   }
 
+  const recurringDraft = await blockIncompleteRecurringPoliciesWithDraft(ctx, params);
+  if (recurringDraft) return recurringDraft;
+
   const validation = validatePlannerItemsBeforeSave({
     plan: params.plan,
     originalMessage: params.text,
@@ -382,6 +392,88 @@ export async function executeActionPlanForMessage(
     transactionCommitted: false,
     transactionRolledBack: false,
     proposedMutationCount: params.plan.actions.length + (params.reminderPolicies?.length ?? 0),
+    committedMutationCount: 0,
+    partialMutationDetected: false,
+  };
+}
+
+async function blockIncompleteRecurringPoliciesWithDraft(
+  ctx: BotContext,
+  params: {
+    text: string;
+    timezone: string;
+    now: Date;
+    plan: ActionPlan;
+    reminderPolicies?: AgentReminderPolicy[];
+  },
+): Promise<{
+  finalAction: string;
+  validatorWarnings: string[];
+  savedItemIds: string[];
+  createdPolicyIds: string[];
+  createdReminderIds: string[];
+  transactionStarted: false;
+  transactionCommitted: false;
+  transactionRolledBack: false;
+  proposedMutationCount: number;
+  committedMutationCount: 0;
+  partialMutationDetected: false;
+} | null> {
+  const owner = requireOwner(ctx);
+  const policies = params.reminderPolicies ?? [];
+  if (!getIncompleteRecurringPolicies(policies).length) return null;
+  const action = await startRecurringPolicyDraftSession({
+    userId: owner.id,
+    sourceMessageId: ctx.dbMessageId,
+    plan: params.plan,
+    policies,
+    timezone: params.timezone,
+    now: params.now,
+  });
+  if (!action) {
+    await replyAndRecord(
+      ctx,
+      "Понял повторяющееся напоминание, но не смог безопасно открыть черновик. Ничего не создал.",
+    );
+    return {
+      finalAction: "recurring_time_clarification_failed",
+      validatorWarnings: ["recurring_policy_missing_time", "recurring_draft_create_failed"],
+      savedItemIds: [],
+      createdPolicyIds: [],
+      createdReminderIds: [],
+      transactionStarted: false,
+      transactionCommitted: false,
+      transactionRolledBack: false,
+      proposedMutationCount: params.plan.actions.length + policies.length,
+      committedMutationCount: 0,
+      partialMutationDetected: false,
+    };
+  }
+  const intents = buildRecurringPolicyDraftIntents(policies);
+  await replyAndRecord(
+    ctx,
+    [
+      "deduped" in action && action.deduped === true
+        ? "Уже держу этот черновик. Новую задачу не создаю."
+        : null,
+      formatRecurringClarification(intents),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    {
+      reply_markup: recurringTimeClarificationKeyboard(action.id, intents.length > 1),
+    },
+  );
+  return {
+    finalAction: "targeted_recurring_time_clarification",
+    validatorWarnings: ["recurring_policy_missing_time"],
+    savedItemIds: [],
+    createdPolicyIds: [],
+    createdReminderIds: [],
+    transactionStarted: false,
+    transactionCommitted: false,
+    transactionRolledBack: false,
+    proposedMutationCount: params.plan.actions.length + policies.length,
     committedMutationCount: 0,
     partialMutationDetected: false,
   };

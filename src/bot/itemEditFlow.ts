@@ -253,6 +253,7 @@ function parseStoredMutation(value: unknown): ItemEditMutation | null {
       ? { scheduledForLocal: candidate.scheduledForLocal }
       : {}),
     ...(typeof candidate.endsAtLocal === "string" ? { endsAtLocal: candidate.endsAtLocal } : {}),
+    ...(candidate.allDay === true ? { allDay: true } : {}),
     ...(typeof candidate.deadlineAtLocal === "string"
       ? { deadlineAtLocal: candidate.deadlineAtLocal }
       : {}),

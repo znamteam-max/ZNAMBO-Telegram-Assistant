@@ -51,13 +51,23 @@ export function isGlobalCreationIntent(text: string) {
 export async function clearActiveInteractionSessions(params: {
   userId: string;
   reason: string;
+  preserve?: ClearedInteractionSession[];
 }) {
   const cleared: ClearedInteractionSession[] = [];
+  const preserve = new Set(params.preserve ?? []);
   const results = await Promise.allSettled([
-    clearActiveItemEditSession({ userId: params.userId, reason: params.reason }),
-    clearActiveReminderPolicyEditSession({ userId: params.userId, reason: params.reason }),
-    clearActiveRecurringPolicyDraftSession({ userId: params.userId, reason: params.reason }),
-    clearExternalCalendarEditSession({ userId: params.userId, reason: params.reason }),
+    preserve.has("item_edit_session")
+      ? Promise.resolve(null)
+      : clearActiveItemEditSession({ userId: params.userId, reason: params.reason }),
+    preserve.has("reminder_policy_edit_session")
+      ? Promise.resolve(null)
+      : clearActiveReminderPolicyEditSession({ userId: params.userId, reason: params.reason }),
+    preserve.has("recurring_policy_draft")
+      ? Promise.resolve(null)
+      : clearActiveRecurringPolicyDraftSession({ userId: params.userId, reason: params.reason }),
+    preserve.has("external_calendar_edit_session")
+      ? Promise.resolve(null)
+      : clearExternalCalendarEditSession({ userId: params.userId, reason: params.reason }),
   ]);
   if (results[0].status === "fulfilled" && results[0].value) cleared.push("item_edit_session");
   if (results[1].status === "fulfilled" && results[1].value) {
