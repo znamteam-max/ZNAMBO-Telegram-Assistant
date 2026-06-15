@@ -32,7 +32,11 @@ npm run build -> passed
 targeted V2.15 tests -> 13 passed
 git diff --check -> passed
 production migration -> applied and verified
-production deployment and acceptance -> pending
+production deployment -> appVersion 2.15.0, commit abb71c88c4dc80657a2b1cbb2f5ea327433a7c4e
+webhook -> correct URL, pending updates 0
+runner -> configured, successful and fresh
+automatic reminder smoke -> delivered at 2026-06-15T20:19:09.419Z
+release notification and duplicate-call proof -> pending after handoff push
 ```
 
 ## V2.14.0 corrective completion after full brief re-audit

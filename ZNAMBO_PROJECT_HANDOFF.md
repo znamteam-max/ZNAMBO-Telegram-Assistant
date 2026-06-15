@@ -6,9 +6,9 @@ and remaining limitations. It must never contain secrets.
 
 Last updated: 2026-06-15
 
-## V2.15.0 Pre-Deploy Status
+## Latest Deployment - V2.15.0
 
-Target version: `2.15.0`
+Production commit: `abb71c88c4dc80657a2b1cbb2f5ea327433a7c4e`
 
 Implemented:
 
@@ -32,12 +32,17 @@ targeted V2.15 tests: 13 passed
 git diff --check: passed
 ```
 
-Pending:
+Production acceptance:
 
 ```text
 Production migration: applied and verified
-GitHub/Vercel deployment: pending
-Production health/webhook/runner verification: pending
+GitHub push and Vercel auto-deploy: passed
+/api/health: ok, appVersion 2.15.0, deployment commit matched
+Scheduler: configured, last runner succeeded and remained fresh
+Telegram webhook: correct production URL, pending updates 0
+Telegram historical last_error: 500 at 2026-06-15T12:49:48Z, before V2.15 deploy
+Reminder smoke: delivered automatically by cron-job.org at 2026-06-15T20:19:09.419Z
+Smoke item: auto-archived after delivery
 Release notification: pending
 Notification idempotency: pending
 ```
@@ -45,9 +50,9 @@ Notification idempotency: pending
 ## Current Production
 
 ```text
-Application version: 2.14.0
+Application version: 2.15.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 3a38f7cae332f0a177cf0a36b21f0e8295e7cda2
+Validated application deployment commit: abb71c88c4dc80657a2b1cbb2f5ea327433a7c4e
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -56,7 +61,7 @@ Runner lock: enabled
 Production scheduler: cron-job.org
 ```
 
-## Latest Deployment - V2.14.0
+## Previous Deployment - V2.14.0
 
 V2.14.0 fixes reminder UX, recurring duplicate safety, completed-item management, cleanup preview,
 and audit hardening. It does not replace Jarvis, mandatory OpenAI planning, ActionPlan execution,

@@ -29,9 +29,11 @@ npm run build -> passed
 ```
 
 Production migration was applied and the table, columns, unique idempotency index, and supporting
-indexes were verified. Deployment, live notification, duplicate-call proof, and final handoff
-status are the remaining rollout steps. Only `ZNAMBO_PROJECT_HANDOFF.md` is the post-deploy file
-to attach.
+indexes were verified. Vercel deployed commit `abb71c88c4dc80657a2b1cbb2f5ea327433a7c4e`;
+health, webhook and runner checks passed. A two-minute smoke was delivered automatically through
+cron-job.org at `2026-06-15T20:19:09.419Z`. Live release notification, duplicate-call proof, and
+the final handoff status remain. Only `ZNAMBO_PROJECT_HANDOFF.md` is the post-deploy file to
+attach.
 
 ## 2026-06-15 - V2.14.0 corrective completion after repeated brief attachment
 
