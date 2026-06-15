@@ -11,7 +11,7 @@ Last updated: 2026-06-15
 ```text
 Application version: 2.14.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: V2.14.0 rollout pending after this repository update
+Validated application deployment commit: d7548a60bcdf6f340ca9fabe2bbc576a83745bf6
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -55,10 +55,34 @@ Implemented:
   safe repair flow.
 - No database migration was required.
 
+## V2.14.0 Corrective Completion
+
+A second line-by-line audit of the original V2.14 brief found that the first rollout covered the
+core paths but missed several product acceptance details. The corrective implementation adds:
+
+- add / replace / cancel choice when neutral multi-reminder text targets an event that already has
+  before-event reminders;
+- explicit additive and replacement modes, with replacement cancelling old policies and future
+  reminders first;
+- individual reminder rows and remove-one/remove-all controls on item cards;
+- category-based cleanup for Telegram messages, completed items older than 30 days, stale drafts,
+  and conservatively identified broken reminders;
+- an expiring stored preview session before every cleanup confirmation;
+- completed archive behavior that removes archived rows from `/completed`;
+- explicit restore feedback that old reminder windows were not restarted;
+- review-required rendering for unknown before-event offsets;
+- non-empty failure reason, field, and suggested prompt for failed traces;
+- committed/cancelled state normalization in agent action storage and actionlog output;
+- V2.14 repair detection for contradictory recurring draft action rows.
+
+The corrective GitHub/Vercel rollout is pending after the next repository push. The currently
+validated production commit remains the value in `Current Production` above until that rollout is
+verified.
+
 ## V2.14.0 Validation Before Deploy
 
 ```text
-npm test -> 57 files passed, 274 tests passed
+npm test -> 57 files passed, 283 tests passed
 npm run lint -> passed
 npm run build -> passed
 git diff --check -> passed
@@ -66,13 +90,19 @@ secret scan -> no live secret values found; README env placeholders only
 database migration -> not required
 ```
 
-Production acceptance still must be checked after GitHub/Vercel auto-deploy:
+## V2.14.0 Production Acceptance
 
 ```text
-/api/health should report appVersion 2.14.0
-Telegram webhook should remain pointed at production and have no last error
-/admin_repair_v2140 preview should be safe before apply
-Reminder smoke and cron-job.org runner should remain healthy
+Production application commit: d7548a60bcdf6f340ca9fabe2bbc576a83745bf6
+GitHub push and Vercel auto-deploy: passed
+/api/health: ok, appVersion 2.14.0, deployment commit matched
+Scheduler: configured, lastRunnerSucceeded true
+Telegram webhook: ok, production URL, pending updates 0, no last error
+OpenAI health: real call succeeded, model gpt-4o-mini-2024-07-18, structured/tool response ID present, latency 4724 ms
+V2.14 repair preview before apply: safe true, generic before-event policies 1, calendar objects to change 0
+V2.14 repair apply: applied safely, changed zero Yandex Calendar objects
+V2.14 repair preview after apply: generic before-event policies 0, stale drafts 0, duplicate policies 0, completed invisible items 0
+Reminder smoke: protected two-minute smoke delivered to Telegram, reminder status sent, delivery status sent at 2026-06-15T12:17:08.250Z, test item auto-archived
 ```
 
 ## Previous Deployment - V2.13.0

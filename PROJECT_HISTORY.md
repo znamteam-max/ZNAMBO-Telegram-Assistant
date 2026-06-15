@@ -1,5 +1,37 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## V2.14.0 corrective completion after full brief re-audit
+
+The original V2.14 rollout covered the core reminder draft, duplicate detection, multi-policy
+creation, completed view, cleanup confirmation, overdue classification and repair. A second
+line-by-line audit of the source brief found product-level gaps and completed them without changing
+the app version or database schema.
+
+Corrective implementation:
+
+```text
+neutral multi-reminder edits now ask add versus replace when event reminders already exist
+explicit add and replace language is respected; replace cancels old policies and future reminders
+item cards list reminders individually and expose remove-one/remove-all controls
+cleanup now lists messages, old completed items, stale drafts and broken reminders with counts
+every cleanup category uses a stored preview session and explicit confirmation
+completed archive now removes the row from /completed; restore never blindly restarts old reminders
+unknown before-event offsets are shown as needs-clarification and repair pauses them for review
+failed decision traces receive non-empty reason, field and suggested prompt
+agent action transitions and actionlog output cannot expose committed and cancelled markers together
+V2.14 repair now detects and normalizes contradictory recurring draft action rows
+```
+
+Validation:
+
+```text
+npm test -> 57 files passed, 283 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+database migration -> not required
+```
+
 ## V2.14.0 reminder UX, multi-reminders, completed items and audit hardening
 
 V2.14.0 was implemented on top of V2.13.0 without replacing Jarvis, mandatory OpenAI planning,

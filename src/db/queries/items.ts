@@ -390,11 +390,19 @@ export async function listCompletedPlannerItems(params: {
   userId: string;
   limit?: number;
   offset?: number;
+  includeArchived?: boolean;
 }): Promise<PlannerItem[]> {
+  const conditions = [
+    eq(plannerItems.userId, params.userId),
+    eq(plannerItems.status, "completed"),
+  ];
+  if (!params.includeArchived) {
+    conditions.push(sql<boolean>`coalesce(${plannerItems.visibility}, 'active') = 'active'`);
+  }
   return getDb()
     .select()
     .from(plannerItems)
-    .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.status, "completed")))
+    .where(and(...conditions))
     .orderBy(desc(plannerItems.completedAt), desc(plannerItems.updatedAt))
     .limit(params.limit ?? 5)
     .offset(params.offset ?? 0);

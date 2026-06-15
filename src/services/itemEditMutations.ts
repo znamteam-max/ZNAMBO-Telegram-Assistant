@@ -30,7 +30,7 @@ export type ItemEditReminderMutation = {
     minutesBefore: number;
     label: string;
   }>;
-  mode: "add";
+  mode: "add" | "replace" | "ask";
 };
 
 export type ItemEditMutation = {
@@ -395,7 +395,13 @@ function parseBeforeEventMultiReminderMutation(params: {
   }
   const result = [...unique.values()].sort((left, right) => right.minutesBefore - left.minutesBefore);
   if (!result.length) return null;
-  return { policyType: "before_event_multi", reminders: result, mode: "add" };
+  const mode =
+    /(?:замени|заменить|вместо|оставь\s+только)/i.test(normalized)
+      ? "replace"
+      : /(?:добавь|добавить|ещ[её])/i.test(normalized)
+        ? "add"
+        : "ask";
+  return { policyType: "before_event_multi", reminders: result, mode };
 }
 
 function parseAllDaySchedule(params: {
@@ -587,6 +593,28 @@ async function createBeforeEventReminderPolicies(params: {
   const reminderIds: string[] = [];
   const warnings: string[] = [];
   const timezone = params.item.timezone || params.timezone;
+  if (params.mutation.mode === "replace") {
+    const existing = (await listReminderPoliciesForItem(params.userId, params.item.id, 100)).filter(
+      (policy) => policy.status === "active" && policy.policyType === "before_event",
+    );
+    for (const policy of existing) {
+      await cancelPendingRemindersForPolicy({
+        userId: params.userId,
+        policyId: policy.id,
+        from: params.now,
+      });
+      await updateReminderPolicy({
+        userId: params.userId,
+        policyId: policy.id,
+        status: "cancelled",
+        nextFireAt: null,
+        metadata: {
+          replacedByMultiReminderAt: params.now.toISOString(),
+          replacementSource: "item_edit_session",
+        },
+      });
+    }
+  }
   for (const reminder of params.mutation.reminders) {
     const fireAt = DateTime.fromISO(reminder.fireAtLocal, { zone: timezone }).toUTC().toJSDate();
     const policy = await createReminderPolicyIfMissing({
@@ -646,7 +674,8 @@ function formatItemVariant(params: {
 
 function formatReminderMutation(mutation: ItemEditReminderMutation) {
   if (mutation.policyType === "before_event_multi") {
-    return mutation.reminders.map((reminder) => reminder.label).join(", ");
+    const action = mutation.mode === "replace" ? "заменить на" : "добавить";
+    return `${action}: ${mutation.reminders.map((reminder) => reminder.label).join(", ")}`;
   }
   return `каждый час с ${mutation.activeWindowStart}, пока не отметишь готово`;
 }

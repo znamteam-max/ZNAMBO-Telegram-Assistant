@@ -33,6 +33,7 @@ import {
 import { deleteMemoryForUser } from "@/db/queries/memories";
 import {
   ackReminderForToday,
+  cancelPendingRemindersForPolicy,
   cancelItemReminders,
   getReminderByIdForUser,
   snoozeReminder,
@@ -75,7 +76,13 @@ import {
   registerBotMessage,
 } from "@/telegram/messageLifecycle";
 import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
-import { renderCleanupPreview } from "@/services/cleanupPreview";
+import {
+  applyCleanupPreviewSession,
+  cancelCleanupPreviewSession,
+  getCleanupPreviewSession,
+  renderCleanupPreview,
+} from "@/services/cleanupPreview";
+import type { CleanupCategory } from "@/bot/keyboards";
 import {
   archiveCompletedItem,
   renderCompletedItemsView,
@@ -123,7 +130,11 @@ import {
   undoActionKeyboard,
 } from "./keyboards";
 import { formatCommittedPlanSummary, formatCreatedItem } from "./formatters";
-import { cancelItemEditPreview, confirmItemEditPreview } from "./itemEditFlow";
+import {
+  cancelItemEditPreview,
+  chooseMultiReminderMode,
+  confirmItemEditPreview,
+} from "./itemEditFlow";
 import { startExternalCalendarEditSession } from "./externalCalendarEditFlow";
 import { applyRecurringPolicyDraftTime } from "./recurringPolicyDraftFlow";
 import {
@@ -589,6 +600,10 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await confirmItemEditPreview(ctx, ctx.match[1]);
   });
 
+  bot.callbackQuery(/^item_edit:multi_mode:(add|replace):(.+)$/, async (ctx) => {
+    await chooseMultiReminderMode(ctx, ctx.match[2], ctx.match[1] as "add" | "replace");
+  });
+
   bot.callbackQuery(/^item_edit:cancel:(.+)$/, async (ctx) => {
     await cancelItemEditPreview(ctx, ctx.match[1]);
   });
@@ -996,19 +1011,58 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await ctx.reply(preview.text, { reply_markup: preview.keyboard });
   });
 
-  bot.callbackQuery(/^cleanup:(preview|confirm):chat:(.+)$/, async (ctx) => {
-    const owner = requireOwner(ctx);
-    const mode = ctx.match[1];
-    const chatId = ctx.match[2];
-    if (mode === "preview") {
-      await ctx.answerCallbackQuery("Preview");
-      const preview = await renderCleanupPreview({ userId: owner.id, chatId });
+  bot.callbackQuery(
+    /^cleanup:preview:(messages|completed|drafts|broken|all):chat:(.+)$/,
+    async (ctx) => {
+      const owner = requireOwner(ctx);
+      const category = ctx.match[1] as CleanupCategory;
+      const chatId = ctx.match[2];
+      await ctx.answerCallbackQuery("Показываю preview");
+      const preview = await renderCleanupPreview({
+        userId: owner.id,
+        chatId,
+        category,
+      });
       await ctx.reply(preview.text, { reply_markup: preview.keyboard });
+    },
+  );
+
+  bot.callbackQuery(/^cleanup:confirm:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const actionId = ctx.match[1];
+    const session = await getCleanupPreviewSession({ userId: owner.id, actionId });
+    if (!session) {
+      await ctx.answerCallbackQuery("Preview устарел");
       return;
     }
-    await ctx.answerCallbackQuery("Очищаю карточки");
-    await cleanupTransientMessages({ userId: owner.id, chatId });
+    await ctx.answerCallbackQuery("Выполняю подтверждённую очистку");
+    let deletedMessages = 0;
+    if (session.category === "messages" || session.category === "all") {
+      const results = await cleanupTransientMessages({
+        userId: owner.id,
+        chatId: session.chatId,
+      });
+      deletedMessages = results.filter(Boolean).length;
+    }
+    const result = await applyCleanupPreviewSession({ userId: owner.id, actionId });
+    await ctx.reply(
+      [
+        "Очистка завершена.",
+        `Сообщения: ${deletedMessages}`,
+        `Архивировано выполненных: ${result?.archivedCompleted ?? 0}`,
+        `Отменено черновиков: ${result?.cancelledDrafts ?? 0}`,
+        `Отключено сломанных напоминаний: ${result?.cancelledBrokenPolicies ?? 0}`,
+        "Яндекс.Календарь: 0 изменений.",
+      ].join("\n"),
+    );
     await refreshAfterCallback(ctx);
+  });
+
+  bot.callbackQuery(/^cleanup:cancel:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    await cancelCleanupPreviewSession({ userId: owner.id, actionId: ctx.match[1] });
+    await ctx.answerCallbackQuery("Отменено");
+    await ctx.reply("Очистку не выполняю.");
   });
 
   bot.callbackQuery("cleanup:cancel", async (ctx) => {
@@ -1042,7 +1096,12 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     const owner = requireOwner(ctx);
     const restored = await restoreCompletedItem({ userId: owner.id, itemId: ctx.match[1] });
     await ctx.answerCallbackQuery(restored ? "Вернул" : "Не найдено");
-    if (restored) await refreshAfterCallback(ctx, restored.id);
+    if (restored) {
+      await ctx.reply(
+        `Вернул в задачи: «${restored.title}». Старые завершённые или просроченные напоминания не включал.`,
+      );
+      await refreshAfterCallback(ctx, restored.id);
+    }
   });
 
   bot.callbackQuery(/^completed:archive:(.+)$/, async (ctx) => {
@@ -1328,6 +1387,58 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery(/^item:priority:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     await sendPolicyEditorMessage(ctx, "Выбери видимую важность:", priorityEditorKeyboard("item", ctx.match[1]));
+  });
+
+  bot.callbackQuery(/^item_policy:cancel:([^:]+):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const itemId = ctx.match[1];
+    const policyId = ctx.match[2];
+    const current = (await listReminderPoliciesForItem(owner.id, itemId, 100)).find(
+      (policy) =>
+        policy.id === policyId &&
+        policy.status === "active" &&
+        policy.policyType === "before_event",
+    );
+    const policy = current
+      ? await updateReminderPolicy({
+          userId: owner.id,
+          policyId,
+          status: "cancelled",
+          nextFireAt: null,
+          metadata: {
+            cancelledFromItemCardAt: new Date().toISOString(),
+            cancelReason: "individual_before_event_reminder_removed",
+          },
+        })
+      : null;
+    if (policy) {
+      await cancelPendingRemindersForPolicy({ userId: owner.id, policyId });
+    }
+    await ctx.answerCallbackQuery(policy ? "Напоминание удалено" : "Не найдено");
+    await refreshAfterCallback(ctx, itemId);
+  });
+
+  bot.callbackQuery(/^item_policy:cancel_all_before:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const itemId = ctx.match[1];
+    const policies = (await listReminderPoliciesForItem(owner.id, itemId, 100)).filter(
+      (policy) => policy.status === "active" && policy.policyType === "before_event",
+    );
+    for (const policy of policies) {
+      await cancelPendingRemindersForPolicy({ userId: owner.id, policyId: policy.id });
+      await updateReminderPolicy({
+        userId: owner.id,
+        policyId: policy.id,
+        status: "cancelled",
+        nextFireAt: null,
+        metadata: {
+          cancelledFromItemCardAt: new Date().toISOString(),
+          cancelReason: "all_before_event_reminders_removed",
+        },
+      });
+    }
+    await ctx.answerCallbackQuery(`Удалено: ${policies.length}`);
+    await refreshAfterCallback(ctx, itemId);
   });
 
   bot.callbackQuery(/^item:marker:(.+)$/, async (ctx) => {

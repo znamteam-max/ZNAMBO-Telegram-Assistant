@@ -4,6 +4,7 @@ import {
   updatePlannerItemDetails,
 } from "@/db/queries/items";
 import {
+  listRecentAgentActions,
   listPendingAgentActionsByTypes,
   updateAgentAction,
 } from "@/db/queries/agentActions";
@@ -15,7 +16,7 @@ import { cancelPendingRemindersForPolicy } from "@/db/queries/reminders";
 import type { AgentAction, PlannerItem, ReminderPolicy } from "@/db/schema";
 
 export async function previewV2140ProductionRepair(params: { userId: string; now?: Date }) {
-  const [items, policies, sessions, completed] = await loadData(params.userId);
+  const [items, policies, sessions, completed, recentActions] = await loadData(params.userId);
   const genericEventReminderPolicyIds = policies
     .filter((policy) => isGenericBeforeEventPolicy(policy, items))
     .map((policy) => policy.id);
@@ -31,6 +32,14 @@ export async function previewV2140ProductionRepair(params: { userId: string; now
     .filter((item) => isOverdueItem(item, params.now ?? new Date()))
     .filter((item) => item.metadata?.needsReview === true || item.metadata?.timeUnspecified === true)
     .map((item) => item.id);
+  const contradictoryDraftActionIds = recentActions
+    .filter((action) =>
+      ["recurring_policy_draft", "recurring_policy_duplicate_decision"].includes(
+        action.actionType,
+      ),
+    )
+    .filter(hasContradictoryDraftState)
+    .map((action) => action.id);
 
   return {
     overdueAsUnresolvedItemIds,
@@ -38,6 +47,7 @@ export async function previewV2140ProductionRepair(params: { userId: string; now
     staleRecurringDraftIds,
     duplicateMirrorPolicyIds,
     completedInvisibleItemIds,
+    contradictoryDraftActionIds,
     calendarObjectsToChange: 0,
     safeToApply: true,
     notes: [
@@ -46,6 +56,7 @@ export async function previewV2140ProductionRepair(params: { userId: string; now
       `stale/contradictory recurring drafts: ${staleRecurringDraftIds.length}`,
       `duplicate mirror recurring policies: ${duplicateMirrorPolicyIds.length}`,
       `completed invisible items: ${completedInvisibleItemIds.length}`,
+      `contradictory draft action rows: ${contradictoryDraftActionIds.length}`,
       "Yandex Calendar objects will not be changed",
     ],
   };
@@ -54,11 +65,12 @@ export async function previewV2140ProductionRepair(params: { userId: string; now
 export async function applyV2140ProductionRepair(params: { userId: string; now?: Date }) {
   const now = params.now ?? new Date();
   const preview = await previewV2140ProductionRepair({ ...params, now });
-  const [items, policies, sessions, completed] = await loadData(params.userId);
+  const [items, policies, sessions, completed, recentActions] = await loadData(params.userId);
   const normalizedItemIds: string[] = [];
   const normalizedPolicyIds: string[] = [];
   const cancelledPolicyIds: string[] = [];
   const clearedDraftIds: string[] = [];
+  const normalizedDraftActionIds: string[] = [];
 
   for (const item of items.filter((candidate) =>
     preview.overdueAsUnresolvedItemIds.includes(candidate.id),
@@ -81,7 +93,27 @@ export async function applyV2140ProductionRepair(params: { userId: string; now?:
   )) {
     const item = items.find((candidate) => candidate.id === policy.itemId);
     const metadata = inferBeforeEventMetadata(policy, item);
-    if (!metadata) continue;
+    if (!metadata) {
+      await cancelPendingRemindersForPolicy({
+        userId: params.userId,
+        policyId: policy.id,
+        from: now,
+      });
+      const paused = await updateReminderPolicy({
+        userId: params.userId,
+        policyId: policy.id,
+        status: "paused",
+        nextFireAt: null,
+        metadata: {
+          needsReview: true,
+          reviewReason: "before_event_offset_unknown",
+          repairedBy: "admin_repair_v2140",
+          repairedAt: now.toISOString(),
+        },
+      });
+      if (paused) normalizedPolicyIds.push(paused.id);
+      continue;
+    }
     const updated = await updateReminderPolicy({
       userId: params.userId,
       policyId: policy.id,
@@ -148,12 +180,30 @@ export async function applyV2140ProductionRepair(params: { userId: string; now?:
     if (updated) normalizedItemIds.push(updated.id);
   }
 
+  for (const action of recentActions.filter((candidate) =>
+    preview.contradictoryDraftActionIds.includes(candidate.id),
+  )) {
+    const status = action.status === "completed" ? "completed" : "cancelled";
+    const updated = await updateAgentAction({
+      userId: params.userId,
+      actionId: action.id,
+      status,
+      output: {
+        ...(action.output ?? {}),
+        repairedBy: "admin_repair_v2140",
+        repairedAt: now.toISOString(),
+      },
+    });
+    if (updated) normalizedDraftActionIds.push(updated.id);
+  }
+
   return {
     ...preview,
     normalizedItemIds,
     normalizedPolicyIds,
     cancelledPolicyIds,
     clearedDraftIds,
+    normalizedDraftActionIds,
   };
 }
 
@@ -166,7 +216,8 @@ async function loadData(userId: string) {
       actionTypes: ["recurring_policy_draft", "recurring_policy_duplicate_decision"],
       limit: 100,
     }),
-    listCompletedPlannerItems({ userId, limit: 200 }),
+    listCompletedPlannerItems({ userId, limit: 200, includeArchived: true }),
+    listRecentAgentActions({ userId, limit: 500 }),
   ]);
 }
 
@@ -190,6 +241,14 @@ function isStaleOrContradictoryDraft(action: AgentAction) {
   if (output.committedAt && output.cancelledAt) return true;
   const expiresAt = typeof output.expiresAt === "string" ? new Date(output.expiresAt) : null;
   return Boolean(expiresAt && expiresAt < new Date());
+}
+
+function hasContradictoryDraftState(action: AgentAction) {
+  const output = action.output ?? {};
+  return Boolean(
+    (output.committedAt || output.completedAt) &&
+      (output.cancelledAt || output.cancelledReason),
+  );
 }
 
 function duplicateMirrorPolicies(policies: ReminderPolicy[]) {

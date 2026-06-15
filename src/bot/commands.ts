@@ -18,6 +18,7 @@ import { createManualPlannerItem } from "@/db/queries/items";
 import { createReminderIfMissing } from "@/db/queries/reminders";
 import { markUserOnboarded, updateUserTimezone } from "@/db/queries/users";
 import { assertValidZone } from "@/domain/dateTime";
+import { hardenAgentTraceDetails } from "@/domain/agentTraceHygiene";
 import { getCalendarProvider, getEnv, isGoogleCalendarConfigured } from "@/lib/env";
 import { createGoogleCalendarAuthUrl } from "@/integrations/googleCalendar";
 import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
@@ -1337,7 +1338,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       await ctx.reply("Пока нет decision trace.");
       return;
     }
-    const details = row.details as Record<string, unknown>;
+    const details = hardenAgentTraceDetails(row.details as Record<string, unknown>);
     await ctx.reply(
       [
         "Последнее AI-решение:",

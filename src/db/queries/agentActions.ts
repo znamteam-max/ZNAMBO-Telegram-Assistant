@@ -47,16 +47,40 @@ export async function updateAgentAction(params: {
   output?: Record<string, unknown>;
   undoPayload?: Record<string, unknown>;
 }) {
+  const output =
+    params.output !== undefined
+      ? normalizeAgentActionOutputForStatus(params.status, params.output)
+      : undefined;
   const [row] = await getDb()
     .update(agentActions)
     .set({
       status: params.status,
-      ...(params.output !== undefined ? { output: params.output } : {}),
+      ...(output !== undefined ? { output } : {}),
       ...(params.undoPayload !== undefined ? { undoPayload: params.undoPayload } : {}),
     })
     .where(and(eq(agentActions.userId, params.userId), eq(agentActions.id, params.actionId)))
     .returning();
   return row ?? null;
+}
+
+export function normalizeAgentActionOutputForStatus(
+  status: string,
+  output: Record<string, unknown>,
+) {
+  const normalized = { ...output };
+  if (status === "completed") {
+    delete normalized.cancelledAt;
+    delete normalized.cancelledReason;
+  } else if (status === "cancelled") {
+    delete normalized.committedAt;
+    delete normalized.completedAt;
+  } else if (status === "failed") {
+    delete normalized.committedAt;
+    delete normalized.completedAt;
+    delete normalized.cancelledAt;
+    delete normalized.cancelledReason;
+  }
+  return normalized;
 }
 
 export async function getLatestAgentAction(params: {

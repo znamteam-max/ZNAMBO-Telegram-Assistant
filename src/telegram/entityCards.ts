@@ -72,24 +72,43 @@ async function renderItemCard(params: {
   const boost = getUrgencyBoost({ item }, now, params.timezone);
   const campaignGroup = String(item.metadata?.campaignGroup ?? "");
   const activePolicies = policies.filter((policy) => policy.status === "active");
+  const beforeEventPolicies = activePolicies
+    .filter((policy) => policy.policyType === "before_event")
+    .sort(
+      (left, right) =>
+        Number(right.metadata?.minutesBefore ?? 0) - Number(left.metadata?.minutesBefore ?? 0),
+    );
+  const displayPolicies = [
+    ...beforeEventPolicies,
+    ...activePolicies.filter((policy) => policy.policyType !== "before_event"),
+  ];
   return {
     text: [
       item.title,
       "",
       `Статус: ${item.status}`,
+      item.status === "completed" && item.completedAt
+        ? `Выполнено: ${formatRuWeekdayDateTime(item.completedAt, item.timezone, {
+            includeYear: true,
+          })}`
+        : null,
       `Тип: ${itemKindLabels[item.kind] ?? item.kind}`,
       ...formatItemTimingLines(item),
       `Важность: ${visibleImportanceLabel({ item })}`,
       `Сейчас: ${importanceLabel(effective)}; ${urgencyExplanation(boost)}`,
-      ...(activePolicies.length
-        ? activePolicies.map(
-            (policy) =>
-              `Напоминания: ${formatHumanReminderPolicy(policy, item.timezone, {
-                now,
-                includeMarker: false,
-                item,
-              })}`,
-          )
+      ...(displayPolicies.length
+        ? [
+            "Напоминания:",
+            ...displayPolicies.map(
+              (policy, index) =>
+                `${index + 1}. ${formatHumanReminderPolicy(policy, item.timezone, {
+                  now,
+                  includeNext: policy.policyType === "before_event",
+                  includeMarker: false,
+                  item,
+                })}`,
+            ),
+          ]
         : ["Напоминания: нет"]),
       item.snoozedUntil && item.snoozedUntil > now
         ? `Отложено до: ${formatRuWeekdayDateTime(item.snoozedUntil, item.timezone)}`
@@ -112,6 +131,7 @@ async function renderItemCard(params: {
             campaignGroup || null,
             calendar?.status ?? null,
             Boolean(item.dueAt && !item.startAt),
+            beforeEventPolicies,
           ),
   };
 }

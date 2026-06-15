@@ -1,5 +1,6 @@
 import { listRecentAgentActions } from "@/db/queries/agentActions";
 import { listRecentAuditLogs } from "@/db/queries/audit";
+import { hardenAgentTraceDetails } from "@/domain/agentTraceHygiene";
 
 type ActionLogEntry = {
   source: "audit" | "agent_action";
@@ -29,20 +30,33 @@ export async function buildActionLog(params: {
       id: row.id,
       createdAt: row.createdAt,
       action: row.action,
-      details: sanitizeForActionLog(row.details),
+      details: sanitizeForActionLog(
+        row.action === "assistant.agent_decision_trace" ||
+          row.action === "assistant.jarvis_trace" ||
+          row.action === "assistant.decision_trace"
+          ? hardenAgentTraceDetails(row.details)
+          : row.details,
+      ),
     })),
-    ...agentRows.map((row) => ({
-      source: "agent_action" as const,
-      id: row.id,
-      createdAt: row.createdAt,
-      action: row.actionType,
-      status: row.status,
-      details: sanitizeForActionLog({
-        input: row.input,
-        output: row.output,
-        undoPayloadPresent: Boolean(Object.keys(row.undoPayload ?? {}).length),
-      }),
-    })),
+    ...agentRows.map((row) => {
+      const output = normalizeAgentActionOutputForLog(row.status, row.output);
+      return {
+        source: "agent_action" as const,
+        id: row.id,
+        createdAt: row.createdAt,
+        action: row.actionType,
+        status: row.status,
+        details: sanitizeForActionLog({
+          input: row.input,
+          output,
+          createdItemIds: output.createdItemIds,
+          updatedItemIds: output.updatedItemIds,
+          createdPolicyIds: output.createdPolicyIds,
+          createdReminderIds: output.createdReminderIds,
+          undoPayloadPresent: Boolean(Object.keys(row.undoPayload ?? {}).length),
+        }),
+      };
+    }),
   ]
     .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
     .slice(0, limit);
@@ -60,6 +74,21 @@ export async function buildActionLog(params: {
     text: lines.join("\n").slice(0, params.exportMode ? 80_000 : 3_800),
     entries,
   };
+}
+
+export function normalizeAgentActionOutputForLog(
+  status: string | null | undefined,
+  output: Record<string, unknown>,
+) {
+  const normalized = { ...output };
+  if (status === "completed") {
+    delete normalized.cancelledAt;
+    delete normalized.cancelledReason;
+  } else if (status === "cancelled") {
+    delete normalized.committedAt;
+    delete normalized.completedAt;
+  }
+  return normalized;
 }
 
 export function parseActionLogArgs(raw: string | undefined | null) {

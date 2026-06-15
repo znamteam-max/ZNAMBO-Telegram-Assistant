@@ -1,5 +1,35 @@
 # ZNAMBO Telegram Assistant Chat History
 
+## 2026-06-15 - V2.14.0 corrective completion after repeated brief attachment
+
+The user attached the same V2.14 source brief again without additional text. A strict re-audit
+showed that the first rollout had implemented the core paths but had not completed every acceptance
+criterion.
+
+Completed in this corrective pass:
+
+- add versus replace decision for existing event reminders;
+- explicit additive and replacement multi-reminder modes;
+- individual and remove-all controls on item reminder cards;
+- category-based cleanup with counts, stored preview sessions and explicit confirmation;
+- safe archive of completed items older than 30 days;
+- stale draft cancellation and conservative broken-policy cleanup;
+- archived completed rows no longer remain in `/completed`;
+- unknown event offsets are review-required instead of a vague normal reminder;
+- failed trace diagnostics are always actionable;
+- committed/cancelled action markers are normalized in storage and logs;
+- V2.14 repair detects contradictory recurring draft action rows.
+
+Validation:
+
+```text
+npm test -> 57 files, 283 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+No migration was required and no calendar cleanup path was introduced.
+
 ## 2026-06-15 - V2.14.0 implementation and pre-deploy validation
 
 User attached the V2.14 reminder UX, multi-reminders, completed-items and audit-hardening brief.

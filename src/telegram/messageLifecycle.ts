@@ -118,7 +118,14 @@ export async function cleanupTransientMessages(params: {
   const messages = await listActiveMessages({
     userId: params.userId,
     chatId: params.chatId,
-    purposes: ["item_menu", "reminder", "followup", "confirmation", "transient_status"],
+    purposes: [
+      "item_menu",
+      "reminder",
+      "followup",
+      "confirmation",
+      "transient_status",
+      "policy_editor",
+    ],
   });
   const result = await deleteMessagesSafe({
     chatId: params.chatId,

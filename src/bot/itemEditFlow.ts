@@ -4,6 +4,7 @@ import {
   updateAgentAction,
 } from "@/db/queries/agentActions";
 import { getPlannerItemById, listManageableItems } from "@/db/queries/items";
+import { listReminderPoliciesForItem } from "@/db/queries/reminderPolicies";
 import type { PlannerItem } from "@/db/schema";
 import {
   applyItemEditMutation,
@@ -26,7 +27,12 @@ import { logger } from "@/lib/logger";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
-import { conflictKeyboard, itemEditPreviewKeyboard, undoActionKeyboard } from "./keyboards";
+import {
+  conflictKeyboard,
+  itemEditPreviewKeyboard,
+  multiReminderConflictKeyboard,
+  undoActionKeyboard,
+} from "./keyboards";
 import { replyAndRecord } from "./reply";
 
 export async function handleItemEditTurn(
@@ -46,7 +52,7 @@ export async function handleItemEditTurn(
   }
   if (!session) return false;
 
-  const mutation = parseItemEditMutation({
+  let mutation = parseItemEditMutation({
     text,
     item: session.item,
     timezone,
@@ -60,6 +66,48 @@ export async function handleItemEditTurn(
       ].join("\n"),
     );
     return true;
+  }
+
+  if (
+    mutation.reminderPolicy?.policyType === "before_event_multi" &&
+    mutation.reminderPolicy.mode === "ask"
+  ) {
+    const existing = (await listReminderPoliciesForItem(owner.id, session.item.id, 100)).filter(
+      (policy) => policy.status === "active" && policy.policyType === "before_event",
+    );
+    if (!existing.length) {
+      mutation = {
+        ...mutation,
+        reminderPolicy: { ...mutation.reminderPolicy, mode: "add" },
+      };
+    } else {
+      const preview = await recordAgentAction({
+        userId: owner.id,
+        sourceMessageId: ctx.dbMessageId,
+        actionType: "item_edit_preview",
+        status: "pending",
+        input: {
+          text: text.slice(0, 1200),
+          sessionActionId: session.action.id,
+          itemId: session.item.id,
+        },
+        output: {
+          itemId: session.item.id,
+          mutation,
+          existingBeforeEventPolicyIds: existing.map((policy) => policy.id),
+          expiresAt: session.expiresAt.toISOString(),
+        },
+      });
+      await replyAndRecord(
+        ctx,
+        [
+          `У «${session.item.title}» уже есть напоминания перед событием: ${existing.length}.`,
+          "Добавить новые к существующим или заменить существующие?",
+        ].join("\n"),
+        { reply_markup: preview ? multiReminderConflictKeyboard(preview.id) : undefined },
+      );
+      return true;
+    }
   }
 
   const canApplyDirectly =
@@ -99,6 +147,39 @@ export async function handleItemEditTurn(
     reply_markup: preview ? itemEditPreviewKeyboard(preview.id) : undefined,
   });
   return true;
+}
+
+export async function chooseMultiReminderMode(
+  ctx: BotContext,
+  actionId: string,
+  mode: "add" | "replace",
+) {
+  const owner = requireOwner(ctx);
+  const action = await getAgentActionById({ userId: owner.id, actionId });
+  if (!action || action.actionType !== "item_edit_preview" || action.status !== "pending") {
+    await ctx.answerCallbackQuery("Уже обработано или устарело");
+    return;
+  }
+  const mutation = parseStoredMutation(action.output?.mutation);
+  if (!mutation || mutation.reminderPolicy?.policyType !== "before_event_multi") {
+    await updateAgentAction({ userId: owner.id, actionId, status: "failed" });
+    await ctx.answerCallbackQuery("Не удалось прочитать напоминания");
+    return;
+  }
+  await updateAgentAction({
+    userId: owner.id,
+    actionId,
+    status: "pending",
+    output: {
+      ...(action.output ?? {}),
+      mutation: {
+        ...mutation,
+        reminderPolicy: { ...mutation.reminderPolicy, mode },
+      },
+      reminderConflictDecision: mode,
+    },
+  });
+  await confirmItemEditPreview(ctx, actionId);
 }
 
 export async function confirmItemEditPreview(ctx: BotContext, actionId: string) {

@@ -40,7 +40,9 @@ export function formatHumanReminderPolicy(
   const parts = [
     beforeEvent ||
       [recurrence, interval].filter(Boolean).join(", ") ||
-      (policy.policyType === "before_event" ? "перед событием" : "один раз"),
+      (policy.policyType === "before_event"
+        ? "напоминание перед событием — нужно уточнить время"
+        : "один раз"),
     startClock && endClock ? `с ${startClock} до ${endClock}` : null,
     isPersistentReminderPolicy(policy) ? "пока не отмечу" : null,
   ].filter(Boolean);

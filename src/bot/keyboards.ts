@@ -140,6 +140,14 @@ export function itemEditPreviewKeyboard(actionId: string) {
     .text("Открыть план", "dashboard:refresh");
 }
 
+export function multiReminderConflictKeyboard(actionId: string) {
+  return new InlineKeyboard()
+    .text("Добавить ещё", `item_edit:multi_mode:add:${actionId}`)
+    .text("Заменить", `item_edit:multi_mode:replace:${actionId}`)
+    .row()
+    .text("Отмена", `item_edit:cancel:${actionId}`);
+}
+
 export function conflictKeyboard(firstItemId: string, secondItemId: string) {
   return new InlineKeyboard()
     .text("Оставить оба", "conflict:keep")
@@ -164,6 +172,7 @@ export function itemMenuKeyboard(
   campaignGroup?: string | null,
   calendarStatus?: string | null,
   deadlineOnly = false,
+  beforeEventPolicies: ReminderPolicy[] = [],
 ) {
   const keyboard = new InlineKeyboard()
     .text("✅ Выполнено", `done:${itemId}`)
@@ -180,6 +189,16 @@ export function itemMenuKeyboard(
     keyboard.row().text("Повторить sync", `calendar:retry:${itemId}`);
   }
   if (campaignGroup) keyboard.row().text("📣 Кампания", `entity:open:campaign:${campaignGroup}`);
+  for (const [index, policy] of beforeEventPolicies.slice(0, 3).entries()) {
+    keyboard
+      .row()
+      .text(`Удалить напоминание ${index + 1}`, `item_policy:cancel:${itemId}:${policy.id}`);
+  }
+  if (beforeEventPolicies.length > 1) {
+    keyboard
+      .row()
+      .text("Удалить все напоминания", `item_policy:cancel_all_before:${itemId}`);
+  }
   return keyboard
     .row()
     .text("↩️ К плану", "dashboard:refresh")
@@ -261,13 +280,37 @@ export function completedItemKeyboard(itemId: string) {
     .text("План", "dashboard:refresh");
 }
 
-export function cleanupPreviewKeyboard(chatId: string) {
+export type CleanupCategory = "messages" | "completed" | "drafts" | "broken" | "all";
+
+export function cleanupPreviewKeyboard(
+  chatId: string,
+  counts?: Partial<Record<CleanupCategory, number>>,
+) {
   return new InlineKeyboard()
-    .text("Preview: карточки чата", `cleanup:preview:chat:${chatId}`)
+    .text(`Сообщения (${counts?.messages ?? 0})`, `cleanup:preview:messages:chat:${chatId}`)
+    .text(`Выполненные (${counts?.completed ?? 0})`, `cleanup:preview:completed:chat:${chatId}`)
     .row()
-    .text("Очистить карточки чата", `cleanup:confirm:chat:${chatId}`)
+    .text(`Черновики (${counts?.drafts ?? 0})`, `cleanup:preview:drafts:chat:${chatId}`)
+    .text(`Сломанные (${counts?.broken ?? 0})`, `cleanup:preview:broken:chat:${chatId}`)
+    .row()
+    .text(`Показать всё (${counts?.all ?? 0})`, `cleanup:preview:all:chat:${chatId}`)
     .row()
     .text("Отмена", "cleanup:cancel");
+}
+
+export function cleanupConfirmationKeyboard(actionId: string, category: CleanupCategory) {
+  const label =
+    category === "messages"
+      ? "Да, убрать сообщения"
+      : category === "completed"
+        ? "Да, архивировать"
+        : category === "all"
+          ? "Да, выполнить всё"
+          : "Да, очистить";
+  return new InlineKeyboard()
+    .text(label, `cleanup:confirm:${actionId}`)
+    .row()
+    .text("Отмена", `cleanup:cancel:${actionId}`);
 }
 
 export function itemMoreKeyboard(itemId: string) {

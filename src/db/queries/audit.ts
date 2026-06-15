@@ -1,6 +1,7 @@
 import { getDb } from "../client";
 import { auditLog } from "../schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { hardenAgentTraceDetails } from "@/domain/agentTraceHygiene";
 
 export async function writeAudit(params: {
   userId?: string | null;
@@ -9,6 +10,12 @@ export async function writeAudit(params: {
   entityId?: string | null;
   details?: Record<string, unknown>;
 }) {
+  const details =
+    params.action === "assistant.agent_decision_trace" ||
+    params.action === "assistant.jarvis_trace" ||
+    params.action === "assistant.decision_trace"
+      ? hardenAgentTraceDetails(params.details ?? {})
+      : params.details ?? {};
   await getDb()
     .insert(auditLog)
     .values({
@@ -16,7 +23,7 @@ export async function writeAudit(params: {
       action: params.action,
       entityType: params.entityType,
       entityId: params.entityId,
-      details: params.details ?? {},
+      details,
     });
 }
 
