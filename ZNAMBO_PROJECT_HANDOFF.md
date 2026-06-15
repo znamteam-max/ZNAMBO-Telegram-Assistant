@@ -43,9 +43,14 @@ Telegram webhook: correct production URL, pending updates 0
 Telegram historical last_error: 500 at 2026-06-15T12:49:48Z, before V2.15 deploy
 Reminder smoke: delivered automatically by cron-job.org at 2026-06-15T20:19:09.419Z
 Smoke item: auto-archived after delivery
-Release notification: pending
-Notification idempotency: pending
+Release notification: sent at 2026-06-15T20:20:30.517Z
+Telegram message id: 868
+Notification idempotency: verified; second call returned already_sent with message id 868
 ```
+
+The release gate reported one safe warning: `historical_webhook_error`. The recorded Telegram
+webhook error is from `2026-06-15T12:49:48Z`, before V2.15.0 deployment. The webhook URL matches
+production, pending updates are zero, and the error timestamp did not advance during rollout.
 
 ## Current Production
 

@@ -36,7 +36,8 @@ production deployment -> appVersion 2.15.0, commit abb71c88c4dc80657a2b1cbb2f5ea
 webhook -> correct URL, pending updates 0
 runner -> configured, successful and fresh
 automatic reminder smoke -> delivered at 2026-06-15T20:19:09.419Z
-release notification and duplicate-call proof -> pending after handoff push
+release notification -> sent at 2026-06-15T20:20:30.517Z, Telegram message id 868
+duplicate-call proof -> already_sent, no second Telegram message
 ```
 
 ## V2.14.0 corrective completion after full brief re-audit
