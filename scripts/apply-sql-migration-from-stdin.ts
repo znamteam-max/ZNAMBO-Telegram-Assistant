@@ -22,9 +22,12 @@ try {
     .filter(Boolean);
 
   for (const [index, statement] of statements.entries()) {
-    await retry(async () => {
-      await sql.unsafe(statement);
-    }, `statement ${index + 1}/${statements.length}`);
+    await retry(
+      async () => {
+        await sql.unsafe(statement);
+      },
+      `statement ${index + 1}/${statements.length}`,
+    );
   }
 
   const tables = await sql<{ table_name: string }[]>`
@@ -53,6 +56,7 @@ try {
           'telegram_message_registry',
           'reminder_policies',
           'reminder_policy_occurrences'
+          ,'release_notifications'
         )
       )
     order by table_name, column_name
@@ -80,14 +84,14 @@ async function retry(fn: () => Promise<void>, label: string) {
       if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
     }
   }
-  throw new Error(`${label} failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+  throw new Error(
+    `${label} failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
 }
 
 function splitMigrationStatements(migration: string) {
   if (migration.includes("--> statement-breakpoint")) {
     return migration.split("--> statement-breakpoint");
   }
-  return migration.split(
-    /(?<=;)\s*(?=(?:ALTER TABLE|CREATE TABLE|CREATE INDEX|DO \$\$ BEGIN)\b)/,
-  );
+  return migration.split(/(?<=;)\s*(?=(?:ALTER TABLE|CREATE TABLE|CREATE INDEX|DO \$\$ BEGIN)\b)/);
 }

@@ -1,5 +1,40 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## V2.15.0 release notification and deploy completion
+
+V2.15.0 adds a persistent, idempotent production release-completion notification without
+rewriting Jarvis, mandatory OpenAI planning, ActionPlan execution, Yandex CalDAV, reminder
+policies, or cron-job.org scheduling.
+
+Implemented:
+
+```text
+assistant.release_notifications stores version+commit+environment delivery state
+duplicate notification calls return already_sent and do not send a second Telegram message
+failed Telegram delivery is stored as failed and can be retried
+same-version hotfix notifications require an explicit allowHotfix flag
+release gate verifies production health, exact version, exact commit, webhook, runner,
+migration evidence, smoke evidence, and handoff completion
+/version and /release show concise live production status
+/release_notes and /changelog show safe structured release notes
+/release_notify is owner-only through the existing Telegram allowlist middleware
+protected admin action release_notify uses the existing CRON_SECRET bearer guard
+/api/health exposes only safe latest release-notification metadata
+drizzle/0009_release_notifications.sql adds the persistent idempotency store
+```
+
+Validation before deploy:
+
+```text
+npm test -> 58 files passed, 296 tests passed
+npm run lint -> passed
+npm run build -> passed
+targeted V2.15 tests -> 13 passed
+git diff --check -> passed
+production migration -> applied and verified
+production deployment and acceptance -> pending
+```
+
 ## V2.14.0 corrective completion after full brief re-audit
 
 The original V2.14 rollout covered the core reminder draft, duplicate detection, multi-policy

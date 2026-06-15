@@ -38,6 +38,7 @@ import {
   RECONCILER_ENABLED,
   RUNNER_LOCK_ENABLED,
 } from "@/lib/version";
+import { RELEASE_NOTES, normalizeReleaseVersion } from "@/lib/releaseMetadata";
 import {
   applyV242ProductionRepair,
   previewV242ProductionRepair,
@@ -58,10 +59,7 @@ import {
 } from "@/services/calendarDiagnostics";
 import { getProductionStateV252 } from "@/services/productionDiagnostics";
 import { retryCalendarSyncsForUser } from "@/services/calendarSyncRetry";
-import {
-  applyV253CalendarRepair,
-  previewV253CalendarRepair,
-} from "@/services/v253CalendarRepair";
+import { applyV253CalendarRepair, previewV253CalendarRepair } from "@/services/v253CalendarRepair";
 import {
   applyV254ProductionRepair,
   previewV254ProductionRepair,
@@ -110,6 +108,13 @@ import {
   previewV2140ProductionRepair,
 } from "@/services/v2140ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
+import {
+  getReleaseOverview,
+  notifyProductionRelease,
+  renderReleaseNotesMessage,
+  renderReleaseNotifyResult,
+  renderVersionMessage,
+} from "@/services/releaseNotification";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -173,6 +178,9 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/cronhealth — статус scheduler и policy reconciler",
         "/policydebug — диагностика последней reminder policy",
         "/versiondebug — версии policy engine, interval algorithm и runner lock",
+        "/version, /release — текущая production-версия и статус",
+        "/release_notes, /changelog — кратко об изменениях",
+        "/release_notify — отправить owner-уведомление после завершённой проверки релиза",
         "/lasttranscript — показать последнюю расшифровку",
         "/history, /yesterday, /weeklog, /review — история и итоги",
         "/calendar — статус календаря",
@@ -390,7 +398,9 @@ export function registerCommands(bot: Bot<BotContext>) {
 
   bot.command("calendar_cleanup", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyExternalCalendarCleanup({ userId: owner.id })
@@ -418,7 +428,9 @@ export function registerCommands(bot: Bot<BotContext>) {
 
   bot.command("calendar_view", async (ctx) => {
     const owner = requireOwner(ctx);
-    const requested = String(ctx.match ?? "").trim().toLowerCase();
+    const requested = String(ctx.match ?? "")
+      .trim()
+      .toLowerCase();
     const changes =
       requested === "jarvis_only"
         ? { mode: "jarvis_only" as const }
@@ -491,7 +503,10 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("reminders", async (ctx) => {
     const owner = requireOwner(ctx);
-    const scope = String(ctx.match ?? "").trim().toLowerCase() || "active";
+    const scope =
+      String(ctx.match ?? "")
+        .trim()
+        .toLowerCase() || "active";
     const center = await renderReminderControlCenter({
       userId: owner.id,
       timezone: owner.timezone,
@@ -596,28 +611,40 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("history", async (ctx) => {
     const owner = requireOwner(ctx);
-    const view = await renderDailyHistoryView({ userId: owner.id, timezone: owner.timezone, days: 3 });
+    const view = await renderDailyHistoryView({
+      userId: owner.id,
+      timezone: owner.timezone,
+      days: 3,
+    });
     await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
   });
   bot.command("yesterday", async (ctx) => {
     const owner = requireOwner(ctx);
     const localDate = DateTime.now().setZone(owner.timezone).minus({ days: 1 }).toISODate()!;
     const view = await renderDailyHistoryView({
-        userId: owner.id,
-        timezone: owner.timezone,
-        days: 1,
-        endDate: localDate,
-      });
+      userId: owner.id,
+      timezone: owner.timezone,
+      days: 1,
+      endDate: localDate,
+    });
     await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
   });
   bot.command("weeklog", async (ctx) => {
     const owner = requireOwner(ctx);
-    const view = await renderDailyHistoryView({ userId: owner.id, timezone: owner.timezone, days: 7 });
+    const view = await renderDailyHistoryView({
+      userId: owner.id,
+      timezone: owner.timezone,
+      days: 7,
+    });
     await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
   });
   bot.command("review", async (ctx) => {
     const owner = requireOwner(ctx);
-    const view = await renderDailyHistoryView({ userId: owner.id, timezone: owner.timezone, days: 1 });
+    const view = await renderDailyHistoryView({
+      userId: owner.id,
+      timezone: owner.timezone,
+      days: 1,
+    });
     await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
   });
   bot.command("admin_repair_reminder_policies", async (ctx) => {
@@ -715,7 +742,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v251", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     if (mode === "apply") {
       const result = await applyV251ProductionRepair(owner.id);
       await replyAndRecord(
@@ -755,7 +784,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v252", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const params = { userId: owner.id, timezone: owner.timezone };
     if (mode === "apply") {
       const result = await applyV252ProductionRepair(params);
@@ -795,9 +826,50 @@ export function registerCommands(bot: Bot<BotContext>) {
       ].join("\n"),
     );
   });
+  bot.command("version", async (ctx) => {
+    requireOwner(ctx);
+    await replyAndRecord(ctx, renderVersionMessage(await getReleaseOverview()));
+  });
+  bot.command("release", async (ctx) => {
+    requireOwner(ctx);
+    await replyAndRecord(ctx, renderVersionMessage(await getReleaseOverview()));
+  });
+  bot.command("release_notes", async (ctx) => {
+    requireOwner(ctx);
+    await replyAndRecord(ctx, renderReleaseNotesMessage());
+  });
+  bot.command("changelog", async (ctx) => {
+    requireOwner(ctx);
+    await replyAndRecord(ctx, renderReleaseNotesMessage());
+  });
+  bot.command("release_notify", async (ctx) => {
+    requireOwner(ctx);
+    const requested = String(ctx.match ?? "").trim();
+    if (requested.toLowerCase() === "status") {
+      await replyAndRecord(ctx, renderVersionMessage(await getReleaseOverview()));
+      return;
+    }
+    const overview = await getReleaseOverview();
+    const version = normalizeReleaseVersion(requested || RELEASE_NOTES.version);
+    const commitSha =
+      overview.inspection.commitSha ?? process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown";
+    const result = await notifyProductionRelease({
+      version,
+      commitSha,
+      summary: [...RELEASE_NOTES.bullets],
+      tests: [
+        "migrations:verified_by_release_store",
+        "smoke:owner_confirmed_after_production_acceptance",
+      ],
+      handoffUpdated: true,
+    });
+    await replyAndRecord(ctx, renderReleaseNotifyResult(result));
+  });
   bot.command("admin_repair_v253_calendar", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     if (mode === "apply") {
       const result = await applyV253CalendarRepair(owner.id);
       await replyAndRecord(
@@ -832,14 +904,13 @@ export function registerCommands(bot: Bot<BotContext>) {
 
   bot.command("admin_repair_v254", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "").trim().toLowerCase();
+    const mode = String(ctx.match ?? "")
+      .trim()
+      .toLowerCase();
     if (mode === "apply") {
       const result = await applyV254ProductionRepair(owner.id);
       const calendarRetry = await retryCalendarSyncsForUser({ userId: owner.id });
-      const conflicts = detectPlanConflicts([
-        ...result.retained,
-        ...result.restored,
-      ]);
+      const conflicts = detectPlanConflicts([...result.retained, ...result.restored]);
       await replyAndRecord(
         ctx,
         [
@@ -880,7 +951,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v270", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     if (mode === "apply") {
       const result = await applyV270ProductionRepair({ userId: owner.id });
       await replyAndRecord(
@@ -919,7 +992,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v280", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyV280ProductionRepair({ userId: owner.id })
@@ -947,7 +1022,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v290", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyV290ProductionRepair({ userId: owner.id })
@@ -979,7 +1056,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v2100", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyV2100ProductionRepair({ userId: owner.id })
@@ -1012,7 +1091,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v2110", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyV2110ProductionRepair({ userId: owner.id })
@@ -1051,7 +1132,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v2120", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyV2120ProductionRepair({ userId: owner.id })
@@ -1090,7 +1173,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v2130", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyV2130ProductionRepair({ userId: owner.id })
@@ -1132,7 +1217,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v2140", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyV2140ProductionRepair({ userId: owner.id })

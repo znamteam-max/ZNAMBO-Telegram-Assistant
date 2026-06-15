@@ -1,5 +1,38 @@
 # ZNAMBO Telegram Assistant Chat History
 
+## 2026-06-15 - V2.15.0 release notification implementation
+
+The user attached the V2.15 release-notification brief and asked to continue. The requested
+behavior is that JARVIS should notify the owner only after a production fix is actually deployed
+and checked, with one canonical post-deploy handoff file.
+
+Completed in code:
+
+- persistent `assistant.release_notifications` idempotency storage;
+- production release gate for health, version, commit, webhook, runner, migration/smoke evidence,
+  and handoff completion;
+- Telegram send retry after a recorded failed attempt;
+- explicit opt-in for same-version hotfix notifications;
+- owner commands `/version`, `/release`, `/release_notes`, `/changelog`, `/release_notify`;
+- protected `release_notify` admin action using the existing bearer guard;
+- safe release metadata and secret redaction;
+- latest safe release-notification status in `/api/health`;
+- migration `drizzle/0009_release_notifications.sql`;
+- 13 focused V2.15 tests plus the existing regression suite.
+
+Validation:
+
+```text
+npm test -> 58 files, 296 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+Production migration was applied and the table, columns, unique idempotency index, and supporting
+indexes were verified. Deployment, live notification, duplicate-call proof, and final handoff
+status are the remaining rollout steps. Only `ZNAMBO_PROJECT_HANDOFF.md` is the post-deploy file
+to attach.
+
 ## 2026-06-15 - V2.14.0 corrective completion after repeated brief attachment
 
 The user attached the same V2.14 source brief again without additional text. A strict re-audit

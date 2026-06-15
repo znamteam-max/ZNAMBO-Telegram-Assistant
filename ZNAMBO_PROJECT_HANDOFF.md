@@ -6,12 +6,48 @@ and remaining limitations. It must never contain secrets.
 
 Last updated: 2026-06-15
 
+## V2.15.0 Pre-Deploy Status
+
+Target version: `2.15.0`
+
+Implemented:
+
+- persistent `assistant.release_notifications` storage with unique version+commit+environment;
+- release gate for health, exact version/commit, webhook, runner, migration/smoke evidence, and
+  handoff completion;
+- failed-send retry and duplicate-send protection;
+- explicit opt-in for same-version hotfix notifications;
+- `/version`, `/release`, `/release_notes`, `/changelog`, `/release_notify`;
+- protected admin action `release_notify`;
+- safe release metadata and health status;
+- migration `drizzle/0009_release_notifications.sql`.
+
+Validation:
+
+```text
+npm test: 58 files, 296 tests passed
+npm run lint: passed
+npm run build: passed
+targeted V2.15 tests: 13 passed
+git diff --check: passed
+```
+
+Pending:
+
+```text
+Production migration: applied and verified
+GitHub/Vercel deployment: pending
+Production health/webhook/runner verification: pending
+Release notification: pending
+Notification idempotency: pending
+```
+
 ## Current Production
 
 ```text
 Application version: 2.14.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: d7548a60bcdf6f340ca9fabe2bbc576a83745bf6
+Validated application deployment commit: 3a38f7cae332f0a177cf0a36b21f0e8295e7cda2
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -75,9 +111,9 @@ core paths but missed several product acceptance details. The corrective impleme
 - committed/cancelled state normalization in agent action storage and actionlog output;
 - V2.14 repair detection for contradictory recurring draft action rows.
 
-The corrective GitHub/Vercel rollout is pending after the next repository push. The currently
-validated production commit remains the value in `Current Production` above until that rollout is
-verified.
+The corrective implementation is deployed. GitHub `main` currently ends with the empty deployment
+trigger commit `2c65854b1077fe939512fb70d3b0dd9caea85189`; the application deployment correctly reports
+the preceding code commit `3a38f7cae332f0a177cf0a36b21f0e8295e7cda2`.
 
 ## V2.14.0 Validation Before Deploy
 
@@ -103,6 +139,27 @@ V2.14 repair preview before apply: safe true, generic before-event policies 1, c
 V2.14 repair apply: applied safely, changed zero Yandex Calendar objects
 V2.14 repair preview after apply: generic before-event policies 0, stale drafts 0, duplicate policies 0, completed invisible items 0
 Reminder smoke: protected two-minute smoke delivered to Telegram, reminder status sent, delivery status sent at 2026-06-15T12:17:08.250Z, test item auto-archived
+```
+
+## V2.14.0 Corrective Production Acceptance
+
+```text
+Production application commit: 3a38f7cae332f0a177cf0a36b21f0e8295e7cda2
+GitHub main trigger commit: 2c65854b1077fe939512fb70d3b0dd9caea85189
+GitHub push and Vercel deployment: passed after one empty webhook-trigger commit
+/api/health: ok, appVersion 2.14.0, deployment commit matched the corrective code commit
+Scheduler: configured, final lastRunnerSucceeded true
+Telegram webhook: production URL, pending updates 0
+Telegram historical last_error: 500 at 2026-06-15T12:49:48Z, before corrective deploy; timestamp did not change after deploy
+OpenAI health: real call succeeded, model gpt-4o-mini-2024-07-18, response ID present
+V2.14 repair preview before apply: safe true, generic 0, stale drafts 0, duplicates 0, contradictory rows 0
+V2.14 repair apply: passed, zero Yandex Calendar objects changed
+V2.14 repair preview after apply: clean
+Reminder smoke: delivered to Telegram at 2026-06-15T16:14:09.798Z, reminder and delivery sent, test item auto-archived
+Local tests: 57 files, 283 tests passed
+Lint: passed
+Build: passed
+Database migration: not required
 ```
 
 ## Previous Deployment - V2.13.0

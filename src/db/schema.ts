@@ -656,6 +656,32 @@ export const agentActions = assistantTable(
   ],
 );
 
+export const releaseNotifications = assistantTable(
+  "release_notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    version: text("version").notNull(),
+    commitSha: text("commit_sha").notNull(),
+    environment: text("environment").notNull().default("production"),
+    status: text("status").notNull().default("pending"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    telegramMessageId: bigint("telegram_message_id", { mode: "bigint" }),
+    summary: jsonb("summary").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    lastError: text("last_error"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("release_notifications_version_commit_environment_uq").on(
+      table.version,
+      table.commitSha,
+      table.environment,
+    ),
+    index("release_notifications_status_created_idx").on(table.status, table.createdAt),
+    index("release_notifications_version_sent_idx").on(table.version, table.sentAt),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type PlannerItem = typeof plannerItems.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
@@ -677,3 +703,4 @@ export type TaskViewState = typeof taskViewStates.$inferSelect;
 export type AgentAction = typeof agentActions.$inferSelect;
 export type ExternalCalendarEvent = typeof externalCalendarEvents.$inferSelect;
 export type CalendarImportState = typeof calendarImportState.$inferSelect;
+export type ReleaseNotification = typeof releaseNotifications.$inferSelect;

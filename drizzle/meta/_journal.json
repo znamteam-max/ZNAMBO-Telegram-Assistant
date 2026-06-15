@@ -64,6 +64,13 @@
       "when": 1781352000000,
       "tag": "0008_reminder_policy_snooze",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781535600000,
+      "tag": "0009_release_notifications",
+      "breakpoints": true
     }
   ]
 }

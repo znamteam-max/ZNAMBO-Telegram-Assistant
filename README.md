@@ -314,6 +314,34 @@ npm run db:migrate
 npm run telegram:webhook
 ```
 
+Release owner commands:
+
+```text
+/version
+/release
+/release_notes
+/changelog
+/release_notify
+/release_notify status
+```
+
+## Production Release Completion
+
+After every production fix:
+
+1. Apply and verify required migrations.
+2. Verify `/api/health` reports the expected version and application commit.
+3. Verify Telegram webhook and reminder runner health.
+4. Complete or explicitly record the release smoke/repair result.
+5. Update `ZNAMBO_PROJECT_HANDOFF.md`.
+6. Call protected admin action `release_notify` with version, exact commit, safe summary, test
+   evidence, and `handoffUpdated: true`.
+7. Call it a second time and verify `already_sent`.
+8. Record the Telegram message id and idempotency result in the handoff.
+
+The protected action uses the existing `CRON_SECRET` bearer authentication. Release notification
+payloads and documentation must never contain secrets.
+
 ## Manual Acceptance
 
 1. Send `/start`, then `/remindertest 2`, and verify a Telegram reminder in 2 minutes.

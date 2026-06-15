@@ -62,10 +62,7 @@ import {
   getCalendarStatus,
   runCalendarWriteTest,
 } from "@/services/calendarDiagnostics";
-import {
-  applyV253CalendarRepair,
-  previewV253CalendarRepair,
-} from "@/services/v253CalendarRepair";
+import { applyV253CalendarRepair, previewV253CalendarRepair } from "@/services/v253CalendarRepair";
 import { retryCalendarSyncsForUser } from "@/services/calendarSyncRetry";
 import {
   applyV254ProductionRepair,
@@ -100,6 +97,7 @@ import {
   previewV2140ProductionRepair,
 } from "@/services/v2140ProductionRepair";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
+import { notifyProductionRelease } from "@/services/releaseNotification";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -125,7 +123,30 @@ export async function POST(request: Request) {
     itemIds?: string[];
     text?: string;
     confirm?: boolean;
+    version?: string;
+    commitSha?: string;
+    summary?: string[];
+    tests?: string[];
+    handoffUpdated?: boolean;
+    allowHotfix?: boolean;
   };
+  if (
+    body.action === "release_notify" &&
+    typeof body.version === "string" &&
+    typeof body.commitSha === "string"
+  ) {
+    const result = await notifyProductionRelease({
+      version: body.version,
+      commitSha: body.commitSha,
+      summary: Array.isArray(body.summary) ? body.summary : undefined,
+      tests: Array.isArray(body.tests) ? body.tests : undefined,
+      handoffUpdated: body.handoffUpdated === true,
+      allowHotfix: body.allowHotfix === true,
+    });
+    return NextResponse.json(result, {
+      status: result.ok ? 200 : result.reason === "telegram_send_failed" ? 502 : 409,
+    });
+  }
   if (body.action === "policy_repair_preview") {
     const preview = await previewReminderPolicyRepair({
       userId: owner.id,

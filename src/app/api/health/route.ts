@@ -21,6 +21,7 @@ import {
 import { getSchedulerRuntimeHealth } from "@/db/queries/schedulerHealth";
 import { getReminderPolicyHealthStats } from "@/db/queries/reminderPolicies";
 import { getLatestCalendarImportState } from "@/db/queries/externalCalendarEvents";
+import { getLatestReleaseNotification } from "@/db/queries/releaseNotifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +37,7 @@ export async function GET() {
     lastTranscription,
     lastNaturalLanguagePlan,
     lastPlannerGuardBlock,
+    latestReleaseNotification,
   ] = await Promise.all([
     getLatestAiAuditStatus({ succeeded: true }).catch(() => null),
     getLatestAiAuditStatus().catch(() => null),
@@ -48,10 +50,13 @@ export async function GET() {
     getLatestAuditByActionGlobal("assistant.transcription_status").catch(() => null),
     getLatestAuditByActionGlobal("assistant.agent_decision_trace").catch(() => null),
     getLatestPlannerGuardBlock().catch(() => null),
+    getLatestReleaseNotification().catch(() => null),
   ]);
   const lastSuccessfulDetails = lastSuccessfulAi?.details as Record<string, unknown> | undefined;
   const lastCallDetails = lastAiCall?.details as Record<string, unknown> | undefined;
-  const lastTranscriptionDetails = lastTranscription?.details as Record<string, unknown> | undefined;
+  const lastTranscriptionDetails = lastTranscription?.details as
+    | Record<string, unknown>
+    | undefined;
   const lastPlanDetails = lastNaturalLanguagePlan?.details as Record<string, unknown> | undefined;
   const lastGuardDetails = lastPlannerGuardBlock?.details as Record<string, unknown> | undefined;
   const runnerStartedAt = scheduler?.lastRunnerStartedAt ?? null;
@@ -110,8 +115,15 @@ export async function GET() {
             : ""),
       ) || null,
     lastPlannerGuardBlockedAt: lastPlannerGuardBlock?.createdAt?.toISOString() ?? null,
-    lastNaturalLanguagePlanAttemptAt:
-      lastNaturalLanguagePlan?.createdAt?.toISOString() ?? null,
+    lastNaturalLanguagePlanAttemptAt: lastNaturalLanguagePlan?.createdAt?.toISOString() ?? null,
     lastNaturalLanguagePlanResult: String(lastPlanDetails?.finalAction ?? "") || null,
+    latestReleaseNotification: latestReleaseNotification
+      ? {
+          version: latestReleaseNotification.version,
+          commitSha: latestReleaseNotification.commitSha,
+          status: latestReleaseNotification.status,
+          sentAt: latestReleaseNotification.sentAt?.toISOString() ?? null,
+        }
+      : null,
   });
 }
