@@ -11,6 +11,9 @@ import {
   recordAgentAction,
   updateAgentAction,
 } from "@/db/queries/agentActions";
+import { updateReminderPolicy } from "@/db/queries/reminderPolicies";
+import { cancelPendingRemindersForPolicy } from "@/db/queries/reminders";
+import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
 import {
   nextRecurringOccurrence,
   parseCanonicalRecurrenceRule,
@@ -27,6 +30,7 @@ export async function startRecurringPolicyDraftSession(params: {
   policies: AgentReminderPolicy[];
   timezone: string;
   now?: Date;
+  updateExistingPolicyId?: string | null;
 }) {
   const now = params.now ?? new Date();
   const expiresAt = DateTime.fromJSDate(now, { zone: "utc" })
@@ -80,6 +84,7 @@ export async function startRecurringPolicyDraftSession(params: {
       timezone: params.timezone,
       draftFingerprint,
       expiresAt: expiresAt.toISOString(),
+      updateExistingPolicyId: params.updateExistingPolicyId ?? null,
     },
   });
 }
@@ -120,6 +125,10 @@ export async function getActiveRecurringPolicyDraftSession(params: {
       typeof action.output?.timezone === "string"
         ? action.output.timezone
         : "Europe/Moscow",
+    updateExistingPolicyId:
+      typeof action.output?.updateExistingPolicyId === "string"
+        ? action.output.updateExistingPolicyId
+        : null,
   };
 }
 
@@ -174,6 +183,54 @@ export function getIncompleteRecurringPolicies(policies: AgentReminderPolicy[]) 
     const parsed = parseCanonicalRecurrenceRule(policy.recurrenceRule);
     return parsed && parsed.kind !== "legacy" && !parsed.timeLocal;
   });
+}
+
+export async function applyTimeToExistingRecurringPolicyDraft(params: {
+  userId: string;
+  policyId: string;
+  policy: AgentReminderPolicy;
+  timeLocal: string;
+  timezone: string;
+  now?: Date;
+}) {
+  const now = params.now ?? new Date();
+  const recurrenceRule = params.policy.recurrenceRule
+    ? withRecurringPolicyTime(params.policy.recurrenceRule, params.timeLocal)
+    : params.policy.recurrenceRule;
+  const nextFireAt = nextRecurringOccurrence({
+    rule: recurrenceRule,
+    after: now,
+    timezone: params.timezone,
+  });
+  const updated = await updateReminderPolicy({
+    userId: params.userId,
+    policyId: params.policyId,
+    title: params.policy.title,
+    category: params.policy.category,
+    policyType: params.policy.policyType,
+    recurrenceRule,
+    nextFireAt,
+    requireAck: params.policy.requireAck,
+    status: "active",
+    snoozedUntil: null,
+    snoozeScope: null,
+    metadata: {
+      mutationSource: "recurring_policy_duplicate_update",
+      selectedTime: params.timeLocal,
+      updatedFromDraftAt: now.toISOString(),
+    },
+  });
+  if (!updated) return { policy: null, reminderId: null };
+  await cancelPendingRemindersForPolicy({
+    userId: params.userId,
+    policyId: updated.id,
+    from: now,
+  });
+  const reminder =
+    nextFireAt && nextFireAt > now
+      ? await materializeNextPolicyReminder(updated, nextFireAt, { now })
+      : null;
+  return { policy: updated, reminderId: reminder?.id ?? null };
 }
 
 export function buildRecurringPolicyDraftIntents(policies: AgentReminderPolicy[]) {

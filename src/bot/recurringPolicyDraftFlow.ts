@@ -1,11 +1,15 @@
 import type { AgentExecution } from "@/ai/schemas/agentExecution";
 import type { BotContext } from "@/bot/context";
 import { requireOwner } from "@/bot/context";
-import { recurringTimeClarificationKeyboard } from "@/bot/keyboards";
+import {
+  recurringPolicyDuplicateKeyboard,
+  recurringTimeClarificationKeyboard,
+} from "@/bot/keyboards";
 import { executeActionPlanForMessage } from "@/bot/messagePipeline";
 import { replyAndRecord } from "@/bot/reply";
 import {
   applyTimeToRecurringPolicyDraft,
+  applyTimeToExistingRecurringPolicyDraft,
   buildRecurringPolicyDraftIntents,
   finishRecurringPolicyDraftSession,
   getActiveRecurringPolicyDraftSession,
@@ -13,6 +17,11 @@ import {
   startRecurringPolicyDraftSession,
 } from "@/services/recurringPolicyDraftSessions";
 import { formatRecurringClarification } from "@/domain/recurringPolicySemantics";
+import {
+  findSimilarActiveRecurringPolicy,
+  formatRecurringDuplicatePrompt,
+  startRecurringPolicyDuplicateDecisionSession,
+} from "@/services/recurringPolicyDuplicateDetection";
 
 export function hasIncompleteRecurringPolicies(execution: AgentExecution) {
   return getIncompleteRecurringPolicies(execution.reminderPolicies).length > 0;
@@ -26,6 +35,27 @@ export async function presentRecurringPolicyClarification(params: {
 }) {
   const owner = requireOwner(params.ctx);
   if (!params.execution.actionPlan) return false;
+  const duplicate = await findSimilarActiveRecurringPolicy({
+    userId: owner.id,
+    policies: params.execution.reminderPolicies,
+  }).catch(() => null);
+  if (duplicate) {
+    const action = await startRecurringPolicyDuplicateDecisionSession({
+      userId: owner.id,
+      sourceMessageId: params.ctx.dbMessageId,
+      plan: params.execution.actionPlan,
+      policies: params.execution.reminderPolicies,
+      match: duplicate,
+      timezone: params.timezone,
+      now: params.now,
+    });
+    if (action) {
+      await replyAndRecord(params.ctx, formatRecurringDuplicatePrompt(duplicate), {
+        reply_markup: recurringPolicyDuplicateKeyboard(action.id),
+      });
+      return true;
+    }
+  }
   const action = await startRecurringPolicyDraftSession({
     userId: owner.id,
     sourceMessageId: params.ctx.dbMessageId,
@@ -89,6 +119,46 @@ export async function applyRecurringPolicyDraftTime(
     timeLocal,
     timezone: session.timezone || timezone,
   });
+  if (session.updateExistingPolicyId) {
+    const firstPolicy = finalized.policies[0];
+    if (!firstPolicy) {
+      await finishRecurringPolicyDraftSession({
+        userId: owner.id,
+        actionId,
+        status: "failed",
+        details: { selectedTime: timeLocal, safeError: "empty_recurring_policy_draft" },
+      });
+      await ctx.reply("Не смог прочитать черновик повторяющегося напоминания. Ничего не изменил.");
+      return false;
+    }
+    const updated = await applyTimeToExistingRecurringPolicyDraft({
+      userId: owner.id,
+      policyId: session.updateExistingPolicyId,
+      policy: firstPolicy,
+      timeLocal,
+      timezone: session.timezone || timezone,
+      now: new Date(),
+    });
+    await finishRecurringPolicyDraftSession({
+      userId: owner.id,
+      actionId,
+      status: updated.policy ? "completed" : "failed",
+      details: {
+        selectedTime: timeLocal,
+        updatedPolicyId: updated.policy?.id ?? null,
+        createdReminderId: updated.reminderId,
+        finalAction: updated.policy
+          ? "updated_existing_recurring_policy"
+          : "existing_recurring_policy_update_failed",
+      },
+    });
+    await ctx.reply(
+      updated.policy
+        ? `Обновил существующее повторяющееся напоминание: ${updated.policy.title} в ${timeLocal}.`
+        : "Не нашёл существующее повторяющееся напоминание. Ничего не изменил.",
+    );
+    return Boolean(updated.policy);
+  }
   try {
     const result = await executeActionPlanForMessage(ctx, {
       text: `recurring draft ${actionId} at ${timeLocal}`,

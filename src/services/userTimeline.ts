@@ -22,6 +22,7 @@ export type TimelineDateBucket =
   | "today"
   | "tomorrow"
   | "soon"
+  | "overdue"
   | "unresolved_past"
   | "campaigns"
   | "long_term"
@@ -32,7 +33,7 @@ export type UserTimelineRow = {
   entityRef: EntityRef;
   status: string;
   dateBucket: TimelineDateBucket;
-  classification: TimelineClassification | "unresolved_past";
+  classification: TimelineClassification | "unresolved_past" | "overdue";
   editable: true;
   item?: PlannerItem;
   policy?: ReminderPolicy;
@@ -104,6 +105,7 @@ export function buildUserTimelineViewFromData(params: {
       today: rows.filter((row) => row.dateBucket === "today"),
       tomorrow: rows.filter((row) => row.dateBucket === "tomorrow"),
       soon: rows.filter((row) => row.dateBucket === "soon"),
+      overdue: rows.filter((row) => row.dateBucket === "overdue"),
       unresolvedPast: rows.filter((row) => row.dateBucket === "unresolved_past"),
       campaigns: rows.filter((row) => row.dateBucket === "campaigns"),
       longTerm: rows.filter((row) => row.dateBucket === "long_term"),
@@ -120,19 +122,33 @@ function buildItemRow(
   entityRef?: EntityRef,
 ): UserTimelineRow {
   const anchor = item.startAt ?? item.dueAt;
+  const overdue =
+    item.status === "active" &&
+    item.metadata?.needsReview !== true &&
+    !item.metadata?.importConflict &&
+    Boolean(anchor && anchor < now) &&
+    item.kind !== "event" &&
+    item.kind !== "tentative_event";
   const unresolvedPast =
     (item.metadata?.isExternalCalendarEvent === true &&
       item.metadata?.showPastExternal === true &&
       Boolean((item.endAt ?? item.startAt) && (item.endAt ?? item.startAt)! <= now)) ||
     (item.status === "active" &&
-      item.kind !== "event" &&
-      item.kind !== "recurring_task" &&
-      Boolean(anchor && anchor.getTime() < now.getTime() - 48 * 60 * 60 * 1000));
+      Boolean(
+        item.metadata?.needsReview === true ||
+          item.metadata?.timeUnspecified === true ||
+          item.metadata?.importConflict === true ||
+          item.metadata?.orphanPolicy === true ||
+          item.metadata?.invalidRecurrence === true,
+      ));
   const classification = unresolvedPast
     ? "unresolved_past"
+    : overdue
+      ? "overdue"
     : classifyTimelineItem({ item }, now, timezone);
   const tomorrow =
     !unresolvedPast &&
+    !overdue &&
     anchor &&
     isTomorrow(anchor, now, item.timezone || timezone);
   return {
@@ -209,8 +225,9 @@ function buildPolicyRow(policy: ReminderPolicy, now: Date, timezone: string): Us
 }
 
 function bucketForClassification(
-  classification: TimelineClassification | "unresolved_past",
+  classification: TimelineClassification | "unresolved_past" | "overdue",
 ): TimelineDateBucket {
+  if (classification === "overdue") return "overdue";
   if (classification === "unresolved_past") return "unresolved_past";
   if (classification === "history") return "history";
   if (classification === "hidden") return "hidden";

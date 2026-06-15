@@ -6,7 +6,7 @@ import { buildUserTimelineViewFromData } from "@/services/userTimeline";
 const now = new Date("2026-06-12T09:00:00.000Z");
 
 describe("V2.5.3 canonical user timeline", () => {
-  it("moves active work older than 48h into unresolved past and keeps every row editable", () => {
+  it("moves normal overdue work into overdue, not unresolved, and keeps every row editable", () => {
     const timeline = buildUserTimelineViewFromData({
       timezone: "Europe/Moscow",
       now,
@@ -17,7 +17,8 @@ describe("V2.5.3 canonical user timeline", () => {
       policies: [policy()],
     });
 
-    expect(timeline.byBucket.unresolvedPast.map((row) => row.entityRef.id)).toEqual(["old"]);
+    expect(timeline.byBucket.overdue.map((row) => row.entityRef.id)).toEqual(["old"]);
+    expect(timeline.byBucket.unresolvedPast.map((row) => row.entityRef.id)).toEqual([]);
     expect(timeline.byBucket.soon.map((row) => row.entityRef.id)).toContain("soon");
     expect(timeline.rows.every((row) => row.editable && row.entityRef.id)).toBe(true);
   });

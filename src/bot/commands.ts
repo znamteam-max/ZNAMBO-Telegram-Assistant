@@ -23,7 +23,8 @@ import { createGoogleCalendarAuthUrl } from "@/integrations/googleCalendar";
 import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { renderDailyHistoryView } from "@/services/dailyHistory";
-import { cleanupTransientMessages } from "@/telegram/messageLifecycle";
+import { renderCleanupPreview } from "@/services/cleanupPreview";
+import { renderCompletedItemsView } from "@/services/completedItemsView";
 import { renderCronHealth, renderPolicyDebug } from "@/services/reminderDiagnostics";
 import {
   applyReminderPolicyRepair,
@@ -103,6 +104,10 @@ import {
   applyV2130ProductionRepair,
   previewV2130ProductionRepair,
 } from "@/services/v2130ProductionRepair";
+import {
+  applyV2140ProductionRepair,
+  previewV2140ProductionRepair,
+} from "@/services/v2140ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 
 import type { BotContext } from "./context";
@@ -162,6 +167,8 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/reminders — только правила напоминаний; обычные встречи находятся в /plan",
         "/longterm — дальние и регулярные policies",
         "/cleanup_chat — убрать старые bot-карточки",
+        "/cleanup — preview очистки без удаления данных плана",
+        "/completed, /done — последние выполненные с восстановлением",
         "/cronhealth — статус scheduler и policy reconciler",
         "/policydebug — диагностика последней reminder policy",
         "/versiondebug — версии policy engine, interval algorithm и runner lock",
@@ -184,6 +191,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2110 preview|apply — восстановить дедлайн ЧМ и stale sessions",
         "/admin_repair_v2120 preview|apply — recurring UX cleanup и marker repair",
         "/admin_repair_v2130 preview|apply — draft integrity, command targeting и actionlog repair",
+        "/admin_repair_v2140 preview|apply — reminder UX/completed/audit hygiene repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -520,12 +528,30 @@ export function registerCommands(bot: Bot<BotContext>) {
   bot.command("cleanup_chat", async (ctx) => {
     const owner = requireOwner(ctx);
     if (!ctx.chat?.id) return;
-    await cleanupTransientMessages({ userId: owner.id, chatId: String(ctx.chat.id) });
-    await refreshDashboardAfterMutation({
+    const preview = await renderCleanupPreview({
       userId: owner.id,
-      chatId: ctx.chat.id,
-      timezone: owner.timezone,
+      chatId: String(ctx.chat.id),
     });
+    await replyAndRecord(ctx, preview.text, { reply_markup: preview.keyboard });
+  });
+  bot.command("cleanup", async (ctx) => {
+    const owner = requireOwner(ctx);
+    if (!ctx.chat?.id) return;
+    const preview = await renderCleanupPreview({
+      userId: owner.id,
+      chatId: String(ctx.chat.id),
+    });
+    await replyAndRecord(ctx, preview.text, { reply_markup: preview.keyboard });
+  });
+  bot.command("completed", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const view = await renderCompletedItemsView({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
+  });
+  bot.command("done", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const view = await renderCompletedItemsView({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
   });
   bot.command("cronhealth", async (ctx) => {
     const owner = requireOwner(ctx);
@@ -1103,6 +1129,43 @@ export function registerCommands(bot: Bot<BotContext>) {
       });
     }
   });
+  bot.command("admin_repair_v2140", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2140ProductionRepair({ userId: owner.id })
+        : await previewV2140ProductionRepair({ userId: owner.id });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.14 repair applied:" : "V2.14 repair preview:",
+        `• overdue-as-unresolved items: ${result.overdueAsUnresolvedItemIds.length}`,
+        `• generic before-event reminders: ${result.genericEventReminderPolicyIds.length}`,
+        `• stale recurring drafts: ${result.staleRecurringDraftIds.length}`,
+        `• duplicate mirror reminders: ${result.duplicateMirrorPolicyIds.length}`,
+        `• completed invisible items: ${result.completedInvisibleItemIds.length}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• normalized items: ${arrayLength(result, "normalizedItemIds")}`,
+              `• normalized policies: ${arrayLength(result, "normalizedPolicyIds")}`,
+              `• cancelled duplicate policies: ${arrayLength(result, "cancelledPolicyIds")}`,
+              `• cleared drafts: ${arrayLength(result, "clearedDraftIds")}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2140 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
   bot.command("admin_state_v252", async (ctx) => {
     const owner = requireOwner(ctx);
     const state = await getProductionStateV252({
@@ -1312,6 +1375,12 @@ function yesNo(value: unknown) {
 
 function formatList(value: unknown) {
   return Array.isArray(value) && value.length ? value.map(String).join(", ") : "none";
+}
+
+function arrayLength(value: unknown, key: string) {
+  if (!value || typeof value !== "object") return 0;
+  const nested = (value as Record<string, unknown>)[key];
+  return Array.isArray(nested) ? nested.length : 0;
 }
 
 async function renderCommandSchedule(ctx: BotContext, scope: "today" | "tomorrow" | "week") {

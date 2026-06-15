@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 
 import {
   campaignCardKeyboard,
+  completedItemKeyboard,
   externalCalendarEventKeyboard,
   itemMenuKeyboard,
   reminderPolicyCardKeyboard,
@@ -86,6 +87,7 @@ async function renderItemCard(params: {
               `Напоминания: ${formatHumanReminderPolicy(policy, item.timezone, {
                 now,
                 includeMarker: false,
+                item,
               })}`,
           )
         : ["Напоминания: нет"]),
@@ -102,12 +104,15 @@ async function renderItemCard(params: {
     ]
       .filter(Boolean)
       .join("\n"),
-    keyboard: itemMenuKeyboard(
-      item.id,
-      campaignGroup || null,
-      calendar?.status ?? null,
-      Boolean(item.dueAt && !item.startAt),
-    ),
+    keyboard:
+      item.status === "completed"
+        ? completedItemKeyboard(item.id)
+        : itemMenuKeyboard(
+            item.id,
+            campaignGroup || null,
+            calendar?.status ?? null,
+            Boolean(item.dueAt && !item.startAt),
+          ),
   };
 }
 

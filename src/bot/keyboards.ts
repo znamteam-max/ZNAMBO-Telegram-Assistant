@@ -228,6 +228,48 @@ export function recurringTimeClarificationKeyboard(actionId: string, multiple = 
     .text("Отмена", `recurring_draft:cancel:${actionId}`);
 }
 
+export function recurringPolicyDuplicateKeyboard(actionId: string) {
+  return new InlineKeyboard()
+    .text("Обновить", `recurring_dup:update:${actionId}`)
+    .text("Создать новое", `recurring_dup:new:${actionId}`)
+    .row()
+    .text("Отмена", `recurring_dup:cancel:${actionId}`);
+}
+
+export function completedItemsKeyboard(params: {
+  items: PlannerItem[];
+  page: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+}) {
+  const keyboard = new InlineKeyboard();
+  for (const [index, item] of params.items.entries()) {
+    keyboard.text(String(index + 1), `completed:open:${item.id}`);
+  }
+  if (params.items.length) keyboard.row();
+  if (params.hasPrevious) keyboard.text("← Назад", `completed:page:${params.page - 1}`);
+  if (params.hasNext) keyboard.text("Вперёд →", `completed:page:${params.page + 1}`);
+  if (params.hasPrevious || params.hasNext) keyboard.row();
+  return keyboard.text("План", "dashboard:refresh");
+}
+
+export function completedItemKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("↩️ Вернуть в активные", `completed:restore:${itemId}`)
+    .row()
+    .text("🗄 Оставить в архиве", `completed:archive:${itemId}`)
+    .text("План", "dashboard:refresh");
+}
+
+export function cleanupPreviewKeyboard(chatId: string) {
+  return new InlineKeyboard()
+    .text("Preview: карточки чата", `cleanup:preview:chat:${chatId}`)
+    .row()
+    .text("Очистить карточки чата", `cleanup:confirm:chat:${chatId}`)
+    .row()
+    .text("Отмена", "cleanup:cancel");
+}
+
 export function itemMoreKeyboard(itemId: string) {
   return new InlineKeyboard()
     .text("Календарь / повторить sync", `calendar:retry:${itemId}`)
@@ -301,19 +343,16 @@ export function normalReminderMenuKeyboard(reminderId: string, plannerItemId: st
 
 export function reminderPolicyMenuKeyboard(itemId: string) {
   return new InlineKeyboard()
-    .text("⏰ Один раз", `policy_menu:once:${itemId}`)
-    .text("⏪ До события", `policy_menu:before:${itemId}`)
+    .text("⏰ В конкретное время", `policy_menu:once:${itemId}`)
+    .text("📅 Перед событием", `policy_menu:before:${itemId}`)
     .row()
-    .text("🔁 Через интервалы", `policy_menu:interval:${itemId}`)
-    .text("📆 По расписанию", `policy_menu:schedule:${itemId}`)
+    .text("🔁 Повторять", `policy_menu:schedule:${itemId}`)
+    .text("❗ Долбить, пока не выполню", `policy_menu:until:${itemId}`)
     .row()
-    .text("✅ Пока не выполню", `policy_menu:until:${itemId}`)
-    .text("🌙 Тихие часы", `policy_menu:quiet:${itemId}`)
+    .text("➕ Несколько напоминаний", `policy_menu:multi:${itemId}`)
+    .text("⚙️ Дополнительно", `policy_menu:custom:${itemId}`)
     .row()
-    .text("📂 Категория", `policy_menu:category:${itemId}`)
-    .text("🛠 Свои настройки", `policy_menu:custom:${itemId}`)
-    .row()
-    .text("🔙 К плану", "dashboard:refresh");
+    .text("⬅️ К плану", "dashboard:refresh");
 }
 
 export function oneTimeReminderMenuKeyboard(itemId: string) {
@@ -538,6 +577,9 @@ export function navigationKeyboard() {
     .row()
     .text("✅ Задачи")
     .text("🔔 Напоминания")
+    .row()
+    .text("✅ Выполненные")
+    .text("🧹 Очистить")
     .row()
     .text("⚙️ Настройки")
     .resized()

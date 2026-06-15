@@ -386,6 +386,72 @@ export async function updatePlannerItemSchedule(params: {
   return item ?? null;
 }
 
+export async function listCompletedPlannerItems(params: {
+  userId: string;
+  limit?: number;
+  offset?: number;
+}): Promise<PlannerItem[]> {
+  return getDb()
+    .select()
+    .from(plannerItems)
+    .where(and(eq(plannerItems.userId, params.userId), eq(plannerItems.status, "completed")))
+    .orderBy(desc(plannerItems.completedAt), desc(plannerItems.updatedAt))
+    .limit(params.limit ?? 5)
+    .offset(params.offset ?? 0);
+}
+
+export async function restoreCompletedPlannerItem(params: {
+  userId: string;
+  itemId: string;
+}): Promise<PlannerItem | null> {
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({
+      status: "active",
+      completedAt: null,
+      visibility: "active",
+      metadata: sql`${plannerItems.metadata} || ${JSON.stringify({
+        restoredFromCompletedAt: new Date().toISOString(),
+        restoreDoesNotReactivateExpiredReminders: true,
+      })}::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(plannerItems.userId, params.userId),
+        eq(plannerItems.id, params.itemId),
+        eq(plannerItems.status, "completed"),
+      ),
+    )
+    .returning();
+  return item ?? null;
+}
+
+export async function archiveCompletedPlannerItem(params: {
+  userId: string;
+  itemId: string;
+}): Promise<PlannerItem | null> {
+  const [item] = await getDb()
+    .update(plannerItems)
+    .set({
+      visibility: "history",
+      archivedAt: new Date(),
+      metadata: sql`${plannerItems.metadata} || ${JSON.stringify({
+        archivedFromCompletedViewAt: new Date().toISOString(),
+      })}::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(plannerItems.userId, params.userId),
+        eq(plannerItems.id, params.itemId),
+        eq(plannerItems.status, "completed"),
+      ),
+    )
+    .returning();
+  return item ?? null;
+}
+
 export async function updatePlannerItemDetails(params: {
   userId: string;
   itemId: string;

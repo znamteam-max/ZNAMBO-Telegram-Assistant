@@ -9,9 +9,9 @@ Last updated: 2026-06-15
 ## Current Production
 
 ```text
-Application version: 2.13.0
+Application version: 2.14.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 5a558afd5a0065ecb815f2fc9ab6c66e7e7f7d4a
+Validated application deployment commit: V2.14.0 rollout pending after this repository update
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -20,7 +20,60 @@ Runner lock: enabled
 Production scheduler: cron-job.org
 ```
 
-## Latest Deployment - V2.13.0
+## Latest Deployment - V2.14.0
+
+V2.14.0 fixes reminder UX, recurring duplicate safety, completed-item management, cleanup preview,
+and audit hardening. It does not replace Jarvis, mandatory OpenAI planning, ActionPlan execution,
+Yandex CalDAV, the production reminder runner, or cron-job.org scheduling.
+
+Implemented:
+
+- Weekly recurring reminders without a time now become typed clarification drafts. The bot does
+  not create planner items, recurring policies, reminders, or action plans until the user chooses
+  a time.
+- Similar recurring reminders are detected before creation. The bot asks whether to update the
+  existing policy, create a separate one, or cancel.
+- Reminder menu labels were rewritten around user intent: concrete time, before event, repeat,
+  nag until done, multiple reminders, advanced.
+- Multiple reminders for one event are supported from one reply such as `za den v 9 utra, za 2
+  chasa i za 30 minut`; the same item receives several before-event policies and reminders.
+- Event reminder rendering now shows concrete offsets such as `za den v 09:00`, `za 2 chasa`,
+  `za 30 minut` instead of a generic before-event label.
+- `/completed` and `/done` show completed items with pagination plus restore and archive actions.
+  The bottom keyboard now has `Completed` and `Cleanup` entries.
+- `/cleanup`, `/cleanup_chat`, and the cleanup keyboard show a preview first. They only clear
+  transient Telegram UI messages after confirmation and never delete planner data or Yandex
+  Calendar objects.
+- Active past tasks are classified as overdue. `Unresolved` is now reserved for broken,
+  imported, orphaned, or explicit review data.
+- Missing recurring-time debug/audit fields now include failure reason, field name, and suggested
+  next prompt.
+- Added `/admin_repair_v2140 preview|apply` for safe production cleanup. It repairs stale drafts,
+  duplicate mirror policies, generic before-event metadata, and hidden completed rows. It changes
+  zero Yandex Calendar objects.
+- No database migration was required.
+
+## V2.14.0 Validation Before Deploy
+
+```text
+npm test -> 57 files passed, 274 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+secret scan -> no live secret values found; README env placeholders only
+database migration -> not required
+```
+
+Production acceptance still must be checked after GitHub/Vercel auto-deploy:
+
+```text
+/api/health should report appVersion 2.14.0
+Telegram webhook should remain pointed at production and have no last error
+/admin_repair_v2140 preview should be safe before apply
+Reminder smoke and cron-job.org runner should remain healthy
+```
+
+## Previous Deployment - V2.13.0
 
 V2.13.0 fixes command targeting, recurring draft integrity, safer snooze diagnostics, all-day edit
 handling, and production action logging. It does not replace the mandatory OpenAI planner,

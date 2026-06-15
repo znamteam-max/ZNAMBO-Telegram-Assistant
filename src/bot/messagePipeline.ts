@@ -37,6 +37,11 @@ import {
   startRecurringPolicyDraftSession,
 } from "@/services/recurringPolicyDraftSessions";
 import { formatRecurringClarification } from "@/domain/recurringPolicySemantics";
+import {
+  findSimilarActiveRecurringPolicy,
+  formatRecurringDuplicatePrompt,
+  startRecurringPolicyDuplicateDecisionSession,
+} from "@/services/recurringPolicyDuplicateDetection";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -45,6 +50,7 @@ import {
   actionPlanKeyboard,
   conflictKeyboard,
   postCreateTriageKeyboard,
+  recurringPolicyDuplicateKeyboard,
   recurringTimeClarificationKeyboard,
 } from "./keyboards";
 import { replyAndRecord } from "./reply";
@@ -422,6 +428,39 @@ async function blockIncompleteRecurringPoliciesWithDraft(
   const owner = requireOwner(ctx);
   const policies = params.reminderPolicies ?? [];
   if (!getIncompleteRecurringPolicies(policies).length) return null;
+  const duplicate = await findSimilarActiveRecurringPolicy({
+    userId: owner.id,
+    policies,
+  }).catch(() => null);
+  if (duplicate) {
+    const duplicateAction = await startRecurringPolicyDuplicateDecisionSession({
+      userId: owner.id,
+      sourceMessageId: ctx.dbMessageId,
+      plan: params.plan,
+      policies,
+      match: duplicate,
+      timezone: params.timezone,
+      now: params.now,
+    });
+    if (duplicateAction) {
+      await replyAndRecord(ctx, formatRecurringDuplicatePrompt(duplicate), {
+        reply_markup: recurringPolicyDuplicateKeyboard(duplicateAction.id),
+      });
+      return {
+        finalAction: "recurring_policy_duplicate_needs_decision",
+        validatorWarnings: ["recurring_policy_missing_time", "similar_active_recurring_policy_found"],
+        savedItemIds: [],
+        createdPolicyIds: [],
+        createdReminderIds: [],
+        transactionStarted: false,
+        transactionCommitted: false,
+        transactionRolledBack: false,
+        proposedMutationCount: params.plan.actions.length + policies.length,
+        committedMutationCount: 0,
+        partialMutationDetected: false,
+      };
+    }
+  }
   const action = await startRecurringPolicyDraftSession({
     userId: owner.id,
     sourceMessageId: ctx.dbMessageId,
@@ -465,7 +504,7 @@ async function blockIncompleteRecurringPoliciesWithDraft(
     },
   );
   return {
-    finalAction: "targeted_recurring_time_clarification",
+    finalAction: "recurring_policy_needs_clarification",
     validatorWarnings: ["recurring_policy_missing_time"],
     savedItemIds: [],
     createdPolicyIds: [],

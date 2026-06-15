@@ -119,9 +119,18 @@ export async function renderLiveDashboard(params: {
   const scheduledIds = new Set(
     [...currentItems, ...todayItems, ...tomorrowItems, ...soonItems].map((item) => item.id),
   );
+  const overdueItems = timeline.byBucket.overdue
+    .filter((row) => row.item)
+    .map((row) => row.item!)
+    .slice(0, 5);
+  const overdueIds = new Set(overdueItems.map((item) => item.id));
   const importantItems = allItems
     .filter(
-      (item) => !scheduledIds.has(item.id) && !pastTodayIds.has(item.id) && getBasePriority({ item }) >= 4,
+      (item) =>
+        !scheduledIds.has(item.id) &&
+        !pastTodayIds.has(item.id) &&
+        !overdueIds.has(item.id) &&
+        getBasePriority({ item }) >= 4,
     )
     .slice(0, 5);
   const longTermItems = itemRows
@@ -219,6 +228,10 @@ export async function renderLiveDashboard(params: {
   if (longTermItems.length) {
     lines.push("", "Долгосрочные:");
     pushRows(itemRowsFor(longTermItems, true));
+  }
+  if (overdueItems.length) {
+    lines.push("", "Просрочено:");
+    pushRows(itemRowsFor(overdueItems, true));
   }
   if (unresolvedItems.length) {
     lines.push("", "Неразобранное:");
@@ -419,11 +432,32 @@ export function formatDashboardItem(
     ["pending_retry", "failed", "error"].includes(calendar?.status ?? "")
       ? ` · Календарь: ${calendar?.lastError ?? calendar?.status}, повторю автоматически`
       : "";
+  const beforeEventPolicies = policies.filter((policy) => policy.policyType === "before_event");
+  const otherPolicies = policies.filter((policy) => policy.policyType !== "before_event");
+  const reminderLines = [
+    beforeEventPolicies.length
+      ? `   🔔 ${beforeEventPolicies
+          .map((policy) =>
+            formatHumanReminderPolicy(policy, timezone, {
+              now,
+              includeMarker: false,
+              item,
+            }),
+          )
+          .join(", ")}`
+      : null,
+    ...otherPolicies.map(
+      (policy) =>
+        `   🔔 ${formatHumanReminderPolicy(policy, timezone, {
+          now,
+          includeMarker: false,
+          item,
+        })}`,
+    ),
+  ].filter(Boolean);
   return [
     `${time ? `${time}${end ? `–${end}` : ""} · ` : ""}${important ? `${important} ` : ""}${persistent}${item.title}${calendarStatus}`,
-    ...policies.map(
-      (policy) => `   🔔 ${formatHumanReminderPolicy(policy, timezone, { now, includeMarker: false })}`,
-    ),
+    ...reminderLines,
   ].join("\n");
 }
 

@@ -216,6 +216,7 @@ export async function commitStoredActionPlan(params: {
                   actionPlanId: planRecord.id,
                   actionPlanSequence: index,
                   reminderType: reminder.type,
+                  ...inferBeforeEventReminderMetadata(reminder.type, reminder.scheduledAt, item.timezone),
                   basePriority: item.priority,
                   importanceMode: item.metadata.importanceMode ?? "auto",
                 },
@@ -629,6 +630,27 @@ function policyCategoryForReminder(type: string, kind: string) {
   if (kind === "training") return "training";
   if (type === "recurring") return "long_term";
   return "task_deadline";
+}
+
+function inferBeforeEventReminderMetadata(type: string, scheduledAt: Date, timezone: string) {
+  const minutesBefore = {
+    "10m": 10,
+    "30m": 30,
+    "1h": 60,
+    "2h": 120,
+    "24h": 1440,
+    day_morning: 1440,
+    event_before: null,
+  }[type] ?? null;
+  if (!minutesBefore) return {};
+  const relativeLabel =
+    type === "day_morning"
+      ? `за день в ${DateTime.fromJSDate(scheduledAt, { zone: "utc" }).setZone(timezone).toFormat("HH:mm")}`
+      : undefined;
+  return {
+    minutesBefore,
+    ...(relativeLabel ? { relativeLabel } : {}),
+  };
 }
 
 function purposeForReminder(type: string) {

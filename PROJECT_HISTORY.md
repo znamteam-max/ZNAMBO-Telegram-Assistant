@@ -1,5 +1,45 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## V2.14.0 reminder UX, multi-reminders, completed items and audit hardening
+
+V2.14.0 was implemented on top of V2.13.0 without replacing Jarvis, mandatory OpenAI planning,
+ActionPlan execution, Yandex CalDAV, the production reminder runner, or cron-job.org scheduling.
+No database migration was required.
+
+Implemented:
+
+```text
+weekly recurring reminders without time now become typed clarification drafts, not saved failures
+similar recurring policies trigger update/create-new/cancel duplicate resolution
+reminder setup menu was rewritten around concrete user intents
+one event can now receive several before-event reminders from one reply
+before-event policies render concrete offsets such as za den v 09:00, za 2 chasa, za 30 minut
+/completed and /done show completed items with pagination, restore and archive actions
+/cleanup and /cleanup_chat now show a preview and never delete planner data or Yandex Calendar objects
+normal active past tasks are shown as overdue; unresolved is reserved for broken/review data
+missing recurring-time audit/debug fields now include reason, field and suggested prompt
+/admin_repair_v2140 preview|apply added; repair changes zero Yandex Calendar objects
+```
+
+Validation before deploy:
+
+```text
+npm test -> 57 files passed, 274 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+secret scan -> no live secrets added; README env placeholders only
+```
+
+Production rollout:
+
+```text
+target application version -> 2.14.0
+production URL -> https://znambo-telegram-assistant.vercel.app
+GitHub/Vercel auto-deploy -> pending after repository push
+/api/health, Telegram webhook and reminder smoke -> pending post-deploy verification
+```
+
 ## V2.13.0 command targeting, draft integrity and actionlog production rollout
 
 V2.13.0 was implemented and deployed on top of V2.12.0 without replacing the mandatory OpenAI

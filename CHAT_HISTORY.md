@@ -1,5 +1,39 @@
 # ZNAMBO Telegram Assistant Chat History
 
+## 2026-06-15 - V2.14.0 implementation and pre-deploy validation
+
+User attached the V2.14 reminder UX, multi-reminders, completed-items and audit-hardening brief.
+The requested direction was to continue the same production project, keep one canonical handoff
+file after deploy, and avoid rewriting Jarvis or V2 from scratch.
+
+Completed:
+
+- incomplete weekly recurring reminders without time are now typed drafts and do not create
+  planner items, policies, reminders, or action plans;
+- similar recurring policies are detected and ask update / create new / cancel;
+- reminder setup labels were rewritten around concrete user actions;
+- one selected event can receive multiple before-event reminders from a single reply;
+- before-event reminders render concrete offsets instead of a generic label;
+- `/completed` and `/done` show completed items with pagination, restore and archive;
+- `/cleanup`, `/cleanup_chat`, and the cleanup keyboard now show a safe preview first;
+- normal active past tasks are classified as overdue, while unresolved is for broken/review data;
+- missing recurring-time debug/audit fields now include reason, field and suggested next prompt;
+- `/admin_repair_v2140 preview|apply` was added and changes zero Yandex Calendar objects;
+- version bumped to `2.14.0`.
+
+Validation before deploy:
+
+```text
+npm test -> 57 files, 274 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+secret scan -> no live secrets added; README env placeholders only
+```
+
+Production rollout and live smoke checks are pending the GitHub push and Vercel auto-deploy.
+Only `ZNAMBO_PROJECT_HANDOFF.md` should be attached after deployment. No secrets were stored.
+
 ## 2026-06-15 - V2.13.0 production rollout completed
 
 User attached the V2.13 command-targeting, draft-integrity and actionlog brief and asked to

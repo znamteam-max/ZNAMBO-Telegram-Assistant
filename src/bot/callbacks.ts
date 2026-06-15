@@ -75,6 +75,12 @@ import {
   registerBotMessage,
 } from "@/telegram/messageLifecycle";
 import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
+import { renderCleanupPreview } from "@/services/cleanupPreview";
+import {
+  archiveCompletedItem,
+  renderCompletedItemsView,
+  restoreCompletedItem,
+} from "@/services/completedItemsView";
 import {
   renderReminderControlCenter,
   renderReminderPolicyCard,
@@ -111,6 +117,7 @@ import {
   postCreateTriageKeyboard,
   conflictKeyboard,
   reminderPolicyMenuKeyboard,
+  recurringTimeClarificationKeyboard,
   repeatPolicyDeleteKeyboard,
   scheduleReminderMenuKeyboard,
   undoActionKeyboard,
@@ -119,7 +126,14 @@ import { formatCommittedPlanSummary, formatCreatedItem } from "./formatters";
 import { cancelItemEditPreview, confirmItemEditPreview } from "./itemEditFlow";
 import { startExternalCalendarEditSession } from "./externalCalendarEditFlow";
 import { applyRecurringPolicyDraftTime } from "./recurringPolicyDraftFlow";
-import { finishRecurringPolicyDraftSession } from "@/services/recurringPolicyDraftSessions";
+import {
+  finishRecurringPolicyDraftSession,
+  startRecurringPolicyDraftSession,
+} from "@/services/recurringPolicyDraftSessions";
+import {
+  finishRecurringPolicyDuplicateDecision,
+  getRecurringPolicyDuplicateDecisionSession,
+} from "@/services/recurringPolicyDuplicateDetection";
 
 export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery("noop", async (ctx) => {
@@ -147,6 +161,57 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     });
     await ctx.answerCallbackQuery("Отменено");
     await ctx.reply("Черновик повторяющихся напоминаний отменён.");
+  });
+
+  bot.callbackQuery(/^recurring_dup:(update|new|cancel):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const decision = ctx.match[1] as "update" | "new" | "cancel";
+    const session = await getRecurringPolicyDuplicateDecisionSession({
+      userId: owner.id,
+      actionId: ctx.match[2],
+    });
+    if (!session) {
+      await ctx.answerCallbackQuery("Устарело");
+      await ctx.reply("Это решение уже устарело. Пришли правило ещё раз.");
+      return;
+    }
+    if (decision === "cancel") {
+      await finishRecurringPolicyDuplicateDecision({
+        userId: owner.id,
+        action: session.action,
+        status: "cancelled",
+        decision,
+      });
+      await ctx.answerCallbackQuery("Отменено");
+      await ctx.reply("Ок, не создаю дубль.");
+      return;
+    }
+    const draft = await startRecurringPolicyDraftSession({
+      userId: owner.id,
+      sourceMessageId: session.action.sourceMessageId,
+      plan: session.plan,
+      policies: session.policies,
+      timezone: session.timezone,
+      updateExistingPolicyId: decision === "update" ? session.existingPolicyId : null,
+    });
+    await finishRecurringPolicyDuplicateDecision({
+      userId: owner.id,
+      action: session.action,
+      status: draft ? "completed" : "cancelled",
+      decision,
+    });
+    if (!draft) {
+      await ctx.answerCallbackQuery("Не удалось");
+      await ctx.reply("Не смог открыть черновик. Ничего не изменил.");
+      return;
+    }
+    await ctx.answerCallbackQuery(decision === "update" ? "Обновим" : "Создам новое");
+    await ctx.reply(
+      decision === "update"
+        ? "Во сколько обновить существующее повторяющееся напоминание?"
+        : "Во сколько поставить новое повторяющееся напоминание?",
+      { reply_markup: recurringTimeClarificationKeyboard(draft.id, session.policies.length > 1) },
+    );
   });
 
   bot.callbackQuery(/^calendar:retry:(.+)$/, async (ctx) => {
@@ -922,11 +987,69 @@ export function registerCallbacks(bot: Bot<BotContext>) {
 
   bot.callbackQuery("dashboard:cleanup", async (ctx) => {
     const owner = requireOwner(ctx);
-    await ctx.answerCallbackQuery("Очищаю старые карточки");
-    if (ctx.chat?.id) {
-      await cleanupTransientMessages({ userId: owner.id, chatId: String(ctx.chat.id) });
+    await ctx.answerCallbackQuery("Показываю preview");
+    if (!ctx.chat?.id) return;
+    const preview = await renderCleanupPreview({
+      userId: owner.id,
+      chatId: String(ctx.chat.id),
+    });
+    await ctx.reply(preview.text, { reply_markup: preview.keyboard });
+  });
+
+  bot.callbackQuery(/^cleanup:(preview|confirm):chat:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = ctx.match[1];
+    const chatId = ctx.match[2];
+    if (mode === "preview") {
+      await ctx.answerCallbackQuery("Preview");
+      const preview = await renderCleanupPreview({ userId: owner.id, chatId });
+      await ctx.reply(preview.text, { reply_markup: preview.keyboard });
+      return;
     }
+    await ctx.answerCallbackQuery("Очищаю карточки");
+    await cleanupTransientMessages({ userId: owner.id, chatId });
     await refreshAfterCallback(ctx);
+  });
+
+  bot.callbackQuery("cleanup:cancel", async (ctx) => {
+    await ctx.answerCallbackQuery("Отменено");
+    await ctx.reply("Ок, очистку не выполняю.");
+  });
+
+  bot.callbackQuery(/^completed:page:(\d+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const view = await renderCompletedItemsView({
+      userId: owner.id,
+      timezone: owner.timezone,
+      page: Number(ctx.match[1]),
+    });
+    await ctx.answerCallbackQuery("Открываю");
+    await ctx.reply(view.text, { reply_markup: view.keyboard });
+  });
+
+  bot.callbackQuery(/^completed:open:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const card = await renderEntityCard({
+      userId: owner.id,
+      timezone: owner.timezone,
+      ref: { type: "history_item", id: ctx.match[1] },
+    });
+    await ctx.answerCallbackQuery(card ? "Открываю" : "Запись не найдена");
+    if (card) await editOrReply(ctx, card.text, card.keyboard);
+  });
+
+  bot.callbackQuery(/^completed:restore:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const restored = await restoreCompletedItem({ userId: owner.id, itemId: ctx.match[1] });
+    await ctx.answerCallbackQuery(restored ? "Вернул" : "Не найдено");
+    if (restored) await refreshAfterCallback(ctx, restored.id);
+  });
+
+  bot.callbackQuery(/^completed:archive:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const archived = await archiveCompletedItem({ userId: owner.id, itemId: ctx.match[1] });
+    await ctx.answerCallbackQuery(archived ? "Оставил в архиве" : "Не найдено");
+    if (archived) await ctx.reply("Оставил запись в выполненных/архиве. Активные напоминания не включал.");
   });
 
   bot.callbackQuery(/^repair_policies:(preview|apply|manual)$/, async (ctx) => {
@@ -979,7 +1102,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
   });
 
   bot.callbackQuery(
-    /^policy_menu:(root|once|before|interval|schedule|until|quiet|category|custom):(.+)$/,
+    /^policy_menu:(root|once|before|interval|schedule|until|multi|quiet|category|custom):(.+)$/,
     async (ctx) => {
       const section = ctx.match[1];
       const itemId = ctx.match[2];
@@ -998,6 +1121,17 @@ export function registerCallbacks(bot: Bot<BotContext>) {
         await ctx.reply("За сколько до события?", {
           reply_markup: beforeEventReminderMenuKeyboard(itemId),
         });
+        return;
+      }
+      if (section === "multi") {
+        await startItemEditSession({
+          userId: requireOwner(ctx).id,
+          itemId,
+          mode: "general",
+          sourceMessageId: ctx.dbMessageId,
+          sourceTelegramMessageId: ctx.callbackQuery?.message?.message_id ?? null,
+        });
+        await ctx.reply("Напиши набор напоминаний одним сообщением. Например: за день в 9 утра, за 2 часа и за 30 минут.");
         return;
       }
       if (section === "interval") {
@@ -1081,6 +1215,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
             timezone: item.timezone,
             policyType: "before_event",
             fireAt,
+            metadata: { minutesBefore: minutes, relativeLabel: formatBeforeEventOffset(minutes) },
           })
         : null;
     await ctx.answerCallbackQuery(created ? "Настроено" : "Время уже прошло");
@@ -1528,6 +1663,7 @@ async function createQuickPolicy(params: {
   timezone: string;
   policyType: "one_time" | "before_event";
   fireAt: Date;
+  metadata?: Record<string, unknown>;
 }) {
   const item = await getPlannerItemById(params.userId, params.itemId);
   if (!item || item.status !== "active") return null;
@@ -1546,8 +1682,19 @@ async function createQuickPolicy(params: {
     metadata: {
       mutationSource: "user_natural_language",
       configuredFrom: "reminder_policy_menu",
+      ...(params.metadata ?? {}),
     },
   });
   await materializeNextPolicyReminder(policy, params.fireAt);
   return policy;
+}
+
+function formatBeforeEventOffset(minutes: number) {
+  if (minutes === 10) return "за 10 минут";
+  if (minutes === 30) return "за 30 минут";
+  if (minutes === 60) return "за час";
+  if (minutes === 120) return "за 2 часа";
+  if (minutes === 1440) return "за день";
+  if (minutes % 60 === 0) return `за ${minutes / 60} ч`;
+  return `за ${minutes} минут`;
 }

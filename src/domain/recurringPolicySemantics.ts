@@ -98,6 +98,10 @@ export function recurringRuleMissingField(rule: string | null) {
   return parsed.timeLocal ? null : "reminderTime";
 }
 
+export function canonicalRecurringRuleNeedsTime(rule: string | null) {
+  return recurringRuleMissingField(rule) === "reminderTime";
+}
+
 export function nextRecurringOccurrence(params: {
   rule: string | null;
   after: Date;
@@ -214,7 +218,7 @@ export function parseStopCondition(text: string) {
 
 function parseWeeklyIntent(text: string): RecurringPolicyIntent | null {
   const match = text.match(
-    /кажд(?:ый|ую)\s+(понедельник(?:ам)?|вторник(?:ам)?|среду|средам|четверг(?:ам)?|пятницу|пятницам|субботу|субботам|воскресенье|воскресеньям)/i,
+    /(?:кажд(?:ый|ую)\s+|по\s+)(понедельник(?:ам)?|вторник(?:ам)?|среду|средам|четверг(?:ам)?|пятницу|пятницам|субботу|субботам|воскресенье|воскресеньям)/i,
   );
   if (!match) return null;
   const weekday = WEEKDAY_CODES[normalizeText(match[1]) as keyof typeof WEEKDAY_CODES];
@@ -303,7 +307,7 @@ function extractActionTitle(text: string, hint: "mirror" | "meter") {
 
   const verbPattern =
     hint === "mirror"
-      ? /(проверить(?:\s+и\s+решить)?\s+вопрос\s+с\s+зеркал[^,.]*|решить\s+вопрос\s+с\s+зеркал[^,.]*|поменять\s+зеркал[^,.]*)/i
+      ? /((?:проверить|решить|решать)(?:\s+и\s+решить)?\s+вопрос\s+(?:с|о\s+замене)\s+зеркал[^,.]*|проверить\s+зеркал[^,.]*|поменять\s+зеркал[^,.]*|заменить\s+зеркал[^,.]*)/i
       : /(внести\s+показани[яй]\s+сч[её]тчик[^,.]*|передать\s+показани[яй]\s+сч[её]тчик[^,.]*)/i;
   const matched = normalized.match(verbPattern)?.[1];
   if (matched) return cleanTitle(matched);

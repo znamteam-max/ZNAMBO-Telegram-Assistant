@@ -209,7 +209,7 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
         now,
       });
       trace.toolCallsExecuted = presented
-        ? ["create_recurring_policy:targeted_clarification"]
+        ? ["recurring_draft_created"]
         : [];
       trace.validationWarnings = [
         ...asStringArray(trace.validationWarnings),
@@ -217,9 +217,15 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
         "recurring_policy_missing_time",
       ];
       trace.finalAction = presented
-        ? "targeted_recurring_time_clarification"
+        ? "recurring_policy_needs_clarification"
         : "recurring_time_clarification_failed";
       trace.naturalLanguagePlanResult = trace.finalAction;
+      trace.errorCode = "missing_required_field";
+      trace.safeErrorMessage = "Recurring reminder needs a time before it can be saved.";
+      trace.toolExecutionFailed = "create_recurring_policy";
+      trace.toolFailureReason = "missing_time";
+      trace.toolFailureField = "time";
+      trace.suggestedNextPrompt = "Напиши время для повторяющегося напоминания, например: 09:00.";
       return;
     }
     const executionResult = await executeAgentProposal({

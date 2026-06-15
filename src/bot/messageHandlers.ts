@@ -20,6 +20,8 @@ import { renderTaskViewTool } from "@/agent/jarvisTools";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { navigationKeyboard } from "./keyboards";
 import { writeAudit } from "@/db/queries/audit";
+import { renderCleanupPreview } from "@/services/cleanupPreview";
+import { renderCompletedItemsView } from "@/services/completedItemsView";
 
 export function registerMessageHandlers(bot: Bot<BotContext>) {
   bot.on("message:text", async (ctx) => {
@@ -136,6 +138,20 @@ async function handleNavigationText(ctx: BotContext, text: string) {
       scope: "active",
     });
     await replyAndRecord(ctx, center.text, { reply_markup: center.keyboard });
+    return true;
+  }
+  if (text === "✅ Выполненные") {
+    const view = await renderCompletedItemsView({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(ctx, view.text, { reply_markup: view.keyboard });
+    return true;
+  }
+  if (text === "🧹 Очистить") {
+    if (!ctx.chat?.id) return true;
+    const preview = await renderCleanupPreview({
+      userId: owner.id,
+      chatId: String(ctx.chat.id),
+    });
+    await replyAndRecord(ctx, preview.text, { reply_markup: preview.keyboard });
     return true;
   }
   if (text === "⚙️ Настройки") {
