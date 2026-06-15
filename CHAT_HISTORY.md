@@ -1,5 +1,47 @@
 # ZNAMBO Telegram Assistant Chat History
 
+## 2026-06-15 - V2.13.0 production rollout completed
+
+User attached the V2.13 command-targeting, draft-integrity and actionlog brief and asked to
+continue implementation with one canonical post-deploy handoff file.
+
+Completed:
+
+- blocked incomplete recurring policies before action plans, planner items, reminder policies or
+  reminders can be saved;
+- added recurring draft fingerprints and duplicate draft reuse;
+- preserved active recurring drafts during global creation-intent escape while keeping cancel as a
+  full session clear;
+- added all-day item edit handling for selected item context;
+- added snooze attempt audit and item fallback;
+- added undo normalization for scheduled event-like task snapshots;
+- added `/actionlog`, `/actionlog 24h`, `/actionlog 50`, `/actionlog export`, `/debugrecent`;
+- added `/admin_repair_v2130 preview|apply` and protected admin API actions;
+- bumped the app to `2.13.0`, committed, pushed to GitHub, and verified Vercel production.
+
+Final checks:
+
+```text
+production application commit -> 5a558afd5a0065ecb815f2fc9ab6c66e7e7f7d4a
+/api/health -> ok, appVersion 2.13.0, matching deployment commit
+Telegram webhook -> ok, pending 0, no last error
+OpenAI health -> real call succeeded, structured output valid
+V2.13 repair apply -> idempotent, zero items/policies/sessions changed, zero Yandex objects changed
+reminder smoke -> delivered to Telegram and test item auto-archived
+npm test -> 56 files, 266 tests passed
+npm run lint -> passed
+npm run build -> passed
+```
+
+Remaining note:
+
+```text
+Read-only multi-action probe still needs follow-up: it showed Zoom event plus Z2 training, but did
+not prove the tentative short-video call as a separate object from the protected snapshot.
+```
+
+Only `ZNAMBO_PROJECT_HANDOFF.md` should be attached after deployment. No secrets were stored.
+
 ## 2026-06-13 - V2.8.0 production rollout completed
 
 User requested implementation of the V2.8 reminder-policy UX and snooze brief, followed by a

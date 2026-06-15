@@ -1,5 +1,59 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## V2.13.0 command targeting, draft integrity and actionlog production rollout
+
+V2.13.0 was implemented and deployed on top of V2.12.0 without replacing the mandatory OpenAI
+planner, ActionPlan execution, reminder runner, Yandex CalDAV integration, or existing calendar
+import. No database migration was required.
+
+Implemented:
+
+```text
+recurring missing-time policies are blocked before action_plans/items/policies/reminders are saved
+recurring_policy_draft sessions now store fingerprints and dedupe repeated incomplete requests
+global creation-intent escape preserves recurring drafts for dedupe while cancel still clears them
+legacy executeActionPlanForMessage now uses the same recurring missing-time draft guard
+item edit/reschedule supports "сегодня целый день" / "today all day" as explicit all-day schedule
+snooze callbacks write assistant.reminder_snooze_attempt audit and fall back to item snooze
+undo normalizes scheduled event-like task snapshots back to event
+/actionlog, /actionlog 24h, /actionlog 50, /actionlog export and /debugrecent added
+/admin_repair_v2130 preview|apply added; repair changes zero Yandex Calendar objects
+```
+
+Validation:
+
+```text
+npm test -> 56 files passed, 266 tests passed
+npm run lint -> passed
+npm run build -> passed
+git diff --check -> passed
+secret scan -> no live secrets added; README env placeholders only
+```
+
+Production rollout:
+
+```text
+application version -> 2.13.0
+production commit -> 5a558afd5a0065ecb815f2fc9ab6c66e7e7f7d4a
+production URL -> https://znambo-telegram-assistant.vercel.app
+/api/health -> appVersion and deployment commit matched
+Telegram webhook -> correct production URL, pending updates 0, no last error
+OpenAI health -> real call succeeded, structured output valid, response ID present
+V2.13 repair preview/apply -> incomplete meter items 0, policies 0, duplicate drafts 0, stale sessions 0, calendar objects changed 0
+recurring missing-time probe -> AI called, recurring_task proposed, rule monthly_days:15,16,17,18,19, no execution
+reminder smoke -> delivered to Telegram, deliveryStatus sent at 2026-06-15T09:51:07.483Z, test item auto-archived
+cron-job.org runner -> configured and lastRunnerSucceeded true after smoke
+```
+
+Remaining limitations:
+
+```text
+The protected multi-action probe proposed the main Zoom event plus Z2 training, but the current
+admin snapshot does not expose per-action reminders and did not split the tentative short-video
+call into a separate object. Treat that as the next smart-planner behavior gap.
+Yandex Calendar remains best-effort and must not block planner/reminder writes.
+```
+
 ## Update 2026-06-13 - V2.8.0 Production Rollout
 
 V2.8.0 was deployed through GitHub/Vercel auto-deploy and verified against production.

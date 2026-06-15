@@ -4,14 +4,14 @@ This is the single canonical file to attach to a new Codex chat after every depl
 It contains the current production state, cumulative implementation history, validation results,
 and remaining limitations. It must never contain secrets.
 
-Last updated: 2026-06-14
+Last updated: 2026-06-15
 
 ## Current Production
 
 ```text
-Application version: 2.12.0
+Application version: 2.13.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 411aaea1f6872c566b128169a9d984b684f4f558
+Validated application deployment commit: 5a558afd5a0065ecb815f2fc9ab6c66e7e7f7d4a
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -20,7 +20,70 @@ Runner lock: enabled
 Production scheduler: cron-job.org
 ```
 
-## Latest Deployment - V2.12.0
+## Latest Deployment - V2.13.0
+
+V2.13.0 fixes command targeting, recurring draft integrity, safer snooze diagnostics, all-day edit
+handling, and production action logging. It does not replace the mandatory OpenAI planner,
+ActionPlan execution, reminder runner, Yandex CalDAV integration, or existing calendar import.
+
+Implemented:
+
+- Recurring reminders with canonical recurrence rules but missing time are blocked before
+  `action_plans`, `planner_items`, `reminder_policies`, or `reminders` can be created.
+- Recurring draft sessions now store a deterministic fingerprint and dedupe repeated incomplete
+  requests. A duplicate request reuses the pending draft and explicitly says no new task was
+  created.
+- Global creation-intent session escape now preserves an active recurring draft long enough for
+  dedupe, while `/cancel` still clears drafts and active edit sessions.
+- Legacy V2 `executeActionPlanForMessage` gained the same missing-time draft guard as Jarvis.
+- Item edit/reschedule context now treats `today all day` / `сегодня целый день` as an explicit
+  all-day schedule for the selected item, with `allDay` / `timeGranularity: all_day` metadata.
+- Snooze callbacks now write `assistant.reminder_snooze_attempt` audit rows and fall back to item
+  snooze if policy snooze cannot resolve but the reminder still has an item target.
+- Undo normalizes active scheduled event-like task snapshots such as orthodontist/meeting/broadcast
+  items back to `event`, avoiding accidental movement into unresolved old tasks.
+- Added `/actionlog`, `/actionlog 24h`, `/actionlog 50`, `/actionlog export`, and `/debugrecent`
+  with secret redaction.
+- Added `/admin_repair_v2130 preview|apply` and protected admin API actions
+  `v2130_repair_preview` / `v2130_repair_apply`. The repair archives incomplete meter-reading
+  draft leaks, cancels incomplete meter policies, clears stale sessions/drafts, fixes orthodontist
+  target classification/policy attachment, and changes zero Yandex Calendar objects.
+- No database migration was required.
+
+## V2.13.0 Production Acceptance
+
+```text
+Production application commit: 5a558afd5a0065ecb815f2fc9ab6c66e7e7f7d4a
+GitHub push and Vercel auto-deploy: passed
+/api/health: ok, appVersion 2.13.0, deployment commit matched
+Telegram webhook: ok, production URL, pending updates 0, no last error
+OpenAI health: real call succeeded, model gpt-4o-mini-2024-07-18, structured output valid, response ID present, latency 2532 ms
+V2.13 repair preview: incomplete meter items 0, incomplete meter policies 0, duplicate recurring drafts 0, stale sessions 0, orthodontist item already event-like, safe yes
+V2.13 repair apply: archived 0 items, cancelled 0 policies, cleared 0 drafts/sessions, normalized 0 items, retargeted 0 policies, calendar objects changed 0
+Recurring missing-time read-only probe: AI called, recurring_task proposed, rule monthly_days:15,16,17,18,19, startsAt null, no execution
+Reminder smoke: protected two-minute smoke delivered to Telegram, reminder status sent, delivery status sent at 2026-06-15T09:51:07.483Z, test item auto-archived
+Scheduler: cron-job.org / runner configured, lastRunnerSucceeded true after smoke
+Local tests: 56 files, 266 tests passed
+Lint: passed
+Build: passed
+git diff --check: passed
+Secret scan: no live secrets added; only README env placeholders
+Database migration: not required
+```
+
+Remaining V2.13 notes:
+
+```text
+The protected multi-action read-only probe called OpenAI and proposed the main Zoom event plus the
+Z2 training. The current admin snapshot does not expose per-action reminders, so it did not prove
+the 18:30 reminder from that endpoint. It also did not split the tentative short-video call into a
+separate object in this probe. Treat that as the next smart-planner behavior gap, not as verified.
+Bottom keyboard text commands are still deterministic hard commands in messageHandlers; this
+release did not require a schema migration for them.
+Yandex Calendar remains best-effort and must not block planner/reminder writes.
+```
+
+## Previous Deployment - V2.12.0
 
 V2.12.0 cleans up recurring reminder UX after the V2.11 state-machine fixes. It does not replace
 the mandatory OpenAI planner, ActionPlan execution, reminder runner, Yandex CalDAV integration, or
