@@ -55,6 +55,56 @@ export function formatHumanReminderPolicy(
   return `${options?.includeMarker === false || !isPersistentReminderPolicy(policy) ? "" : "❗ "}${parts.join(", ")}`;
 }
 
+export function getBeforeEventOffsetMinutes(
+  policy: ReminderPolicy,
+  item?: PlannerItem | null,
+) {
+  if (policy.policyType !== "before_event") return null;
+  const metadataMinutes = Number(policy.metadata?.minutesBefore);
+  if (Number.isFinite(metadataMinutes) && metadataMinutes > 0) {
+    return Math.round(metadataMinutes);
+  }
+  const anchor = item?.startAt ?? item?.dueAt ?? null;
+  const fireAt = policy.nextFireAt ?? policy.startsAt ?? null;
+  if (!anchor || !fireAt) return null;
+  const minutes = Math.round((anchor.getTime() - fireAt.getTime()) / 60_000);
+  return minutes > 0 ? minutes : null;
+}
+
+export function getBeforeEventPolicyKey(
+  policy: ReminderPolicy,
+  item?: PlannerItem | null,
+) {
+  const minutes = getBeforeEventOffsetMinutes(policy, item);
+  return minutes ? `relative:${minutes}` : null;
+}
+
+export function formatDedupedBeforeEventPolicies(
+  policies: ReminderPolicy[],
+  timezone: string,
+  options?: { item?: PlannerItem | null },
+) {
+  const seen = new Set<string>();
+  const offsets: Array<{ minutes: number; label: string }> = [];
+  for (const policy of policies) {
+    const minutes = getBeforeEventOffsetMinutes(policy, options?.item);
+    if (!minutes) continue;
+    const key = `relative:${minutes}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    offsets.push({
+      minutes,
+      label: formatBeforeEventOffset(
+        minutes,
+        policy.nextFireAt ?? policy.startsAt,
+        policy.timezone || options?.item?.timezone || timezone,
+      ),
+    });
+  }
+  offsets.sort((left, right) => right.minutes - left.minutes);
+  return offsets.map((entry) => entry.label).join(", ");
+}
+
 export function formatBeforeEventOffset(minutes: number, deliveryAt?: Date | null, timezone?: string) {
   const clock =
     deliveryAt && timezone

@@ -41,6 +41,15 @@ import {
   isGlobalCreationIntent,
   isSessionCancelText,
 } from "@/bot/sessionRouting";
+import {
+  candidateFromItem,
+  extractProposedEventFromExecution,
+  extractProposedEventFromTargetedUpdate,
+  findAmbiguousEventTargets,
+  formatTargetResolutionPrompt,
+  startEventTargetResolutionSession,
+  targetResolutionKeyboard,
+} from "@/services/eventTargetResolution";
 
 import { buildJarvisContext } from "./context/buildJarvisContext";
 import { detectHardManagementIntent } from "./hardManagementIntent";
@@ -103,6 +112,10 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     toolFailureField: null,
     suggestedNextPrompt: null,
     sessionRouting: null,
+    mutationGroupId: ctx.dbMessageId ?? String(ctx.update.update_id),
+    atomicLocalMutation: true,
+    localMutationStatus: null,
+    calendarMutationStatus: null,
   };
 
   try {
@@ -244,6 +257,28 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       trace.suggestedNextPrompt = "Напиши время для повторяющегося напоминания, например: 09:00.";
       return;
     }
+    const targetResolution = await maybePresentTargetResolution({
+      ctx,
+      execution: bound.execution,
+      text,
+      timezone,
+      now,
+    });
+    if (targetResolution.presented) {
+      trace.finalAction = "event_target_resolution_requested";
+      trace.naturalLanguagePlanResult = "event_target_resolution_requested";
+      trace.toolCallsExecuted = ["event_target_resolution_prompt"];
+      trace.validationWarnings = [
+        ...asStringArray(trace.validationWarnings),
+        ...bound.warnings,
+        targetResolution.reason,
+      ];
+      trace.sessionRouting = {
+        handledBy: "event_target_resolution",
+        candidateCount: targetResolution.candidateCount,
+      };
+      return;
+    }
     const executionResult = await executeAgentProposal({
       ctx,
       execution: bound.execution,
@@ -263,6 +298,14 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     trace.proposedMutationCount = executionResult.proposedMutationCount;
     trace.committedMutationCount = executionResult.committedMutationCount;
     trace.partialMutationDetected = executionResult.partialMutationDetected;
+    trace.localMutationStatus = executionResult.partialMutationDetected
+      ? "partial"
+      : executionResult.mutationOccurred
+        ? "succeeded"
+        : "not_applicable";
+    trace.calendarMutationStatus = executionResult.mutationOccurred
+      ? "best_effort_attempted"
+      : "not_applicable";
     trace.validationWarnings = [
       ...asStringArray(trace.validationWarnings),
       ...bound.warnings,
@@ -292,6 +335,8 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       trace.transactionRolledBack = true;
       trace.committedMutationCount = 0;
       trace.partialMutationDetected = false;
+      trace.localMutationStatus = "failed";
+      trace.calendarMutationStatus = "not_applicable";
     }
     const userError = error instanceof UserFacingError ? error : null;
     const recurringFailure = userError?.code.startsWith("recurring_policy_") === true;
@@ -330,6 +375,96 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       details: trace,
     });
   }
+}
+
+async function maybePresentTargetResolution(params: {
+  ctx: BotContext;
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+}): Promise<{ presented: true; reason: string; candidateCount: number } | { presented: false }> {
+  const owner = requireOwner(params.ctx);
+  const actionPlanEvent = extractProposedEventFromExecution({
+    execution: params.execution,
+    text: params.text,
+    timezone: params.timezone,
+    now: params.now,
+  });
+  if (actionPlanEvent) {
+    const candidates = await findAmbiguousEventTargets({
+      userId: owner.id,
+      proposedEvent: actionPlanEvent,
+      originalText: params.text,
+      timezone: params.timezone,
+      now: params.now,
+    });
+    if (candidates.length) {
+      const action = await startEventTargetResolutionSession({
+        userId: owner.id,
+        sourceMessageId: params.ctx.dbMessageId,
+        originalText: params.text,
+        proposedEvent: actionPlanEvent,
+        candidates,
+        now: params.now,
+      });
+      await replyAndRecord(
+        params.ctx,
+        formatTargetResolutionPrompt({
+          proposedEvent: actionPlanEvent,
+          candidates,
+          timezone: params.timezone,
+        }),
+        action ? { reply_markup: targetResolutionKeyboard(action.id) } : undefined,
+      );
+      return {
+        presented: true,
+        reason: "same_slot_similar_event_requires_target_confirmation",
+        candidateCount: candidates.length,
+      };
+    }
+  }
+
+  if (!params.execution.itemUpdates.length && !params.execution.reminderPolicies.length) {
+    return { presented: false };
+  }
+  const targetIds = [
+    ...params.execution.itemUpdates.flatMap((update) => update.itemIds),
+    ...params.execution.reminderPolicies.flatMap((policy) => policy.itemIds),
+  ].filter(Boolean);
+  const uniqueTargetIds = [...new Set(targetIds)];
+  if (uniqueTargetIds.length !== 1) return { presented: false };
+  const [item] = await listItemsByIds(owner.id, uniqueTargetIds);
+  if (!item) return { presented: false };
+  const proposedEvent = extractProposedEventFromTargetedUpdate({
+    execution: params.execution,
+    text: params.text,
+    item,
+    timezone: params.timezone,
+  });
+  if (!proposedEvent) return { presented: false };
+  const action = await startEventTargetResolutionSession({
+    userId: owner.id,
+    sourceMessageId: params.ctx.dbMessageId,
+    originalText: params.text,
+    proposedEvent,
+    candidates: [candidateFromItem(item)],
+    now: params.now,
+  });
+  await replyAndRecord(
+    params.ctx,
+    formatTargetResolutionPrompt({
+      proposedEvent,
+      candidates: [candidateFromItem(item)],
+      timezone: params.timezone,
+    }),
+    action ? { reply_markup: targetResolutionKeyboard(action.id) } : undefined,
+  );
+  return {
+    presented: true,
+    reason: "targeted_update_title_differs_from_existing_event",
+    candidateCount: 1,
+  };
 }
 
 async function executeAgentProposal(params: {
@@ -450,10 +585,42 @@ async function executeAgentProposal(params: {
       sourceText: params.text,
       now: params.now,
     });
+    let policyResult: Awaited<ReturnType<typeof executePolicyProposals>> | null = null;
+    let policyFailure: { reason: string; field: string } | null = null;
+    if (params.execution.reminderPolicies.length) {
+      try {
+        policyResult = await executePolicyProposals({
+          execution: params.execution,
+          userId: owner.id,
+          timezone: params.timezone,
+          createdItemIds: [],
+          now: params.now,
+        });
+        result.toolCallsExecuted.push(...policyResult.toolCallsExecuted);
+        result.validationWarnings.push(...policyResult.warnings);
+        result.mutationOccurred ||= policyResult.policyCount > 0;
+      } catch (error) {
+        policyFailure = {
+          reason:
+            error instanceof UserFacingError
+              ? error.code
+              : error instanceof Error
+                ? error.name || "reminder_policy_execution_failed"
+                : "reminder_policy_execution_failed",
+          field: "reminder_offsets",
+        };
+        result.validationWarnings.push(
+          `reminder_policy_execution_failed:${policyFailure.reason}`,
+        );
+      }
+    }
     result.updatedItemIds = updateResult.updatedItems.map((item) => item.id);
     result.mutationOccurred = updateResult.updatedItems.length > 0;
-    result.validationWarnings = updateResult.warnings;
-    result.finalAction = "updated_existing_items";
+    result.validationWarnings = [...updateResult.warnings, ...result.validationWarnings];
+    result.finalAction = policyFailure
+      ? "partial_item_update_reminder_policy_failed"
+      : "updated_existing_items";
+    result.partialMutationDetected = Boolean(policyFailure && updateResult.updatedItems.length);
     const guardedId = updateResult.warnings
       .find((warning) => warning.startsWith("future_campaign_completion_requires_clarification:"))
       ?.split(":")[1];
@@ -471,7 +638,8 @@ async function executeAgentProposal(params: {
     const calendarFeedback = formatCalendarSyncFeedback(calendarResults);
     const localMutationSummary = formatLocalItemUpdateSummary({
       items: updateResult.updatedItems,
-      reminderCount: updateResult.reminderIds.length,
+      reminderCount: updateResult.reminderIds.length + (policyResult?.policyCount ?? 0),
+      reminderFailure: policyFailure,
     });
     if (localMutationSummary || calendarFeedback) {
       await replyAndRecord(
@@ -498,18 +666,6 @@ async function executeAgentProposal(params: {
           { reply_markup: conflictKeyboard(conflict.first.id, conflict.second.id) },
         );
       }
-    }
-    if (params.execution.reminderPolicies.length) {
-      const policyResult = await executePolicyProposals({
-        execution: params.execution,
-        userId: owner.id,
-        timezone: params.timezone,
-        createdItemIds: [],
-        now: params.now,
-      });
-      result.toolCallsExecuted.push(...policyResult.toolCallsExecuted);
-      result.validationWarnings.push(...policyResult.warnings);
-      result.mutationOccurred ||= policyResult.policyCount > 0;
     }
     return result;
   }
@@ -572,14 +728,20 @@ async function executeAgentProposal(params: {
 function formatLocalItemUpdateSummary(params: {
   items: Array<{ title: string }>;
   reminderCount: number;
+  reminderFailure?: { reason: string; field: string } | null;
 }) {
-  if (!params.items.length && !params.reminderCount) return null;
+  if (!params.items.length && !params.reminderCount && !params.reminderFailure) return null;
   const lines = ["Готово:"];
   for (const item of params.items) {
     lines.push(`• ${item.title}`);
   }
   if (params.reminderCount) {
     lines.push(`Напоминаний добавлено: ${params.reminderCount}.`);
+  }
+  if (params.reminderFailure) {
+    lines.push(
+      `Напоминания не удалось сохранить: ${params.reminderFailure.reason} (${params.reminderFailure.field}).`,
+    );
   }
   return lines.join("\n");
 }

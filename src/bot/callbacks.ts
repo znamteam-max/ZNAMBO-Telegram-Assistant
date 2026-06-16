@@ -100,6 +100,15 @@ import { detectPlanConflicts, formatConflictLine } from "@/services/planConflict
 import { startItemEditSession } from "@/services/itemEditSessions";
 import { startMultiReminderSetupSession } from "@/services/multiReminderSetupSessions";
 import { deleteYandexCalendarObject } from "@/integrations/yandexCalendar";
+import { parseBeforeEventReminderSpecsForAnchor } from "@/domain/beforeEventReminderParsing";
+import {
+  applyReminderSpecsToItem,
+  createSeparateEventFromSession,
+  finishTargetResolutionAction,
+  getEventTargetResolutionSession,
+  getReminderTargetResolutionSession,
+  itemForCandidate,
+} from "@/services/eventTargetResolution";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -219,6 +228,282 @@ export function registerCallbacks(bot: Bot<BotContext>) {
         : "Во сколько поставить новое повторяющееся напоминание?",
       { reply_markup: recurringTimeClarificationKeyboard(draft.id, session.policies.length > 1) },
     );
+  });
+
+  bot.callbackQuery(/^tr:(rename|rem|create|manual|cancel):([^:]+)(?::(\d+))?$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const decision = ctx.match[1] as "rename" | "rem" | "create" | "manual" | "cancel";
+    const actionId = ctx.match[2];
+    const index = Number(ctx.match[3] ?? 0);
+    const active = await getEventTargetResolutionSession({ userId: owner.id, actionId });
+    if (!active) {
+      await ctx.answerCallbackQuery("Устарело");
+      await ctx.reply("Выбор цели устарел. Пришли запрос ещё раз, я заново проверю похожие события.");
+      return;
+    }
+    const { action, session } = active;
+    if (decision === "cancel") {
+      await finishTargetResolutionAction({
+        userId: owner.id,
+        action,
+        status: "cancelled",
+        details: { decision, cancelledReason: "user_cancelled" },
+      });
+      await ctx.answerCallbackQuery("Отменено");
+      await ctx.reply("Ок, ничего не изменил.");
+      return;
+    }
+    if (decision === "manual") {
+      await ctx.answerCallbackQuery();
+      await ctx.reply("Открыл похожие события. Выбери карточку вручную.", {
+        reply_markup: entityListKeyboard(
+          session.candidates.map((candidate) => ({
+            type: "planner_item" as const,
+            id: candidate.itemId,
+          })),
+        ),
+      });
+      return;
+    }
+    if (decision === "create") {
+      try {
+        const created = await createSeparateEventFromSession({
+          userId: owner.id,
+          proposedEvent: session.proposedEvent,
+          sourceMessageId: action.sourceMessageId,
+        });
+        const calendarFeedback = formatCalendarSyncFeedback(
+          await syncItemsToCalendarBestEffort([created.item]),
+        );
+        await finishTargetResolutionAction({
+          userId: owner.id,
+          action,
+          status: "completed",
+          details: {
+            decision,
+            createdItemId: created.item.id,
+            createdPolicyIds: created.reminderResult?.policyIds ?? [],
+            createdReminderIds: created.reminderResult?.reminderIds ?? [],
+          },
+        });
+        await ctx.answerCallbackQuery("Создано");
+        await ctx.reply(
+          [
+            "Готово в JARVIS:",
+            `• ${created.item.title}`,
+            session.proposedEvent.reminders.length
+              ? `• Напоминания: ${session.proposedEvent.reminders
+                  .map((reminder) => reminder.label)
+                  .join(", ")}`
+              : null,
+            "⚠️ В этом слоте есть похожее событие, оставил оба.",
+            calendarFeedback,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          { reply_markup: postCreateTriageKeyboard([created.item]) },
+        );
+        if (ctx.chat?.id) {
+          await refreshDashboardAfterMutation({
+            userId: owner.id,
+            chatId: ctx.chat.id,
+            timezone: owner.timezone,
+          });
+        }
+      } catch (error) {
+        await finishTargetResolutionAction({
+          userId: owner.id,
+          action,
+          status: "failed",
+          details: {
+            decision,
+            errorCode: "target_resolution_create_failed",
+            safeErrorMessage: error instanceof Error ? error.message : String(error),
+          },
+        });
+        await ctx.answerCallbackQuery("Не удалось");
+        await ctx.reply("Не смог безопасно создать отдельное событие. Ничего лишнего не удалял.");
+      }
+      return;
+    }
+    const candidate = session.candidates[index];
+    const item = candidate
+      ? await itemForCandidate({ userId: owner.id, candidate })
+      : null;
+    if (!item) {
+      await finishTargetResolutionAction({
+        userId: owner.id,
+        action,
+        status: "failed",
+        details: { decision, errorCode: "target_item_not_found" },
+      });
+      await ctx.answerCallbackQuery("Не найдено");
+      await ctx.reply("Не нашёл выбранное событие. Ничего не изменил.");
+      return;
+    }
+    try {
+      const result = await applyReminderSpecsToItem({
+        userId: owner.id,
+        item,
+        reminders: session.proposedEvent.reminders,
+        mode: session.proposedEvent.reminderMode,
+        timezone: session.proposedEvent.timezone,
+        sourceMessageId: action.sourceMessageId,
+        title: decision === "rename" ? session.proposedEvent.title : null,
+        mutationSource: "event_target_resolution",
+      });
+      const updatedItem = result.item ?? item;
+      const calendarFeedback = formatCalendarSyncFeedback(
+        await syncItemsToCalendarBestEffort([updatedItem]),
+      );
+      await finishTargetResolutionAction({
+        userId: owner.id,
+        action,
+        status: "completed",
+        details: {
+          decision,
+          targetItemId: item.id,
+          createdPolicyIds: result.policyIds,
+          createdReminderIds: result.reminderIds,
+          warnings: result.warnings,
+        },
+      });
+      await ctx.answerCallbackQuery("Готово");
+      await ctx.reply(
+        [
+          "Готово в JARVIS:",
+          `• ${updatedItem.title}`,
+          session.proposedEvent.reminders.length
+            ? `• Напоминания: ${session.proposedEvent.reminders
+                .map((reminder) => reminder.label)
+                .join(", ")}`
+            : null,
+          calendarFeedback,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        { reply_markup: itemMenuKeyboard(updatedItem.id) },
+      );
+      if (ctx.chat?.id) {
+        await refreshDashboardAfterMutation({
+          userId: owner.id,
+          chatId: ctx.chat.id,
+          timezone: owner.timezone,
+        });
+      }
+    } catch (error) {
+      await finishTargetResolutionAction({
+        userId: owner.id,
+        action,
+        status: "failed",
+        details: {
+          decision,
+          targetItemId: item.id,
+          errorCode: "target_resolution_update_failed",
+          safeErrorMessage: error instanceof Error ? error.message : String(error),
+        },
+      });
+      await ctx.answerCallbackQuery("Не удалось");
+      await ctx.reply("Не смог безопасно обновить событие и напоминания. Ничего не удалял.");
+    }
+  });
+
+  bot.callbackQuery(/^trrem:(pick|cancel):([^:]+)(?::(\d+))?$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const actionId = ctx.match[2];
+    const active = await getReminderTargetResolutionSession({ userId: owner.id, actionId });
+    if (!active) {
+      await ctx.answerCallbackQuery("Устарело");
+      await ctx.reply("Выбор события для напоминаний устарел. Пришли оффсеты ещё раз.");
+      return;
+    }
+    const { action, session } = active;
+    if (ctx.match[1] === "cancel") {
+      await finishTargetResolutionAction({
+        userId: owner.id,
+        action,
+        status: "cancelled",
+        details: { cancelledReason: "user_cancelled" },
+      });
+      await ctx.answerCallbackQuery("Отменено");
+      await ctx.reply("Ок, напоминания не добавляю.");
+      return;
+    }
+    const index = Number(ctx.match[3] ?? 0);
+    const candidate = session.candidates[index];
+    const item = candidate
+      ? await itemForCandidate({ userId: owner.id, candidate })
+      : null;
+    const anchor = item?.startAt ?? item?.dueAt ?? null;
+    if (!item || !anchor) {
+      await finishTargetResolutionAction({
+        userId: owner.id,
+        action,
+        status: "failed",
+        details: { errorCode: "target_item_not_found_or_has_no_anchor" },
+      });
+      await ctx.answerCallbackQuery("Не найдено");
+      await ctx.reply("Не нашёл выбранное событие или его время. Ничего не изменил.");
+      return;
+    }
+    const parsed = parseBeforeEventReminderSpecsForAnchor({
+      text: session.originalText,
+      anchor,
+      timezone: item.timezone || owner.timezone,
+      now: new Date(),
+      allowAbsoluteTimes: false,
+      includePast: true,
+    });
+    const reminders = parsed.reminders.length ? parsed.reminders : session.reminders;
+    try {
+      const result = await applyReminderSpecsToItem({
+        userId: owner.id,
+        item,
+        reminders,
+        mode: session.reminderMode,
+        timezone: item.timezone || owner.timezone,
+        sourceMessageId: action.sourceMessageId,
+        mutationSource: "reminder_target_resolution",
+      });
+      await finishTargetResolutionAction({
+        userId: owner.id,
+        action,
+        status: "completed",
+        details: {
+          targetItemId: item.id,
+          createdPolicyIds: result.policyIds,
+          createdReminderIds: result.reminderIds,
+          warnings: result.warnings,
+        },
+      });
+      await ctx.answerCallbackQuery("Готово");
+      await ctx.reply(
+        ["Готово:", item.title, "", "Напоминания:", ...reminders.map((reminder) => `• ${reminder.label}`)].join(
+          "\n",
+        ),
+        { reply_markup: itemMenuKeyboard(item.id) },
+      );
+      if (ctx.chat?.id) {
+        await refreshDashboardAfterMutation({
+          userId: owner.id,
+          chatId: ctx.chat.id,
+          timezone: owner.timezone,
+        });
+      }
+    } catch (error) {
+      await finishTargetResolutionAction({
+        userId: owner.id,
+        action,
+        status: "failed",
+        details: {
+          targetItemId: item.id,
+          errorCode: "reminder_target_resolution_apply_failed",
+          safeErrorMessage: error instanceof Error ? error.message : String(error),
+        },
+      });
+      await ctx.answerCallbackQuery("Не удалось");
+      await ctx.reply("Не смог безопасно добавить напоминания. Ничего не удалял.");
+    }
   });
 
   bot.callbackQuery(/^calendar:retry:(.+)$/, async (ctx) => {
@@ -644,6 +929,49 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await ctx.answerCallbackQuery(item ? "Удалено" : "Не найдено");
     if (!item) await ctx.reply("Не нашёл эту запись.");
     await refreshAfterCallback(ctx, item?.id);
+  });
+
+  bot.callbackQuery(/^past_review:(keep|archive):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const action = ctx.match[1] as "keep" | "archive";
+    const itemId = ctx.match[2];
+    const item =
+      action === "keep"
+        ? await updatePlannerItemDetails({
+            userId: owner.id,
+            itemId,
+            metadata: {
+              pastReviewOverride: {
+                keepInPlan: true,
+                setAt: new Date().toISOString(),
+                reason: "user_kept",
+              },
+            },
+          })
+        : await updatePlannerItemDetails({
+            userId: owner.id,
+            itemId,
+            visibility: "history",
+            metadata: {
+              archivedFromPastReviewAt: new Date().toISOString(),
+              archivedBy: "past_review_action",
+            },
+          });
+    await ctx.answerCallbackQuery(item ? "Готово" : "Не найдено");
+    await ctx.reply(
+      item
+        ? action === "keep"
+          ? "Оставил событие в плане."
+          : "Убрал событие в архив."
+        : "Не нашёл событие. Ничего не изменил.",
+    );
+    if (item && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
   });
 
   bot.callbackQuery(/^policy:cancel_rule:(.+)$/, async (ctx) => {

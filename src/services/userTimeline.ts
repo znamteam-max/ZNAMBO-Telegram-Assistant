@@ -23,6 +23,7 @@ export type TimelineDateBucket =
   | "tomorrow"
   | "soon"
   | "overdue"
+  | "past_review"
   | "unresolved_past"
   | "campaigns"
   | "long_term"
@@ -33,7 +34,7 @@ export type UserTimelineRow = {
   entityRef: EntityRef;
   status: string;
   dateBucket: TimelineDateBucket;
-  classification: TimelineClassification | "unresolved_past" | "overdue";
+  classification: TimelineClassification | "past_review" | "unresolved_past" | "overdue";
   editable: true;
   item?: PlannerItem;
   policy?: ReminderPolicy;
@@ -106,6 +107,7 @@ export function buildUserTimelineViewFromData(params: {
       tomorrow: rows.filter((row) => row.dateBucket === "tomorrow"),
       soon: rows.filter((row) => row.dateBucket === "soon"),
       overdue: rows.filter((row) => row.dateBucket === "overdue"),
+      pastReview: rows.filter((row) => row.dateBucket === "past_review"),
       unresolvedPast: rows.filter((row) => row.dateBucket === "unresolved_past"),
       campaigns: rows.filter((row) => row.dateBucket === "campaigns"),
       longTerm: rows.filter((row) => row.dateBucket === "long_term"),
@@ -141,13 +143,17 @@ function buildItemRow(
           item.metadata?.orphanPolicy === true ||
           item.metadata?.invalidRecurrence === true,
       ));
+  const pastReview = isPastImportantEventForReview(item, now, timezone);
   const classification = unresolvedPast
     ? "unresolved_past"
+    : pastReview
+      ? "past_review"
     : overdue
       ? "overdue"
     : classifyTimelineItem({ item }, now, timezone);
   const tomorrow =
     !unresolvedPast &&
+    !pastReview &&
     !overdue &&
     anchor &&
     isTomorrow(anchor, now, item.timezone || timezone);
@@ -225,9 +231,10 @@ function buildPolicyRow(policy: ReminderPolicy, now: Date, timezone: string): Us
 }
 
 function bucketForClassification(
-  classification: TimelineClassification | "unresolved_past" | "overdue",
+  classification: TimelineClassification | "past_review" | "unresolved_past" | "overdue",
 ): TimelineDateBucket {
   if (classification === "overdue") return "overdue";
+  if (classification === "past_review") return "past_review";
   if (classification === "unresolved_past") return "unresolved_past";
   if (classification === "history") return "history";
   if (classification === "hidden") return "hidden";
@@ -239,6 +246,32 @@ function bucketForClassification(
     return "today";
   }
   return "soon";
+}
+
+function isPastImportantEventForReview(item: PlannerItem, now: Date, timezone: string) {
+  if (item.status !== "active") return false;
+  if (!["event", "training", "tentative_event"].includes(item.kind)) return false;
+  if (item.metadata?.pastReviewOverride && typeof item.metadata.pastReviewOverride === "object") {
+    const override = item.metadata.pastReviewOverride as Record<string, unknown>;
+    if (override.keepInPlan === true) return false;
+  }
+  if (item.metadata?.allDay === true) {
+    const anchor = item.startAt ?? item.dueAt;
+    if (anchor) {
+      const localEnd = DateTime.fromJSDate(anchor, { zone: "utc" })
+        .setZone(item.timezone || timezone)
+        .endOf("day");
+      if (localEnd.toUTC().toJSDate() > now) return false;
+    }
+  }
+  const endedAt = item.endAt ?? (item.startAt ? new Date(item.startAt.getTime() + 60 * 60_000) : null);
+  if (!endedAt || endedAt > now) return false;
+  return (
+    item.priority >= 4 ||
+    item.metadata?.important === true ||
+    item.metadata?.importanceMode === "manual" ||
+    Number(item.metadata?.basePriority ?? 0) >= 4
+  );
 }
 
 function groupCampaignPolicies(policies: ReminderPolicy[]) {

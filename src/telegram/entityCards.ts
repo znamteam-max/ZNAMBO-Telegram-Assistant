@@ -5,6 +5,7 @@ import {
   completedItemKeyboard,
   externalCalendarEventKeyboard,
   itemMenuKeyboard,
+  pastReviewItemKeyboard,
   reminderPolicyCardKeyboard,
 } from "@/bot/keyboards";
 import { getPlannerItemById, listCampaignItems } from "@/db/queries/items";
@@ -126,7 +127,9 @@ async function renderItemCard(params: {
     keyboard:
       item.status === "completed"
         ? completedItemKeyboard(item.id)
-        : itemMenuKeyboard(
+        : isPastReviewCard(item, now)
+          ? pastReviewItemKeyboard(item.id)
+          : itemMenuKeyboard(
             item.id,
             campaignGroup || null,
             calendar?.status ?? null,
@@ -134,6 +137,18 @@ async function renderItemCard(params: {
             beforeEventPolicies,
           ),
   };
+}
+
+function isPastReviewCard(item: PlannerItem, now: Date) {
+  if (item.status !== "active") return false;
+  if (!["event", "training", "tentative_event"].includes(item.kind)) return false;
+  const override = item.metadata?.pastReviewOverride;
+  if (override && typeof override === "object" && (override as Record<string, unknown>).keepInPlan === true) {
+    return false;
+  }
+  const endedAt = item.endAt ?? (item.startAt ? new Date(item.startAt.getTime() + 60 * 60_000) : null);
+  if (!endedAt || endedAt > now) return false;
+  return item.priority >= 4 || item.metadata?.important === true || Number(item.metadata?.basePriority ?? 0) >= 4;
 }
 
 export function formatItemTimingLines(item: PlannerItem) {

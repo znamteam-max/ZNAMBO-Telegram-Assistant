@@ -205,6 +205,17 @@ export function itemMenuKeyboard(
     .text("⚙️ Ещё", `item:more:${itemId}`);
 }
 
+export function pastReviewItemKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("✅ Завершить", `done:${itemId}`)
+    .text("↪️ Перенести", `manage:reschedule:${itemId}`)
+    .row()
+    .text("📌 Оставить в плане", `past_review:keep:${itemId}`)
+    .text("🗄 Архив", `past_review:archive:${itemId}`)
+    .row()
+    .text("↩️ К плану", "dashboard:refresh");
+}
+
 export function persistentMarkerKeyboard(itemId: string) {
   return new InlineKeyboard()
     .text("Авто", `item:set_marker:${itemId}:auto`)

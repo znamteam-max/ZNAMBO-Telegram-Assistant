@@ -21,6 +21,7 @@ import { rememberTaskView } from "@/agent/state/taskViewState";
 import { detectPlanConflicts, formatConflictLine } from "@/services/planConflicts";
 import { reconcileActiveReminderPolicies } from "@/services/reminderPolicyReconciler";
 import {
+  formatDedupedBeforeEventPolicies,
   formatHumanReminderPolicy,
   isPersistentReminderPolicy,
 } from "@/domain/reminderPolicyPresentation";
@@ -124,11 +125,17 @@ export async function renderLiveDashboard(params: {
     .map((row) => row.item!)
     .slice(0, 5);
   const overdueIds = new Set(overdueItems.map((item) => item.id));
+  const pastReviewItems = timeline.byBucket.pastReview
+    .filter((row) => row.item)
+    .map((row) => row.item!)
+    .slice(0, 5);
+  const pastReviewIds = new Set(pastReviewItems.map((item) => item.id));
   const importantItems = allItems
     .filter(
       (item) =>
         !scheduledIds.has(item.id) &&
         !pastTodayIds.has(item.id) &&
+        !pastReviewIds.has(item.id) &&
         !overdueIds.has(item.id) &&
         getBasePriority({ item }) >= 4,
     )
@@ -232,6 +239,11 @@ export async function renderLiveDashboard(params: {
   if (overdueItems.length) {
     lines.push("", "Просрочено:");
     pushRows(itemRowsFor(overdueItems, true));
+  }
+  if (pastReviewItems.length) {
+    lines.push("", "Прошло — решить:");
+    pushRows(itemRowsFor(pastReviewItems, true));
+    lines.push(formatRuItemsRequireDecision(pastReviewItems.length));
   }
   if (unresolvedItems.length) {
     lines.push("", "Неразобранное:");
@@ -434,18 +446,11 @@ export function formatDashboardItem(
       : "";
   const beforeEventPolicies = policies.filter((policy) => policy.policyType === "before_event");
   const otherPolicies = policies.filter((policy) => policy.policyType !== "before_event");
+  const beforeEventSummary = formatDedupedBeforeEventPolicies(beforeEventPolicies, timezone, {
+    item,
+  });
   const reminderLines = [
-    beforeEventPolicies.length
-      ? `   🔔 ${beforeEventPolicies
-          .map((policy) =>
-            formatHumanReminderPolicy(policy, timezone, {
-              now,
-              includeMarker: false,
-              item,
-            }),
-          )
-          .join(", ")}`
-      : null,
+    beforeEventSummary ? `   🔔 ${beforeEventSummary}` : null,
     ...otherPolicies.map(
       (policy) =>
         `   🔔 ${formatHumanReminderPolicy(policy, timezone, {

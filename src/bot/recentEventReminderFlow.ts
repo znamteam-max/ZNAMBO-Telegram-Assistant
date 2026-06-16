@@ -6,11 +6,17 @@ import {
   parseBeforeEventReminderSpecsForAnchor,
 } from "@/domain/beforeEventReminderParsing";
 import { applyItemEditMutation, type ItemEditMutation } from "@/services/itemEditMutations";
+import {
+  candidateFromItem,
+  formatReminderTargetPrompt,
+  reminderTargetKeyboard,
+  startReminderTargetResolutionSession,
+} from "@/services/eventTargetResolution";
 import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
-import { entityListKeyboard, itemMenuKeyboard } from "./keyboards";
+import { itemMenuKeyboard } from "./keyboards";
 import { replyAndRecord } from "./reply";
 
 export async function handleRecentEventReminderTurn(
@@ -22,8 +28,8 @@ export async function handleRecentEventReminderTurn(
   const owner = requireOwner(ctx);
   const now = new Date();
   const candidates = (await listManageableItems(owner.id, 80))
-    .filter((item) => isRecentFutureEventCandidate(item, now))
-    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
+    .filter((item) => isFutureEventCandidate(item, now))
+    .sort((left, right) => candidateSortScore(right, now) - candidateSortScore(left, now));
   if (!candidates.length) return false;
 
   const parseByItem = candidates
@@ -46,17 +52,25 @@ export async function handleRecentEventReminderTurn(
   if (!parseByItem.length) return false;
 
   if (parseByItem.length > 1) {
+    const action = await startReminderTargetResolutionSession({
+      userId: owner.id,
+      sourceMessageId: ctx.dbMessageId,
+      originalText: text,
+      reminders: parseByItem[0].parsed!.reminders,
+      reminderMode: detectBeforeEventReminderMode(text) === "replace" ? "replace" : "add",
+      candidates: parseByItem.slice(0, 8).map((entry, index) => candidateFromItem(entry.item, 1 - index / 10)),
+      now,
+    });
     await replyAndRecord(
       ctx,
-      [
-        "К какому событию добавить эти напоминания?",
-        ...parseByItem.slice(0, 5).map((entry, index) => `${index + 1}. ${entry.item.title}`),
-      ].join("\n"),
-      {
-        reply_markup: entityListKeyboard(
-          parseByItem.slice(0, 5).map((entry) => ({ type: "planner_item", id: entry.item.id })),
-        ),
-      },
+      formatReminderTargetPrompt({
+        reminders: parseByItem[0].parsed!.reminders,
+        candidates: parseByItem.slice(0, 8).map((entry, index) => candidateFromItem(entry.item, 1 - index / 10)),
+        timezone,
+      }),
+      action
+        ? { reply_markup: reminderTargetKeyboard(action.id, Math.min(parseByItem.length, 8)) }
+        : undefined,
     );
     return true;
   }
@@ -124,20 +138,41 @@ export async function handleRecentEventReminderTurn(
   return true;
 }
 
-function isReminderOnlyFollowup(text: string) {
+export function isReminderOnlyFollowup(text: string) {
   const normalized = text.toLocaleLowerCase("ru").replace(/ё/g, "е");
-  return (
-    /(напомн|напоминан)/i.test(normalized) &&
-    /за\s+(?:день|пол\s*часа|полчаса|полтора|час|один|одну|два|две|три|\d+\s*(?:час|мин))/i.test(
+  const hasOffset =
+    /за\s+(?:день|пол\s*часа|полчаса|полтора(?:\s+часа)?|час|(?:один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)\s*(?:час(?:а|ов)?|ч\.?|мин(?:ут(?:у|ы)?)?|м\.?)?|\d+\s*(?:час|ч\.?|мин))/i.test(
       normalized,
-    ) &&
-    !/(создай|добавь|запиши|встреч|созвон|эфир|тренировк|мероприят|событи)/i.test(normalized)
+    );
+  const hasReminderVerb = /(напомн|напоминан)/i.test(normalized);
+  const hasEventCreation =
+    /(создай|добавь|запиши|встреч|созвон|эфир|тренировк|мероприят|событи)/i.test(normalized);
+  return (
+    hasOffset &&
+    (hasReminderVerb || looksLikeBareOffsetList(normalized)) &&
+    !hasEventCreation
   );
 }
 
-function isRecentFutureEventCandidate(item: PlannerItem, now: Date) {
+function isFutureEventCandidate(item: PlannerItem, now: Date) {
   if (!["event", "training", "tentative_event"].includes(item.kind)) return false;
   const anchor = item.startAt ?? item.dueAt;
   if (!anchor || anchor <= now) return false;
-  return now.getTime() - item.createdAt.getTime() <= 6 * 60 * 60 * 1000;
+  return anchor.getTime() <= now.getTime() + 14 * 24 * 60 * 60 * 1000;
+}
+
+function candidateSortScore(item: PlannerItem, now: Date) {
+  const recentBoost = now.getTime() - item.createdAt.getTime() <= 6 * 60 * 60 * 1000 ? 1_000_000 : 0;
+  const anchor = item.startAt ?? item.dueAt ?? new Date(Number.MAX_SAFE_INTEGER);
+  return recentBoost - Math.max(0, anchor.getTime() - now.getTime()) / 60_000;
+}
+
+function looksLikeBareOffsetList(normalized: string) {
+  const stripped = normalized
+    .replace(
+      /за\s+(?:день|пол\s*часа|полчаса|полтора(?:\s+часа)?|час|(?:один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)\s*(?:час(?:а|ов)?|ч\.?|мин(?:ут(?:у|ы)?)?|м\.?)?|\d+\s*(?:час(?:а|ов)?|ч\.?|мин(?:ут(?:у|ы)?)?|м\.?))/gi,
+      "",
+    )
+    .replace(/[,\s.и]+/gi, "");
+  return stripped.length === 0;
 }
