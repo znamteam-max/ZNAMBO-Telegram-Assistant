@@ -57,6 +57,8 @@ Notification idempotency: verified; repeat protected call returned already_sent 
 Final /api/health: ok, appVersion 2.18.0,
 commit d03f1cd17cd422ceacf0b4f41a61b65f1a237f0a,
 latestReleaseNotification V2.18.0 sent, runner succeeded
+Post-handoff runner sanity check: protected /api/reminders/run returned ok with claimed/sent/failed 0/0/0
+and /api/health reported lastRunnerSucceeded true at 2026-06-16T20:03:24.772Z
 ```
 
 Remaining notes:
