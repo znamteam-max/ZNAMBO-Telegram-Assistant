@@ -6,7 +6,73 @@ and remaining limitations. It must never contain secrets.
 
 Last updated: 2026-06-16
 
-## Latest Deployment - V2.17.0
+## Latest Deployment - V2.18.0
+
+Production commit: `d03f1cd17cd422ceacf0b4f41a61b65f1a237f0a`
+
+V2.18.0 is deployed to production.
+
+Implemented:
+
+- release notification text is UTF-8 guarded end-to-end; unsafe `????` / replacement-char summaries
+  fall back to server-side release notes;
+- release metadata and `/release_notes` updated to V2.18.0;
+- active `multi_reminder_setup_session` handles multiple before-event reminders deterministically
+  before AI routing;
+- reminder setup failures now produce targeted clarification/debug trace instead of generic
+  `agent_execution_failed_closed`;
+- before-event, one-time event-linked, and unknown reminder policies render through a shared
+  review-aware helper, with duplicate offsets hidden;
+- similar same-slot Winline CHM/CP calls use overlap-aware target scoring and clearer resolution
+  buttons;
+- `/admin_repair_v2180 preview|apply` and protected actions `v2180_repair_preview|apply` added;
+- V2.18 repair is calendar-safe and changes zero Yandex Calendar objects.
+
+Validation:
+
+```text
+Local validation: npm test 318/318, npm run lint passed, npx tsc --noEmit passed,
+npm run build passed, git diff --check passed
+Changed-file secret scan: passed; only intentional fake redaction fixtures matched
+Schema migration: not required; V2.18 uses existing tables and metadata
+Production deploy: GitHub push to main, Vercel auto-deploy
+/api/health after deploy: ok, appVersion 2.18.0,
+commit d03f1cd17cd422ceacf0b4f41a61b65f1a237f0a, runner healthy
+Protected webhook status: ok, URL https://znambo-telegram-assistant.vercel.app/api/telegram/webhook,
+pending updates 0
+Protected AI health: ok, model gpt-4o-mini-2024-07-18,
+response id resp_0af25985c5551186006a31aab1fda081a2a56a696035f03272, latency 1755 ms
+V2.18 repair preview before apply: generic before-event policies 0, duplicate before-event offsets 0,
+past important events 0, stale reminder sessions 0, fake reminder rows 0, calendar objects to change 0
+V2.18 repair apply: cancelled duplicate policies 0, inferred before-event policies 0,
+review-required policies 0, marked past-review items 0, cleared reminder sessions 0,
+cancelled fake reminder rows 0, calendar objects changed 0
+V2.18 repair preview after apply: all counts 0, calendar objects to change 0
+Reminder smoke: created item ab5a5cdc-8541-436e-9072-3d4665e04ef0,
+scheduled 2026-06-16T19:59:56.481Z, delivered by cron-job.org at 2026-06-16T20:00:42.551Z
+Smoke item: auto-archived after delivery
+Release notification: sent at 2026-06-16T20:01:03.063Z
+Telegram message id: 966
+Notification idempotency: verified; repeat protected call returned already_sent with message id 966
+Final /api/health: ok, appVersion 2.18.0,
+commit d03f1cd17cd422ceacf0b4f41a61b65f1a237f0a,
+latestReleaseNotification V2.18.0 sent, runner succeeded
+```
+
+Remaining notes:
+
+```text
+No schema migration was required for V2.18.0.
+Yandex Calendar remains best-effort and was not changed by V2.18 repair.
+Release notification was sent without shell-provided Cyrillic summary; production generated the
+Russian release notes server-side. Automated tests assert no "????" and no replacement characters.
+Production release inspection records one safe warning: historical_webhook_error; webhook is healthy
+with pending updates 0.
+Health currently reports policiesMissingNextReminder: 1. Runner is healthy and reminder smoke passed;
+this is a non-blocking follow-up candidate for a later policy audit.
+```
+
+## Previous Deployment - V2.17.0
 
 Production commit: `ff62c69cee10acb025f6cdae5589a5fcd305b5cb`
 
