@@ -6,9 +6,11 @@ and remaining limitations. It must never contain secrets.
 
 Last updated: 2026-06-16
 
-## Latest Local Implementation - V2.16.0
+## Latest Deployment - V2.16.0
 
-V2.16.0 is implemented locally and ready for deploy validation.
+Production commit: `f264eeaf0b7f0e367895b541ca34724207a27cdd`
+
+V2.16.0 is deployed to production.
 
 Implemented:
 
@@ -25,11 +27,37 @@ Implemented:
 Validation:
 
 ```text
-npm test -- src/tests/v2160ReminderRouting.test.ts: 6 passed
-npx tsc --noEmit: passed
+Local validation before acceptance: npm test 302/302, lint, TypeScript, build passed
+Changed-file secret scan: passed
+Protected webhook status: ok, production URL, pending updates 0
+Protected AI health: ok, model gpt-4o-mini-2024-07-18, response id present
+V2.16 repair preview before apply: safe true, fake reminder items 3, wrong Central Park time 0,
+missing Winline/CP reminder items 0, past-important annotations 1, stale sessions 0,
+calendar objects to change 0
+V2.16 repair apply: cancelled fake reminder items 3, restored Central Park items 0,
+created policies 0, created reminders 0, annotated past-important items 1, cleared sessions 0,
+calendar objects changed 0
+V2.16 repair preview after apply: safe true, fake reminder items 0, wrong Central Park time 0,
+missing Winline/CP reminder items 0, past-important annotations 1, stale sessions 0,
+calendar objects to change 0
+Reminder smoke: delivered automatically by cron-job.org at 2026-06-16T13:40:17.931Z
+Smoke item: auto-archived after delivery
+Release notification: sent at 2026-06-16T13:41:16.639Z
+Telegram message id: 922
+Notification idempotency: verified; second protected call returned already_sent with message id 922
+Final /api/health: ok, appVersion 2.16.0, commit f264eeaf0b7f0e367895b541ca34724207a27cdd,
+latestReleaseNotification sent at 2026-06-16T13:41:16.639Z
 ```
 
-## Latest Deployment - V2.15.0
+Known V2.16 acceptance note:
+
+```text
+The post-apply preview still reports 1 past-important annotation candidate. The repair did annotate
+that item and changed zero calendar objects, but the preview predicate still sees the original
+important/priority marker. This did not block webhook, AI, repair, runner, or reminder-smoke gates.
+```
+
+## Previous Deployment - V2.15.0
 
 Production commit: `abb71c88c4dc80657a2b1cbb2f5ea327433a7c4e`
 
@@ -78,9 +106,9 @@ production, pending updates are zero, and the error timestamp did not advance du
 ## Current Production
 
 ```text
-Application version: 2.16.0 locally, 2.15.0 in the last verified deployment
+Application version: 2.16.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: abb71c88c4dc80657a2b1cbb2f5ea327433a7c4e
+Validated application deployment commit: f264eeaf0b7f0e367895b541ca34724207a27cdd
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
