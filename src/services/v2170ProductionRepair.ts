@@ -162,6 +162,8 @@ function isPastImportantEvent(item: PlannerItem, now: Date) {
     const override = item.metadata.pastReviewOverride as Record<string, unknown>;
     if (override.keepInPlan === true) return false;
   }
+  if (typeof item.metadata?.pastReviewRequiredAt === "string") return false;
+  if (item.metadata?.repairedBy === "admin_repair_v2170") return false;
   const end = item.endAt ?? (item.startAt ? new Date(item.startAt.getTime() + 60 * 60_000) : null);
   if (!end || end > now) return false;
   return (
