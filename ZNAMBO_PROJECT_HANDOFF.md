@@ -6,7 +6,59 @@ and remaining limitations. It must never contain secrets.
 
 Last updated: 2026-06-16
 
-## Latest Deployment - V2.16.0
+## Latest Deployment - V2.17.0
+
+Production commit: `ff62c69cee10acb025f6cdae5589a5fcd305b5cb`
+
+V2.17.0 is deployed to production.
+
+Implemented:
+
+- target-resolution confirmation before silently updating similar same-slot events;
+- owner buttons for same event rename+reminders, reminders-only, create separate, manual choose, cancel;
+- bare before-event offset follow-ups now ask for a target when multiple future events are plausible;
+- before-event reminder offsets render as one deduped line and do not show generic `one time` noise;
+- `update_existing_items` + reminder policy execution no longer sends success and then a generic failure;
+- important ended event-like items move to `Past - review` / `Прошло - решить` instead of `Important`;
+- past-review item card actions: complete, reschedule, keep in plan, archive;
+- `/admin_repair_v2170 preview|apply` and protected actions `v2170_repair_preview|apply`;
+- release metadata and `/release_notes` updated to V2.17.0.
+
+Validation:
+
+```text
+Local validation: npm test 306/306, npm run lint passed, npm run build passed
+Changed-file secret scan: passed; only env variable names and intentional fake test fixtures matched
+Production deploy: GitHub push to main, Vercel auto-deploy
+/api/health after deploy: ok, appVersion 2.17.0, commit ff62c69cee10acb025f6cdae5589a5fcd305b5cb
+Protected webhook status: ok, URL https://znambo-telegram-assistant.vercel.app/api/telegram/webhook
+Protected AI health: ok, model gpt-4o-mini-2024-07-18, response id present, latency 1605 ms
+V2.17 repair preview before apply: duplicate before-event policies 1, generic before-event policies 0,
+past-review items 1, stale target sessions 0, calendar objects to change 0
+V2.17 repair apply: cancelled duplicate policies 1, review-required policies 0,
+marked past-review items 1, cleared target sessions 0, calendar objects changed 0
+V2.17 repair preview after apply: duplicates 0, generic 0, past-review 0, stale sessions 0,
+calendar objects to change 0
+Reminder smoke: delivered automatically by cron-job.org at 2026-06-16T16:46:12.578Z
+Smoke item: auto-archived after delivery
+Release notification: sent at 2026-06-16T16:48:01.339Z
+Telegram message id: 946
+Notification idempotency: verified; second protected call returned already_sent with message id 946
+Final /api/health: ok, appVersion 2.17.0, commit ff62c69cee10acb025f6cdae5589a5fcd305b5cb,
+latestReleaseNotification V2.17.0 sent, runner succeeded after protected /api/reminders/run
+```
+
+Remaining notes:
+
+```text
+No schema migration was required for V2.17.0.
+Yandex Calendar remains best-effort and was not changed by V2.17 repair.
+Production release notification recorded one safe warning: historical_webhook_error.
+The target-resolution behavior is implemented and unit-covered; owner can still manually confirm the
+live Telegram Winline prompt with a real message if desired.
+```
+
+## Previous Deployment - V2.16.0
 
 Production commit: `f264eeaf0b7f0e367895b541ca34724207a27cdd`
 
@@ -106,9 +158,9 @@ production, pending updates are zero, and the error timestamp did not advance du
 ## Current Production
 
 ```text
-Application version: 2.16.0
+Application version: 2.17.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: f264eeaf0b7f0e367895b541ca34724207a27cdd
+Validated application deployment commit: ff62c69cee10acb025f6cdae5589a5fcd305b5cb
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
