@@ -5,6 +5,7 @@ import type { User } from "@/db/schema";
 export type BotContext = Context & {
   owner?: User;
   dbMessageId?: string;
+  deterministicTrace?: Record<string, unknown>;
 };
 
 export function requireOwner(ctx: BotContext): User {

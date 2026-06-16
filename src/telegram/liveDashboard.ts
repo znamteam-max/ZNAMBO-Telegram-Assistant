@@ -8,10 +8,7 @@ import {
 import { listLegacyReminderLikeItems } from "@/db/queries/items";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { logger } from "@/lib/logger";
-import {
-  classifyTimelineItem,
-  getBasePriority,
-} from "@/domain/timelineClassification";
+import { classifyTimelineItem, getBasePriority } from "@/domain/timelineClassification";
 import { importanceMarker, visibleImportanceMarker } from "@/domain/importance";
 import type { EntityRef } from "@/domain/entityRefs";
 import { buildUserTimelineView } from "@/services/userTimeline";
@@ -23,6 +20,7 @@ import { reconcileActiveReminderPolicies } from "@/services/reminderPolicyReconc
 import {
   formatDedupedBeforeEventPolicies,
   formatHumanReminderPolicy,
+  formatItemReminderPolicyLines,
   isPersistentReminderPolicy,
 } from "@/domain/reminderPolicyPresentation";
 import { shouldShowPersistentMarker } from "@/domain/persistentMarker";
@@ -144,7 +142,10 @@ export async function renderLiveDashboard(params: {
     .filter(
       (row) =>
         (row.dateBucket === "long_term" ||
-          Boolean((row.item?.startAt ?? row.item?.dueAt) && (row.item?.startAt ?? row.item?.dueAt)! > weekEnd)) &&
+          Boolean(
+            (row.item?.startAt ?? row.item?.dueAt) &&
+            (row.item?.startAt ?? row.item?.dueAt)! > weekEnd,
+          )) &&
         row.item &&
         !importantItems.some((item) => item.id === row.item!.id),
     )
@@ -153,9 +154,9 @@ export async function renderLiveDashboard(params: {
   const unresolvedItems = [
     ...pastTodayItems,
     ...timeline.byBucket.unresolvedPast
-    .filter((row) => row.item)
-    .map((row) => row.item!)
-    .filter((item) => !pastTodayIds.has(item.id)),
+      .filter((row) => row.item)
+      .map((row) => row.item!)
+      .filter((item) => !pastTodayIds.has(item.id)),
   ].slice(0, 5);
   const conflicts = detectPlanConflicts(allItems, { now });
   const displayPolicies = timeline.policies.filter(
@@ -210,11 +211,7 @@ export async function renderLiveDashboard(params: {
   if (todayItems.length) {
     pushRows(itemRowsFor(todayItems));
   } else {
-    lines.push(
-      currentItems.length
-        ? "Больше событий сегодня нет."
-        : "На сегодня нет событий.",
-    );
+    lines.push(currentItems.length ? "Больше событий сегодня нет." : "На сегодня нет событий.");
   }
   if (tomorrowItems.length) {
     lines.push("", "Завтра:");
@@ -226,7 +223,9 @@ export async function renderLiveDashboard(params: {
   }
   if (conflicts.length) {
     lines.push("", "Конфликты:");
-    lines.push(...conflicts.slice(0, 5).map((conflict) => formatConflictLine(conflict, params.timezone)));
+    lines.push(
+      ...conflicts.slice(0, 5).map((conflict) => formatConflictLine(conflict, params.timezone)),
+    );
   }
   if (importantItems.length) {
     lines.push("", "Важное:");
@@ -295,7 +294,9 @@ export async function renderReminderPolicyList(params: {
   ]);
   const policies = timeline.policies.filter((policy) => {
     if (params.category) {
-      return policy.category === params.category || policy.category === `recurring_${params.category}`;
+      return (
+        policy.category === params.category || policy.category === `recurring_${params.category}`
+      );
     }
     if (params.longTermOnly) {
       return classifyTimelineItem({ policy }, new Date(), params.timezone) === "long_term";
@@ -420,11 +421,15 @@ export function formatDashboardItem(
   const time = item.startAt
     ? includeDate
       ? formatRuWeekdayDateTime(item.startAt, item.timezone || timezone)
-      : DateTime.fromJSDate(item.startAt, { zone: "utc" }).setZone(item.timezone || timezone).toFormat("HH:mm")
+      : DateTime.fromJSDate(item.startAt, { zone: "utc" })
+          .setZone(item.timezone || timezone)
+          .toFormat("HH:mm")
     : item.dueAt
       ? includeDate
         ? formatDeadlineDateTime(item.dueAt, item.timezone || timezone)
-        : `до ${DateTime.fromJSDate(item.dueAt, { zone: "utc" }).setZone(item.timezone || timezone).toFormat("HH:mm")}`
+        : `до ${DateTime.fromJSDate(item.dueAt, { zone: "utc" })
+            .setZone(item.timezone || timezone)
+            .toFormat("HH:mm")}`
       : null;
   const end = item.endAt
     ? DateTime.fromJSDate(item.endAt, { zone: "utc" })
@@ -444,22 +449,19 @@ export function formatDashboardItem(
     ["pending_retry", "failed", "error"].includes(calendar?.status ?? "")
       ? ` · Календарь: ${calendar?.lastError ?? calendar?.status}, повторю автоматически`
       : "";
-  const beforeEventPolicies = policies.filter((policy) => policy.policyType === "before_event");
-  const otherPolicies = policies.filter((policy) => policy.policyType !== "before_event");
-  const beforeEventSummary = formatDedupedBeforeEventPolicies(beforeEventPolicies, timezone, {
+  const beforeEventSummary = formatDedupedBeforeEventPolicies(policies, timezone, {
     item,
   });
-  const reminderLines = [
-    beforeEventSummary ? `   🔔 ${beforeEventSummary}` : null,
-    ...otherPolicies.map(
-      (policy) =>
-        `   🔔 ${formatHumanReminderPolicy(policy, timezone, {
-          now,
-          includeMarker: false,
-          item,
-        })}`,
-    ),
-  ].filter(Boolean);
+  const itemReminderLines = formatItemReminderPolicyLines(policies, timezone, { item, now });
+  const relativeReminderLabels = new Set(beforeEventSummary.split(", ").filter(Boolean));
+  const reminderLines = beforeEventSummary
+    ? [
+        `   🔔 ${beforeEventSummary}`,
+        ...itemReminderLines
+          .filter((line) => !relativeReminderLabels.has(line))
+          .map((line) => `   🔔 ${line}`),
+      ]
+    : itemReminderLines.map((line) => `   🔔 ${line}`);
   return [
     `${time ? `${time}${end ? `–${end}` : ""} · ` : ""}${important ? `${important} ` : ""}${persistent}${item.title}${calendarStatus}`,
     ...reminderLines,
@@ -471,9 +473,8 @@ function compareDashboardItems(left: PlannerItem, right: PlannerItem) {
   const rightRank = right.startAt ? 0 : right.dueAt ? 1 : 2;
   if (leftRank !== rightRank) return leftRank - rightRank;
   return (
-    (left.startAt ?? left.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER
-  ) - (
-    (right.startAt ?? right.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER
+    ((left.startAt ?? left.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER) -
+    ((right.startAt ?? right.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER)
   );
 }
 

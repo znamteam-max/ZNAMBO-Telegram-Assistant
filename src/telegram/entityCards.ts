@@ -27,7 +27,10 @@ import { getItemCalendarSyncState } from "@/db/queries/googleCalendar";
 import { safeCalendarErrorClass } from "@/services/calendarDiagnostics";
 import { getCalendarProvider } from "@/lib/env";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
-import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
+import {
+  formatHumanReminderPolicy,
+  formatItemReminderPolicyLines,
+} from "@/domain/reminderPolicyPresentation";
 import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
 
 const itemKindLabels: Record<string, string> = {
@@ -83,6 +86,11 @@ async function renderItemCard(params: {
     ...beforeEventPolicies,
     ...activePolicies.filter((policy) => policy.policyType !== "before_event"),
   ];
+  const reminderLines = formatItemReminderPolicyLines(displayPolicies, item.timezone, {
+    item,
+    now,
+    includeNextBeforeEvent: true,
+  });
   return {
     text: [
       item.title,
@@ -97,19 +105,8 @@ async function renderItemCard(params: {
       ...formatItemTimingLines(item),
       `Важность: ${visibleImportanceLabel({ item })}`,
       `Сейчас: ${importanceLabel(effective)}; ${urgencyExplanation(boost)}`,
-      ...(displayPolicies.length
-        ? [
-            "Напоминания:",
-            ...displayPolicies.map(
-              (policy, index) =>
-                `${index + 1}. ${formatHumanReminderPolicy(policy, item.timezone, {
-                  now,
-                  includeNext: policy.policyType === "before_event",
-                  includeMarker: false,
-                  item,
-                })}`,
-            ),
-          ]
+      ...(reminderLines.length
+        ? ["Напоминания:", ...reminderLines.map((line, index) => `${index + 1}. ${line}`)]
         : ["Напоминания: нет"]),
       item.snoozedUntil && item.snoozedUntil > now
         ? `Отложено до: ${formatRuWeekdayDateTime(item.snoozedUntil, item.timezone)}`
@@ -130,12 +127,12 @@ async function renderItemCard(params: {
         : isPastReviewCard(item, now)
           ? pastReviewItemKeyboard(item.id)
           : itemMenuKeyboard(
-            item.id,
-            campaignGroup || null,
-            calendar?.status ?? null,
-            Boolean(item.dueAt && !item.startAt),
-            beforeEventPolicies,
-          ),
+              item.id,
+              campaignGroup || null,
+              calendar?.status ?? null,
+              Boolean(item.dueAt && !item.startAt),
+              beforeEventPolicies,
+            ),
   };
 }
 
@@ -143,12 +140,21 @@ function isPastReviewCard(item: PlannerItem, now: Date) {
   if (item.status !== "active") return false;
   if (!["event", "training", "tentative_event"].includes(item.kind)) return false;
   const override = item.metadata?.pastReviewOverride;
-  if (override && typeof override === "object" && (override as Record<string, unknown>).keepInPlan === true) {
+  if (
+    override &&
+    typeof override === "object" &&
+    (override as Record<string, unknown>).keepInPlan === true
+  ) {
     return false;
   }
-  const endedAt = item.endAt ?? (item.startAt ? new Date(item.startAt.getTime() + 60 * 60_000) : null);
+  const endedAt =
+    item.endAt ?? (item.startAt ? new Date(item.startAt.getTime() + 60 * 60_000) : null);
   if (!endedAt || endedAt > now) return false;
-  return item.priority >= 4 || item.metadata?.important === true || Number(item.metadata?.basePriority ?? 0) >= 4;
+  return (
+    item.priority >= 4 ||
+    item.metadata?.important === true ||
+    Number(item.metadata?.basePriority ?? 0) >= 4
+  );
 }
 
 export function formatItemTimingLines(item: PlannerItem) {
@@ -156,9 +162,7 @@ export function formatItemTimingLines(item: PlannerItem) {
     item.startAt
       ? `Когда делать: ${formatDate(item.startAt, item.timezone)}${item.endAt ? `–${DateTime.fromJSDate(item.endAt, { zone: "utc" }).setZone(item.timezone).toFormat("HH:mm")}` : ""}`
       : "Запланированное время: нет",
-    item.dueAt
-      ? `Дедлайн: ${formatDeadlineDateTime(item.dueAt, item.timezone, true)}`
-      : null,
+    item.dueAt ? `Дедлайн: ${formatDeadlineDateTime(item.dueAt, item.timezone, true)}` : null,
   ].filter((line): line is string => Boolean(line));
 }
 
@@ -191,16 +195,19 @@ function formatCalendarState(
   errorClass?: string | null,
   syncProvider?: string | null,
 ) {
-  const provider = syncProvider?.includes("yandex") || getCalendarProvider() === "yandex"
-    ? "Яндекс"
-    : syncProvider?.includes("google") || getCalendarProvider() === "google"
-      ? "Google"
-      : "не подключён";
+  const provider =
+    syncProvider?.includes("yandex") || getCalendarProvider() === "yandex"
+      ? "Яндекс"
+      : syncProvider?.includes("google") || getCalendarProvider() === "google"
+        ? "Google"
+        : "не подключён";
   const prefix = `${provider} · Личный · `;
   if (status === "synced") return `${prefix}synced`;
-  if (status === "pending_retry") return `${prefix}${errorClass ?? "pending retry"}, повторю автоматически`;
+  if (status === "pending_retry")
+    return `${prefix}${errorClass ?? "pending retry"}, повторю автоматически`;
   if (status === "failed" || status === "error") return `failed (${errorClass ?? "unknown"})`;
-  if (status === "pending" || status === "not_synced" || status === "syncing") return `${prefix}${status}`;
+  if (status === "pending" || status === "not_synced" || status === "syncing")
+    return `${prefix}${status}`;
   if (status === "disabled") return `${prefix}disabled`;
   return `${prefix}unknown`;
 }
@@ -261,7 +268,5 @@ async function renderCampaignCard(params: {
 }
 
 function formatDate(value: Date | null, timezone: string) {
-  return value
-    ? formatRuWeekdayDateTime(value, timezone, { includeYear: true })
-    : null;
+  return value ? formatRuWeekdayDateTime(value, timezone, { includeYear: true }) : null;
 }

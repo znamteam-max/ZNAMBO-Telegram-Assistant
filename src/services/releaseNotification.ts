@@ -112,9 +112,7 @@ export async function notifyProductionRelease(
   const version = normalizeReleaseVersion(input.version);
   const commitSha = input.commitSha.trim();
   const environment = input.environment?.trim() || "production";
-  const summary = sanitizeReleaseLines(
-    input.summary?.length ? input.summary : [...RELEASE_NOTES.bullets],
-  );
+  const summary = releaseSummaryOrFallback(input.summary);
   const tests = sanitizeReleaseLines(input.tests ?? []);
 
   if (!input.handoffUpdated) {
@@ -461,7 +459,7 @@ async function sendTelegramReleaseMessage(params: {
   const token = requireEnv("TELEGRAM_BOT_TOKEN");
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json; charset=utf-8" },
     body: JSON.stringify({
       chat_id: params.telegramUserId,
       text: params.text,
@@ -477,4 +475,20 @@ async function sendTelegramReleaseMessage(params: {
     throw new Error("telegram_send_failed");
   }
   return { messageId: BigInt(payload.result.message_id) };
+}
+
+function releaseSummaryOrFallback(summary?: string[]) {
+  const sanitized = sanitizeReleaseLines(summary?.length ? summary : [...RELEASE_NOTES.bullets]);
+  return sanitized.some(hasMojibakeSignal)
+    ? sanitizeReleaseLines([...RELEASE_NOTES.bullets])
+    : sanitized;
+}
+
+export function hasMojibakeSignal(value: string) {
+  return (
+    /\uFFFD/.test(value) ||
+    /пїЅ/i.test(value) ||
+    /\?{4,}/.test(value) ||
+    /[\u0080-\u009f]/.test(value)
+  );
 }

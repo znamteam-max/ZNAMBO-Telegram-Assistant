@@ -115,6 +115,10 @@ import {
   applyV2170ProductionRepair,
   previewV2170ProductionRepair,
 } from "@/services/v2170ProductionRepair";
+import {
+  applyV2180ProductionRepair,
+  previewV2180ProductionRepair,
+} from "@/services/v2180ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -211,6 +215,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2140 preview|apply — reminder UX/completed/audit hygiene repair",
         "/admin_repair_v2160 preview|apply — session routing, fake reminder events и calendar-safe cleanup",
         "/admin_repair_v2170 preview|apply — target resolution, reminder offsets и past-review repair",
+        "/admin_repair_v2180 preview|apply — encoding/reminder setup/rendering repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -1332,6 +1337,47 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2170 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2180", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2180ProductionRepair({ userId: owner.id })
+        : await previewV2180ProductionRepair({ userId: owner.id });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.18 repair applied:" : "V2.18 repair preview:",
+        `• generic before-event policies: ${result.genericBeforeEventPolicies}`,
+        `• duplicate before-event offsets: ${result.duplicateBeforeEventOffsets}`,
+        `• past important events: ${result.pastImportantEvents}`,
+        `• stale reminder sessions: ${result.staleReminderSessions}`,
+        `• fake reminder rows: ${result.fakeReminderRows}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• cancelled duplicate policies: ${arrayLength(result, "cancelledDuplicatePolicyIds")}`,
+              `• inferred before-event policies: ${arrayLength(result, "inferredBeforeEventPolicyIds")}`,
+              `• review-required policies: ${arrayLength(result, "reviewRequiredPolicyIds")}`,
+              `• marked past-review items: ${arrayLength(result, "markedPastReviewItemIds")}`,
+              `• cleared reminder sessions: ${arrayLength(result, "clearedReminderSessionActionIds")}`,
+              `• cancelled fake reminder rows: ${arrayLength(result, "cancelledFakeReminderItemIds")}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2180 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {

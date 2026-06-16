@@ -71,11 +71,15 @@ export async function handleIncomingUserMessage(ctx: BotContext, text: string, t
       details: {
         pipelineUsed: "legacy_v2",
         preRouterIntent: null,
+        ...(ctx.deterministicTrace ?? {}),
         finalIntent: "multi_reminder_setup_session",
         fallbackUsed: false,
         createItemAttempted: false,
         createItemBlockedByValidator: true,
-        finalAction: "multi_reminder_setup_session_handled",
+        finalAction:
+          typeof ctx.deterministicTrace?.finalAction === "string"
+            ? ctx.deterministicTrace.finalAction
+            : "multi_reminder_setup_session_handled",
       },
     });
     return;

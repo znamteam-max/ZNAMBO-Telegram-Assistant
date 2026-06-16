@@ -154,14 +154,21 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
     } else {
       const reminderPolicyEditHandled = await handleReminderPolicyEditTurn(ctx, text, timezone);
       if (reminderPolicyEditHandled) {
+        Object.assign(trace, ctx.deterministicTrace ?? {});
         trace.finalAction = "reminder_policy_edit_session_handled";
         trace.toolCallsExecuted = ["reminder_policy_edit_session"];
         return;
       }
       const multiReminderSetupHandled = await handleMultiReminderSetupTurn(ctx, text, timezone);
       if (multiReminderSetupHandled) {
-        trace.finalAction = "multi_reminder_setup_session_handled";
-        trace.toolCallsExecuted = ["multi_reminder_setup_session"];
+        Object.assign(trace, ctx.deterministicTrace ?? {});
+        trace.finalAction =
+          typeof ctx.deterministicTrace?.finalAction === "string"
+            ? ctx.deterministicTrace.finalAction
+            : "multi_reminder_setup_session_handled";
+        trace.toolCallsExecuted = Array.isArray(ctx.deterministicTrace?.toolCallsExecuted)
+          ? ctx.deterministicTrace.toolCallsExecuted
+          : ["multi_reminder_setup_session"];
         trace.sessionRouting = {
           handledBy: "multi_reminder_setup_session",
           itemEditSessionBypassed: true,
@@ -609,9 +616,7 @@ async function executeAgentProposal(params: {
                 : "reminder_policy_execution_failed",
           field: "reminder_offsets",
         };
-        result.validationWarnings.push(
-          `reminder_policy_execution_failed:${policyFailure.reason}`,
-        );
+        result.validationWarnings.push(`reminder_policy_execution_failed:${policyFailure.reason}`);
       }
     }
     result.updatedItemIds = updateResult.updatedItems.map((item) => item.id);

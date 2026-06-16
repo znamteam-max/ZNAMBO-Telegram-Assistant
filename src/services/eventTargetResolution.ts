@@ -124,10 +124,14 @@ export function extractProposedEventFromTargetedUpdate(params: {
   const anchor = params.item.startAt ?? params.item.dueAt;
   if (!anchor) return null;
   const timezone = params.item.timezone || params.timezone;
-  const update = params.execution.itemUpdates.find((entry) => entry.itemIds.includes(params.item.id));
+  const update = params.execution.itemUpdates.find((entry) =>
+    entry.itemIds.includes(params.item.id),
+  );
   const startAtLocal =
     update?.startAtLocal ??
-    DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(timezone).toFormat("yyyy-MM-dd'T'HH:mm:ss");
+    DateTime.fromJSDate(anchor, { zone: "utc" })
+      .setZone(timezone)
+      .toFormat("yyyy-MM-dd'T'HH:mm:ss");
   const endAtLocal =
     update?.endAtLocal ??
     (params.item.endAt
@@ -167,9 +171,10 @@ export function extractProposedEventFromTargetedUpdate(params: {
     startAtLocal,
     endAtLocal,
     timezone,
-    durationMinutes: params.item.startAt && params.item.endAt
-      ? Math.round((params.item.endAt.getTime() - params.item.startAt.getTime()) / 60_000)
-      : null,
+    durationMinutes:
+      params.item.startAt && params.item.endAt
+        ? Math.round((params.item.endAt.getTime() - params.item.startAt.getTime()) / 60_000)
+        : null,
     reminders: [...deduped.values()],
     reminderMode: textAsksReplace(params.text) ? "replace" : "add",
   } satisfies ProposedEvent;
@@ -183,7 +188,10 @@ export async function findAmbiguousEventTargets(params: {
   now: Date;
 }) {
   if (hasExplicitUpdateReference(params.originalText)) return [];
-  const proposedStart = localIsoToUtcDate(params.proposedEvent.startAtLocal, params.proposedEvent.timezone);
+  const proposedStart = localIsoToUtcDate(
+    params.proposedEvent.startAtLocal,
+    params.proposedEvent.timezone,
+  );
   const proposedEnd = params.proposedEvent.endAtLocal
     ? localIsoToUtcDate(params.proposedEvent.endAtLocal, params.proposedEvent.timezone)
     : new Date(proposedStart.getTime() + (params.proposedEvent.durationMinutes ?? 60) * 60_000);
@@ -191,36 +199,53 @@ export async function findAmbiguousEventTargets(params: {
   const items = await listManageableItems(params.userId, 300);
   return items
     .filter((item) => isFutureEventLike(item, params.now))
-    .map((item): EventTargetCandidate | null => {
-      const start = item.startAt ?? item.dueAt;
-      if (!start) return null;
-      const end = item.endAt ?? new Date(start.getTime() + 60 * 60_000);
-      const slotDistance = Math.abs(start.getTime() - proposedStart.getTime());
-      const overlaps = proposedStart < end && proposedEnd > start;
-      const sameSlot = slotDistance <= 15 * 60_000;
-      if (!sameSlot && !overlaps) return null;
-      const title = normalizeTitle(item.title);
-      if (title === proposedTitle) return null;
-      const matchedEntities = commonStrongEntities(item.title, params.proposedEvent.title);
-      const similarityScore = titleSimilarity(title, proposedTitle);
-      if (!matchedEntities.length && similarityScore < 0.42) return null;
-      return {
-        itemId: item.id,
-        title: item.title,
-        startAt: start.toISOString(),
-        endAt: item.endAt?.toISOString() ?? null,
-        similarityScore,
-        matchedEntities,
-        conflictType: sameSlot
-          ? matchedEntities.length
-            ? "same_entity_different_title"
-            : "same_slot_similar_title"
-          : "overlap_similar_title",
-      };
-    })
+    .map((item) =>
+      ambiguousEventCandidateForItem({
+        item,
+        proposedEvent: params.proposedEvent,
+        proposedStart,
+        proposedEnd,
+        proposedTitle,
+      }),
+    )
     .filter((candidate): candidate is EventTargetCandidate => Boolean(candidate))
     .sort((left, right) => right.similarityScore - left.similarityScore)
     .slice(0, 5);
+}
+
+export function ambiguousEventCandidateForItem(params: {
+  item: PlannerItem;
+  proposedEvent: ProposedEvent;
+  proposedStart: Date;
+  proposedEnd: Date;
+  proposedTitle?: string;
+}): EventTargetCandidate | null {
+  const start = params.item.startAt ?? params.item.dueAt;
+  if (!start) return null;
+  const end = params.item.endAt ?? new Date(start.getTime() + 60 * 60_000);
+  const slotDistance = Math.abs(start.getTime() - params.proposedStart.getTime());
+  const overlaps = params.proposedStart < end && params.proposedEnd > start;
+  const sameSlot = slotDistance <= 15 * 60_000;
+  if (!sameSlot && !overlaps) return null;
+  const title = normalizeTitle(params.item.title);
+  const proposedTitle = params.proposedTitle ?? normalizeTitle(params.proposedEvent.title);
+  if (title === proposedTitle) return null;
+  const matchedEntities = commonStrongEntities(params.item.title, params.proposedEvent.title);
+  const similarityScore = titleSimilarity(title, proposedTitle);
+  if (!matchedEntities.length && similarityScore < 0.42) return null;
+  return {
+    itemId: params.item.id,
+    title: params.item.title,
+    startAt: start.toISOString(),
+    endAt: params.item.endAt?.toISOString() ?? null,
+    similarityScore,
+    matchedEntities,
+    conflictType: sameSlot
+      ? matchedEntities.length
+        ? "same_entity_different_title"
+        : "same_slot_similar_title"
+      : "overlap_similar_title",
+  };
 }
 
 export async function startEventTargetResolutionSession(params: {
@@ -395,7 +420,10 @@ export async function createSeparateEventFromSession(params: {
   sourceMessageId?: string | null;
   now?: Date;
 }) {
-  const startAt = localIsoToUtcDate(params.proposedEvent.startAtLocal, params.proposedEvent.timezone);
+  const startAt = localIsoToUtcDate(
+    params.proposedEvent.startAtLocal,
+    params.proposedEvent.timezone,
+  );
   const endAt = params.proposedEvent.endAtLocal
     ? localIsoToUtcDate(params.proposedEvent.endAtLocal, params.proposedEvent.timezone)
     : new Date(startAt.getTime() + (params.proposedEvent.durationMinutes ?? 60) * 60_000);
@@ -432,7 +460,7 @@ export function targetResolutionKeyboard(actionId: string) {
   return new InlineKeyboard()
     .text("✅ Обновить название и напоминания", `tr:rename:${actionId}:0`)
     .row()
-    .text("🔔 Только напоминания", `tr:rem:${actionId}:0`)
+    .text("🔔 Оставить название, обновить напоминания", `tr:rem:${actionId}:0`)
     .row()
     .text("➕ Создать отдельно", `tr:create:${actionId}`)
     .row()
@@ -525,7 +553,10 @@ function extractReminderSpecs(params: {
   }
   for (const policy of params.policies) {
     if (policy.policyType !== "before_event") continue;
-    if (policy.itemTitle && normalizeTitle(policy.itemTitle) !== normalizeTitle(params.action.title)) {
+    if (
+      policy.itemTitle &&
+      normalizeTitle(policy.itemTitle) !== normalizeTitle(params.action.title)
+    ) {
       continue;
     }
     const minutes = policy.minutesBefore;
@@ -613,7 +644,9 @@ function extractLeadingEventTitle(text: string) {
     .replace(/\s+/g, " ")
     .trim();
   const title = cleaned
-    .split(/\s+(?:сегодня|завтра|послезавтра|в\s+\d{1,2}(?:[.:]\d{2})?|на\s+\d{1,2})(?:\s|[,.]|$)/i)[0]
+    .split(
+      /\s+(?:сегодня|завтра|послезавтра|в\s+\d{1,2}(?:[.:]\d{2})?|на\s+\d{1,2})(?:\s|[,.]|$)/i,
+    )[0]
     ?.replace(/[,.]+$/g, "")
     .trim();
   if (!title || title.length < 6) return null;

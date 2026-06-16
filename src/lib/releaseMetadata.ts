@@ -1,17 +1,17 @@
 export const RELEASE_NOTES = {
-  version: "2.17.0",
-  previousVersion: "2.16.0",
-  title: "Target choice, reminder offset hygiene and past event review",
+  version: "2.18.0",
+  previousVersion: "2.17.0",
+  title: "Release encoding, overlap target choice and deterministic reminder setup",
   bullets: [
-    "похожие события в том же слоте больше не обновляются молча — сначала показываю выбор цели",
-    "event + reminder updates отвечают одним локальным результатом без generic success-then-failure",
-    "before-event reminders рендерятся deduped: без дублей и без generic «один раз»",
-    "прошедшие важные события уходят в «Прошло — решить» с явными действиями",
+    "исправил выбор цели для похожих созвонов",
+    "исправил несколько напоминаний перед событием",
+    "исправил отображение напоминаний в карточках и Плане",
+    "исправил кодировку уведомлений о релизе",
   ],
   testPrompts: [
     "Созвон с Винлайном по ЦП завтра в 15.30. Напомни мне за два часа и за полчаса",
     "За 3 часа, за 2 часа, за час",
-    "/admin_repair_v2170 preview",
+    "/admin_repair_v2180 preview",
   ],
 } as const;
 

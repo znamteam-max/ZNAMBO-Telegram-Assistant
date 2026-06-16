@@ -21,6 +21,10 @@ export function formatHumanReminderPolicy(
   timezone: string,
   options?: { includeNext?: boolean; now?: Date; includeMarker?: boolean; item?: PlannerItem },
 ) {
+  const concreteOneTime = formatConcreteOneTimePolicy(policy, timezone, {
+    item: options?.item,
+    now: options?.now,
+  });
   const interval = policy.intervalMinutes ? formatInterval(policy.intervalMinutes) : null;
   const startClock = policy.startsAt
     ? DateTime.fromJSDate(policy.startsAt, { zone: "utc" })
@@ -39,26 +43,28 @@ export function formatHumanReminderPolicy(
       : null;
   const parts = [
     beforeEvent ||
+      concreteOneTime ||
       [recurrence, interval].filter(Boolean).join(", ") ||
       (policy.policyType === "before_event"
-        ? "напоминание перед событием — нужно уточнить время"
-        : "один раз"),
+        ? formatReminderNeedsReview("напоминание перед событием")
+        : formatReminderNeedsReview("напоминание")),
     startClock && endClock ? `с ${startClock} до ${endClock}` : null,
     isPersistentReminderPolicy(policy) ? "пока не отмечу" : null,
   ].filter(Boolean);
   if (options?.includeNext && policy.nextFireAt) {
-    parts.push(`следующее: ${formatRuWeekdayDateTime(policy.nextFireAt, policy.timezone || timezone)}`);
+    parts.push(
+      `следующее: ${formatRuWeekdayDateTime(policy.nextFireAt, policy.timezone || timezone)}`,
+    );
   }
   if (policy.snoozedUntil && policy.snoozedUntil > (options?.now ?? new Date())) {
-    parts.push(`отложено до ${formatRuWeekdayDateTime(policy.snoozedUntil, policy.timezone || timezone)}`);
+    parts.push(
+      `отложено до ${formatRuWeekdayDateTime(policy.snoozedUntil, policy.timezone || timezone)}`,
+    );
   }
   return `${options?.includeMarker === false || !isPersistentReminderPolicy(policy) ? "" : "❗ "}${parts.join(", ")}`;
 }
 
-export function getBeforeEventOffsetMinutes(
-  policy: ReminderPolicy,
-  item?: PlannerItem | null,
-) {
+export function getBeforeEventOffsetMinutes(policy: ReminderPolicy, item?: PlannerItem | null) {
   if (policy.policyType !== "before_event") return null;
   const metadataMinutes = Number(policy.metadata?.minutesBefore);
   if (Number.isFinite(metadataMinutes) && metadataMinutes > 0) {
@@ -71,11 +77,23 @@ export function getBeforeEventOffsetMinutes(
   return minutes > 0 ? minutes : null;
 }
 
-export function getBeforeEventPolicyKey(
+export function getEventLinkedReminderOffsetMinutes(
   policy: ReminderPolicy,
   item?: PlannerItem | null,
 ) {
-  const minutes = getBeforeEventOffsetMinutes(policy, item);
+  if (policy.policyType === "before_event") return getBeforeEventOffsetMinutes(policy, item);
+  if (!item || policy.itemId !== item.id) return null;
+  if (policy.recurrenceRule || policy.intervalMinutes) return null;
+  if (!["one_time", "custom"].includes(policy.policyType)) return null;
+  const anchor = item.startAt ?? item.dueAt ?? null;
+  const fireAt = policy.nextFireAt ?? policy.startsAt ?? null;
+  if (!anchor || !fireAt) return null;
+  const minutes = Math.round((anchor.getTime() - fireAt.getTime()) / 60_000);
+  return minutes > 0 ? minutes : null;
+}
+
+export function getBeforeEventPolicyKey(policy: ReminderPolicy, item?: PlannerItem | null) {
+  const minutes = getEventLinkedReminderOffsetMinutes(policy, item);
   return minutes ? `relative:${minutes}` : null;
 }
 
@@ -87,7 +105,7 @@ export function formatDedupedBeforeEventPolicies(
   const seen = new Set<string>();
   const offsets: Array<{ minutes: number; label: string }> = [];
   for (const policy of policies) {
-    const minutes = getBeforeEventOffsetMinutes(policy, options?.item);
+    const minutes = getEventLinkedReminderOffsetMinutes(policy, options?.item);
     if (!minutes) continue;
     const key = `relative:${minutes}`;
     if (seen.has(key)) continue;
@@ -105,7 +123,65 @@ export function formatDedupedBeforeEventPolicies(
   return offsets.map((entry) => entry.label).join(", ");
 }
 
-export function formatBeforeEventOffset(minutes: number, deliveryAt?: Date | null, timezone?: string) {
+export function formatItemReminderPolicyLines(
+  policies: ReminderPolicy[],
+  timezone: string,
+  options: { item: PlannerItem; now?: Date; includeNextBeforeEvent?: boolean },
+) {
+  const handled = new Set<string>();
+  const offsets: Array<{ minutes: number; label: string; deliveryAt?: Date | null }> = [];
+  for (const policy of policies) {
+    const minutes = getEventLinkedReminderOffsetMinutes(policy, options.item);
+    if (!minutes) continue;
+    const key = `relative:${minutes}`;
+    if (handled.has(key)) {
+      handled.add(policy.id);
+      continue;
+    }
+    handled.add(key);
+    handled.add(policy.id);
+    offsets.push({
+      minutes,
+      label: formatBeforeEventOffset(
+        minutes,
+        policy.nextFireAt ?? policy.startsAt,
+        policy.timezone || options.item.timezone || timezone,
+      ),
+      deliveryAt: policy.nextFireAt ?? policy.startsAt,
+    });
+  }
+  offsets.sort((left, right) => right.minutes - left.minutes);
+
+  const lines = offsets.map((entry) => {
+    if (!options.includeNextBeforeEvent || !entry.deliveryAt) return entry.label;
+    const fire = DateTime.fromJSDate(entry.deliveryAt, { zone: "utc" }).setZone(
+      options.item.timezone || timezone,
+    );
+    return fire.isValid
+      ? `${entry.label}, следующее: ${fire.toFormat("dd.LL HH:mm")}`
+      : entry.label;
+  });
+
+  for (const policy of policies) {
+    if (handled.has(policy.id)) continue;
+    const formatted = formatHumanReminderPolicy(policy, timezone, {
+      now: options.now,
+      includeMarker: false,
+      includeNext: policy.policyType === "before_event",
+      item: options.item,
+    });
+    if (!formatted || lines.includes(formatted)) continue;
+    lines.push(formatted);
+  }
+
+  return lines;
+}
+
+export function formatBeforeEventOffset(
+  minutes: number,
+  deliveryAt?: Date | null,
+  timezone?: string,
+) {
   const clock =
     deliveryAt && timezone
       ? DateTime.fromJSDate(deliveryAt, { zone: "utc" }).setZone(timezone).toFormat("HH:mm")
@@ -136,10 +212,45 @@ function formatBeforeEventPolicy(policy: ReminderPolicy, timezone: string, item?
   if (anchor && fireAt) {
     const minutes = Math.round((anchor.getTime() - fireAt.getTime()) / 60_000);
     if (minutes > 0) {
-      return formatBeforeEventOffset(minutes, fireAt, item?.timezone || policy.timezone || timezone);
+      return formatBeforeEventOffset(
+        minutes,
+        fireAt,
+        item?.timezone || policy.timezone || timezone,
+      );
     }
   }
   return null;
+}
+
+function formatConcreteOneTimePolicy(
+  policy: ReminderPolicy,
+  timezone: string,
+  options?: { item?: PlannerItem; now?: Date },
+) {
+  if (policy.policyType !== "one_time" && policy.policyType !== "custom") return null;
+  const item = options?.item;
+  const eventOffset = getEventLinkedReminderOffsetMinutes(policy, item);
+  if (eventOffset) {
+    return formatBeforeEventOffset(
+      eventOffset,
+      policy.nextFireAt ?? policy.startsAt,
+      item?.timezone || policy.timezone || timezone,
+    );
+  }
+  const fireAt = policy.nextFireAt ?? policy.startsAt ?? null;
+  if (!fireAt) return null;
+  const zone = policy.timezone || item?.timezone || timezone;
+  const local = DateTime.fromJSDate(fireAt, { zone: "utc" }).setZone(zone);
+  const today = DateTime.fromJSDate(options?.now ?? new Date(), { zone: "utc" })
+    .setZone(zone)
+    .startOf("day");
+  if (local.hasSame(today, "day")) return `сегодня в ${local.toFormat("HH:mm")}`;
+  if (local.hasSame(today.plus({ days: 1 }), "day")) return `завтра в ${local.toFormat("HH:mm")}`;
+  return formatRuWeekdayDateTime(fireAt, zone);
+}
+
+function formatReminderNeedsReview(subject: string) {
+  return `${subject} требует проверки: нужно уточнить время, не понял, когда сработать`;
 }
 
 function formatInterval(minutes: number) {
