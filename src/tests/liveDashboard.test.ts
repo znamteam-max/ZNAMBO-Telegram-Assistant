@@ -154,12 +154,9 @@ describe("live dashboard lifecycle", () => {
     });
 
     const todayStart = result.text.indexOf("Сегодня:");
-    const unresolvedStart = result.text.indexOf("Неразобранное:");
     expect(todayStart).toBeGreaterThanOrEqual(0);
-    expect(unresolvedStart).toBeGreaterThan(todayStart);
-    expect(result.text.slice(todayStart, unresolvedStart)).not.toContain("Красочный забег");
-    expect(result.text.slice(todayStart, unresolvedStart)).toContain("Тренировка Z2");
-    expect(result.text.slice(unresolvedStart)).toContain("Красочный забег");
+    expect(result.text.slice(todayStart)).not.toContain("Красочный забег");
+    expect(result.text.slice(todayStart)).toContain("Тренировка Z2");
   });
 
   it("retires the previous dashboard and leaves exactly one new active dashboard", async () => {

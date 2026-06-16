@@ -22,6 +22,8 @@ import { applyAgentReminderPolicies } from "@/services/reminderPolicyEngine";
 import { refreshDashboardAfterMutation, renderReminderPolicyList } from "@/telegram/liveDashboard";
 import { handleItemEditTurn } from "@/bot/itemEditFlow";
 import { handleExternalCalendarEditTurn } from "@/bot/externalCalendarEditFlow";
+import { handleMultiReminderSetupTurn } from "@/bot/multiReminderSetupFlow";
+import { handleRecentEventReminderTurn } from "@/bot/recentEventReminderFlow";
 import { handleReminderPolicyEditTurn } from "@/bot/reminderPolicyEditFlow";
 import {
   campaignCompletionGuardKeyboard,
@@ -137,16 +139,26 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
         ];
       }
     } else {
-      const recurringDraftHandled = await handleRecurringPolicyDraftTurn(ctx, text, timezone);
-      if (recurringDraftHandled) {
-        trace.finalAction = "recurring_policy_draft_handled";
-        trace.toolCallsExecuted = ["complete_recurring_policy_draft"];
-        return;
-      }
       const reminderPolicyEditHandled = await handleReminderPolicyEditTurn(ctx, text, timezone);
       if (reminderPolicyEditHandled) {
         trace.finalAction = "reminder_policy_edit_session_handled";
         trace.toolCallsExecuted = ["reminder_policy_edit_session"];
+        return;
+      }
+      const multiReminderSetupHandled = await handleMultiReminderSetupTurn(ctx, text, timezone);
+      if (multiReminderSetupHandled) {
+        trace.finalAction = "multi_reminder_setup_session_handled";
+        trace.toolCallsExecuted = ["multi_reminder_setup_session"];
+        trace.sessionRouting = {
+          handledBy: "multi_reminder_setup_session",
+          itemEditSessionBypassed: true,
+        };
+        return;
+      }
+      const recurringDraftHandled = await handleRecurringPolicyDraftTurn(ctx, text, timezone);
+      if (recurringDraftHandled) {
+        trace.finalAction = "recurring_policy_draft_handled";
+        trace.toolCallsExecuted = ["complete_recurring_policy_draft"];
         return;
       }
       const externalCalendarEditHandled = await handleExternalCalendarEditTurn(ctx, text, timezone);
@@ -160,6 +172,12 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
         trace.finalAction = "item_edit_session_handled";
         trace.toolCallsExecuted = ["item_edit_session"];
         trace.updatedItemIds = [];
+        return;
+      }
+      const recentEventReminderHandled = await handleRecentEventReminderTurn(ctx, text, timezone);
+      if (recentEventReminderHandled) {
+        trace.finalAction = "recent_event_reminder_followup_handled";
+        trace.toolCallsExecuted = ["recent_event_reminder_followup"];
         return;
       }
     }
@@ -208,9 +226,7 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
         timezone,
         now,
       });
-      trace.toolCallsExecuted = presented
-        ? ["recurring_draft_created"]
-        : [];
+      trace.toolCallsExecuted = presented ? ["recurring_draft_created"] : [];
       trace.validationWarnings = [
         ...asStringArray(trace.validationWarnings),
         ...bound.warnings,
@@ -286,9 +302,7 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       trace.toolFailureReason = userError?.code.includes("missing")
         ? "missing_time"
         : "validation_error";
-      trace.toolFailureField = userError?.code.includes("reminderTime")
-        ? "time"
-        : "unknown";
+      trace.toolFailureField = userError?.code.includes("reminderTime") ? "time" : "unknown";
       trace.suggestedNextPrompt =
         trace.toolFailureField === "time"
           ? "Напиши время для повторяющегося напоминания, например: 09:00."
@@ -455,7 +469,16 @@ async function executeAgentProposal(params: {
     }
     const calendarResults = await syncItemsToCalendarBestEffort(updateResult.updatedItems);
     const calendarFeedback = formatCalendarSyncFeedback(calendarResults);
-    if (calendarFeedback) await replyAndRecord(params.ctx, calendarFeedback);
+    const localMutationSummary = formatLocalItemUpdateSummary({
+      items: updateResult.updatedItems,
+      reminderCount: updateResult.reminderIds.length,
+    });
+    if (localMutationSummary || calendarFeedback) {
+      await replyAndRecord(
+        params.ctx,
+        [localMutationSummary, calendarFeedback].filter(Boolean).join("\n\n"),
+      );
+    }
     if (updateResult.updatedItems.length) {
       const updatedIds = new Set(updateResult.updatedItems.map((item) => item.id));
       const allItems = await listManageableItems(owner.id, 300);
@@ -465,7 +488,13 @@ async function executeAgentProposal(params: {
       if (conflict) {
         await replyAndRecord(
           params.ctx,
-          ["⚠️ Накладка", "", formatConflictLine(conflict, params.timezone), "", "Что делаем?"].join("\n"),
+          [
+            "⚠️ Накладка",
+            "",
+            formatConflictLine(conflict, params.timezone),
+            "",
+            "Что делаем?",
+          ].join("\n"),
           { reply_markup: conflictKeyboard(conflict.first.id, conflict.second.id) },
         );
       }
@@ -538,6 +567,21 @@ async function executeAgentProposal(params: {
     .join("\n");
   await replyAndRecord(params.ctx, reply || "Уточни, пожалуйста, что именно нужно сделать.");
   return result;
+}
+
+function formatLocalItemUpdateSummary(params: {
+  items: Array<{ title: string }>;
+  reminderCount: number;
+}) {
+  if (!params.items.length && !params.reminderCount) return null;
+  const lines = ["Готово:"];
+  for (const item of params.items) {
+    lines.push(`• ${item.title}`);
+  }
+  if (params.reminderCount) {
+    lines.push(`Напоминаний добавлено: ${params.reminderCount}.`);
+  }
+  return lines.join("\n");
 }
 
 async function executeViewOrManagementTool(
@@ -629,7 +673,9 @@ function applyAiTelemetry(trace: Record<string, unknown>, telemetry: AiCallTelem
 }
 
 function asStringArray(value: unknown) {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 async function replyToolResult(ctx: BotContext, result: JarvisToolResult) {

@@ -1,10 +1,12 @@
 import { clearExternalCalendarEditSession } from "@/bot/externalCalendarEditFlow";
 import { clearActiveItemEditSession } from "@/services/itemEditSessions";
+import { clearActiveMultiReminderSetupSession } from "@/services/multiReminderSetupSessions";
 import { clearActiveRecurringPolicyDraftSession } from "@/services/recurringPolicyDraftSessions";
 import { clearActiveReminderPolicyEditSession } from "@/services/reminderPolicyEditSessions";
 
 export type ClearedInteractionSession =
   | "item_edit_session"
+  | "multi_reminder_setup_session"
   | "reminder_policy_edit_session"
   | "recurring_policy_draft"
   | "external_calendar_edit_session";
@@ -36,9 +38,7 @@ export function isGlobalCreationIntent(text: string) {
       normalized,
     );
   const startsWithRecurringReminder =
-    /^(?:и\s+)?(?:кажд|ежедневно|еженедельно|ежемесячно).*напом/.test(
-      normalized,
-    );
+    /^(?:и\s+)?(?:кажд|ежедневно|еженедельно|ежемесячно).*напом/.test(normalized);
 
   return (
     hasCreationVerb ||
@@ -59,6 +59,9 @@ export async function clearActiveInteractionSessions(params: {
     preserve.has("item_edit_session")
       ? Promise.resolve(null)
       : clearActiveItemEditSession({ userId: params.userId, reason: params.reason }),
+    preserve.has("multi_reminder_setup_session")
+      ? Promise.resolve(null)
+      : clearActiveMultiReminderSetupSession({ userId: params.userId, reason: params.reason }),
     preserve.has("reminder_policy_edit_session")
       ? Promise.resolve(null)
       : clearActiveReminderPolicyEditSession({ userId: params.userId, reason: params.reason }),
@@ -71,12 +74,15 @@ export async function clearActiveInteractionSessions(params: {
   ]);
   if (results[0].status === "fulfilled" && results[0].value) cleared.push("item_edit_session");
   if (results[1].status === "fulfilled" && results[1].value) {
-    cleared.push("reminder_policy_edit_session");
+    cleared.push("multi_reminder_setup_session");
   }
   if (results[2].status === "fulfilled" && results[2].value) {
-    cleared.push("recurring_policy_draft");
+    cleared.push("reminder_policy_edit_session");
   }
   if (results[3].status === "fulfilled" && results[3].value) {
+    cleared.push("recurring_policy_draft");
+  }
+  if (results[4].status === "fulfilled" && results[4].value) {
     cleared.push("external_calendar_edit_session");
   }
   return cleared;

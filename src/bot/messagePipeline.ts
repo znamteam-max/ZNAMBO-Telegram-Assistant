@@ -55,10 +55,31 @@ import {
 } from "./keyboards";
 import { replyAndRecord } from "./reply";
 import { handleItemEditTurn } from "./itemEditFlow";
+import { handleMultiReminderSetupTurn } from "./multiReminderSetupFlow";
+import { handleRecentEventReminderTurn } from "./recentEventReminderFlow";
 
 export async function handleIncomingUserMessage(ctx: BotContext, text: string, timezone: string) {
   const owner = requireOwner(ctx);
   const now = new Date();
+  const multiReminderSetupHandled = await handleMultiReminderSetupTurn(ctx, text, timezone);
+  if (multiReminderSetupHandled) {
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.decision_trace",
+      entityType: "telegram_message",
+      entityId: ctx.dbMessageId,
+      details: {
+        pipelineUsed: "legacy_v2",
+        preRouterIntent: null,
+        finalIntent: "multi_reminder_setup_session",
+        fallbackUsed: false,
+        createItemAttempted: false,
+        createItemBlockedByValidator: true,
+        finalAction: "multi_reminder_setup_session_handled",
+      },
+    });
+    return;
+  }
   const itemEditHandled = await handleItemEditTurn(ctx, text, timezone);
   if (itemEditHandled) {
     await writeAudit({
@@ -74,6 +95,25 @@ export async function handleIncomingUserMessage(ctx: BotContext, text: string, t
         createItemAttempted: false,
         createItemBlockedByValidator: true,
         finalAction: "item_edit_session_handled",
+      },
+    });
+    return;
+  }
+  const recentEventReminderHandled = await handleRecentEventReminderTurn(ctx, text, timezone);
+  if (recentEventReminderHandled) {
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.decision_trace",
+      entityType: "telegram_message",
+      entityId: ctx.dbMessageId,
+      details: {
+        pipelineUsed: "legacy_v2",
+        preRouterIntent: null,
+        finalIntent: "recent_event_reminder_followup",
+        fallbackUsed: false,
+        createItemAttempted: false,
+        createItemBlockedByValidator: true,
+        finalAction: "recent_event_reminder_followup_handled",
       },
     });
     return;
@@ -343,7 +383,8 @@ export async function executeActionPlanForMessage(
         [
           formatCommittedPlanSummary({
             items: result.items,
-            reminderCount: result.reminders.length,
+            reminderCount: result.reminders.length + result.policyReminderIds.length,
+            reminderPolicies: result.policies,
             timezone: params.timezone,
             intro: params.committedIntro,
           }),
@@ -351,9 +392,7 @@ export async function executeActionPlanForMessage(
         ]
           .filter(Boolean)
           .join("\n\n"),
-        result.items.length
-          ? { reply_markup: postCreateTriageKeyboard(result.items) }
-          : undefined,
+        result.items.length ? { reply_markup: postCreateTriageKeyboard(result.items) } : undefined,
       );
       await replyCreatedConflicts(ctx, owner.id, result.items, params.timezone);
       return {
@@ -448,7 +487,10 @@ async function blockIncompleteRecurringPoliciesWithDraft(
       });
       return {
         finalAction: "recurring_policy_duplicate_needs_decision",
-        validatorWarnings: ["recurring_policy_missing_time", "similar_active_recurring_policy_found"],
+        validatorWarnings: [
+          "recurring_policy_missing_time",
+          "similar_active_recurring_policy_found",
+        ],
         savedItemIds: [],
         createdPolicyIds: [],
         createdReminderIds: [],
@@ -533,13 +575,7 @@ async function replyCreatedConflicts(
   if (!conflict) return;
   await replyAndRecord(
     ctx,
-    [
-      "⚠️ Накладка",
-      "",
-      formatConflictLine(conflict, timezone),
-      "",
-      "Что делаем?",
-    ].join("\n"),
+    ["⚠️ Накладка", "", formatConflictLine(conflict, timezone), "", "Что делаем?"].join("\n"),
     { reply_markup: conflictKeyboard(conflict.first.id, conflict.second.id) },
   );
 }

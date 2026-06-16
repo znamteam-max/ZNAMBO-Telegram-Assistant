@@ -1,13 +1,14 @@
 export const RELEASE_NOTES = {
-  version: "2.15.0",
-  previousVersion: "2.14.0",
-  title: "Release notification and deploy completion",
+  version: "2.16.0",
+  previousVersion: "2.15.0",
+  title: "Reminder session routing and calendar feedback hardening",
   bullets: [
-    "уведомление владельца после завершённого production-релиза",
-    "защита от повторной отправки для одной версии и commit",
-    "команды /version, /release_notes и /release_notify",
+    "отдельная session routing ветка для нескольких напоминаний перед событием",
+    "same-message event+reminders and follow-up reminder attachment",
+    "локальное подтверждение изменений перед calendar sync status",
+    "history/important cleanup and /admin_repair_v2160",
   ],
-  testPrompts: ["/version", "/plan", "/actionlog"],
+  testPrompts: ["/plan", "В 7.00 и 7.30", "/admin_repair_v2160 preview"],
 } as const;
 
 export function normalizeReleaseVersion(version: string): string {

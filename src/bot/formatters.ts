@@ -2,13 +2,14 @@ import { DateTime } from "luxon";
 
 import type { ActionPlan, ActionPlanItem } from "@/ai/schemas";
 import type { PlannerActionProposal } from "@/ai/schemas";
-import type { PlannerItem, Reminder } from "@/db/schema";
+import type { PlannerItem, Reminder, ReminderPolicy } from "@/db/schema";
 import {
   formatLocalDateRange,
   formatLocalDateTime,
   formatRuWeekdayDateRange,
 } from "@/domain/dateTime";
 import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
+import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
 
 const kindLabels: Record<string, string> = {
   event: "Встреча",
@@ -97,16 +98,20 @@ export function formatActionPlanCard(plan: ActionPlan, timezone: string): string
 export function formatCommittedPlanSummary(params: {
   items: PlannerItem[];
   reminderCount: number;
+  reminderPolicies?: ReminderPolicy[];
   timezone: string;
   intro?: string;
 }) {
-  const lines = [params.intro ?? `Добавил ${params.items.length} ${itemCountLabel(params.items.length)}:`];
+  const lines = [
+    params.intro ?? `Добавил ${params.items.length} ${itemCountLabel(params.items.length)}:`,
+  ];
   for (const [index, item] of params.items.entries()) {
     lines.push(
       `${index + 1}. ${getItemLabel(item)}: ${item.title} — ${formatItemScheduleAndDeadline(item, params.timezone)}`,
     );
   }
-  const hasUnremindedDeadline = params.items.some((item) => item.dueAt) && params.reminderCount === 0;
+  const hasUnremindedDeadline =
+    params.items.some((item) => item.dueAt) && params.reminderCount === 0;
   lines.push(
     params.reminderCount
       ? `Напоминаний создано: ${params.reminderCount}.`
@@ -114,6 +119,14 @@ export function formatCommittedPlanSummary(params: {
         ? "Напоминаний пока нет."
         : "Будущих напоминаний не добавлял.",
   );
+  if (params.reminderPolicies?.length) {
+    lines.push("", "Напоминания:");
+    for (const policy of params.reminderPolicies) {
+      lines.push(
+        `• ${formatHumanReminderPolicy(policy, params.timezone, { includeMarker: false })}`,
+      );
+    }
+  }
   lines.push("", hasUnremindedDeadline ? "Напомнить?" : "Что настроить?");
   return lines.join("\n");
 }
@@ -174,12 +187,19 @@ export function formatTaskManagementView(params: {
     ["Просроченное", overdue],
   ] as const;
 
-  const lines = [params.title, "", "Ок, ничего нового не создаю. Показываю текущие дела для редактирования."];
+  const lines = [
+    params.title,
+    "",
+    "Ок, ничего нового не создаю. Показываю текущие дела для редактирования.",
+  ];
   for (const [sectionTitle, sectionItems] of sections) {
     if (!sectionItems.length) continue;
     lines.push("", `${sectionTitle}:`, ...sectionItems);
   }
-  lines.push("", "Доступно: отметить выполненным, перенести, удалить, изменить время или добавить напоминание.");
+  lines.push(
+    "",
+    "Доступно: отметить выполненным, перенести, удалить, изменить время или добавить напоминание.",
+  );
   return lines.join("\n");
 }
 
@@ -226,7 +246,11 @@ function isFloating(item: PlannerItem): boolean {
 }
 
 function isTentative(item: PlannerItem): boolean {
-  return item.kind === "tentative_event" || item.metadata?.tentative === true || item.metadata?.tentativeTrainingPlan === true;
+  return (
+    item.kind === "tentative_event" ||
+    item.metadata?.tentative === true ||
+    item.metadata?.tentativeTrainingPlan === true
+  );
 }
 
 function sortItemsForDisplay(items: PlannerItem[]) {
@@ -253,9 +277,7 @@ function groupActions(actions: ActionPlanItem[]) {
 
 function formatActionPlanItem(action: ActionPlanItem, timezone: string): string {
   const zone = action.timezone ?? timezone;
-  const schedule = action.startAtLocal
-    ? formatProposalLocalTime(action.startAtLocal, zone)
-    : null;
+  const schedule = action.startAtLocal ? formatProposalLocalTime(action.startAtLocal, zone) : null;
   const deadline = action.dueAtLocal
     ? `дедлайн ${formatProposalDeadline(action.dueAtLocal, zone)}`
     : null;
@@ -269,9 +291,7 @@ function formatActionPlanItem(action: ActionPlanItem, timezone: string): string 
 
 function formatItemScheduleAndDeadline(item: PlannerItem, timezone: string) {
   const zone = item.timezone || timezone;
-  const schedule = item.startAt
-    ? formatLocalDateRange(item.startAt, item.endAt, zone)
-    : null;
+  const schedule = item.startAt ? formatLocalDateRange(item.startAt, item.endAt, zone) : null;
   const deadline = item.dueAt ? `дедлайн ${formatDeadlineDateTime(item.dueAt, zone)}` : null;
   return [schedule, deadline].filter(Boolean).join("; ") || "без времени";
 }

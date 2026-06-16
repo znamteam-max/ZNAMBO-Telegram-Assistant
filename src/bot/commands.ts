@@ -107,6 +107,10 @@ import {
   applyV2140ProductionRepair,
   previewV2140ProductionRepair,
 } from "@/services/v2140ProductionRepair";
+import {
+  applyV2160ProductionRepair,
+  previewV2160ProductionRepair,
+} from "@/services/v2160ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -201,6 +205,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2120 preview|apply — recurring UX cleanup и marker repair",
         "/admin_repair_v2130 preview|apply — draft integrity, command targeting и actionlog repair",
         "/admin_repair_v2140 preview|apply — reminder UX/completed/audit hygiene repair",
+        "/admin_repair_v2160 preview|apply — session routing, fake reminder events и calendar-safe cleanup",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -1244,6 +1249,46 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2140 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2160", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2160ProductionRepair({ userId: owner.id })
+        : await previewV2160ProductionRepair({ userId: owner.id });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.16 repair applied:" : "V2.16 repair preview:",
+        `• fake standalone reminder items: ${result.fakeReminderItemIds.length}`,
+        `• Central Park 07:xx candidates: ${result.centralParkWrongTimeItemIds.length}`,
+        `• Winline/CP missing reminders: ${result.winlineMissingReminderItemIds.length}`,
+        `• past important annotations: ${result.pastImportantItemIds.length}`,
+        `• stale sessions: ${result.staleSessionActionIds.length}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• cancelled fake items: ${arrayLength(result, "cancelledFakeItemIds")}`,
+              `• restored Central Park items: ${arrayLength(result, "restoredCentralParkItemIds")}`,
+              `• created policies: ${arrayLength(result, "createdPolicyIds")}`,
+              `• created reminders: ${arrayLength(result, "createdReminderIds")}`,
+              `• cleared sessions: ${arrayLength(result, "clearedSessionActionIds")}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2160 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {

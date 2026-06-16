@@ -36,11 +36,12 @@ export function classifyTimelineItem(
   const anchor = item?.startAt ?? item?.dueAt ?? policy?.nextFireAt ?? policy?.startsAt ?? null;
   const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
   const anchorLocal = anchor
-    ? DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(item?.timezone || policy?.timezone || timezone)
+    ? DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(
+        item?.timezone || policy?.timezone || timezone,
+      )
     : null;
-  const itemEnd = item?.endAt ?? (
-    item?.startAt ? new Date(item.startAt.getTime() + 60 * 60 * 1000) : null
-  );
+  const itemEnd =
+    item?.endAt ?? (item?.startAt ? new Date(item.startAt.getTime() + 60 * 60 * 1000) : null);
 
   if (
     policy &&
@@ -61,27 +62,32 @@ export function classifyTimelineItem(
   if (item?.startAt && itemEnd && item.startAt <= now && itemEnd > now) {
     return "now";
   }
-  if (item?.metadata?.isExternalCalendarEvent === true && itemEnd && itemEnd <= now) return "history";
+  if (
+    itemEnd &&
+    itemEnd <= now &&
+    (item?.metadata?.isExternalCalendarEvent === true ||
+      ["event", "training", "tentative_event"].includes(item?.kind ?? ""))
+  ) {
+    return "history";
+  }
   if (anchorLocal?.hasSame(nowLocal, "day")) return "today";
   if (
     anchor &&
     anchor.getTime() > now.getTime() &&
     anchor.getTime() <= now.getTime() + 48 * 60 * 60 * 1000
-  ) return "soon";
+  )
+    return "soon";
   return anchor ? "distant_priority" : "long_term";
 }
 
 export function getBasePriority(entry: TimelineEntry): number {
   const configured = Number(metadataValue(entry.item, entry.policy, "basePriority"));
-  const raw = Number.isFinite(configured) && configured > 0 ? configured : entry.item?.priority ?? 3;
+  const raw =
+    Number.isFinite(configured) && configured > 0 ? configured : (entry.item?.priority ?? 3);
   return clampPriority(raw);
 }
 
-export function getEffectivePriority(
-  entry: TimelineEntry,
-  now: Date,
-  timezone: string,
-): number {
+export function getEffectivePriority(entry: TimelineEntry, now: Date, timezone: string): number {
   const base = getBasePriority(entry);
   const anchor =
     entry.item?.startAt ??
@@ -112,7 +118,8 @@ export function compareTimelineEntries(
 ) {
   const effective = getEffectivePriority(b, now, timezone) - getEffectivePriority(a, now, timezone);
   if (effective) return effective;
-  const rank = classificationRank(classifyTimelineItem(a, now, timezone)) -
+  const rank =
+    classificationRank(classifyTimelineItem(a, now, timezone)) -
     classificationRank(classifyTimelineItem(b, now, timezone));
   if (rank) return rank;
   const base = getBasePriority(b) - getBasePriority(a);
@@ -142,11 +149,13 @@ function isHidden(item?: PlannerItem | null, policy?: ReminderPolicy | null) {
 
 function entryTime(entry: TimelineEntry) {
   return (
-    entry.item?.startAt ??
-    entry.item?.dueAt ??
-    entry.policy?.nextFireAt ??
-    entry.policy?.startsAt
-  )?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    (
+      entry.item?.startAt ??
+      entry.item?.dueAt ??
+      entry.policy?.nextFireAt ??
+      entry.policy?.startsAt
+    )?.getTime() ?? Number.MAX_SAFE_INTEGER
+  );
 }
 
 function classificationRank(value: TimelineClassification) {

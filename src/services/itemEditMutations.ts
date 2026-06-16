@@ -10,28 +10,32 @@ import { updatePlannerItemDetails } from "@/db/queries/items";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { materializeNextPolicyReminder } from "@/services/reminderPolicyEngine";
 import { formatRuWeekdayDateRange } from "@/domain/dateTime";
+import { formatDeadlineDateTime, parseDeadlineSemantics } from "@/domain/deadlineSemantics";
 import {
-  formatDeadlineDateTime,
-  parseDeadlineSemantics,
-} from "@/domain/deadlineSemantics";
+  detectBeforeEventReminderMode,
+  parseBeforeEventReminderSpecsForAnchor,
+} from "@/domain/beforeEventReminderParsing";
 
 import { parseRussianDateTime, parseRussianTimeRange } from "./russianDateTime";
 
-export type ItemEditReminderMutation = {
-  policyType: "nag_until_ack";
-  startsAtLocal: string;
-  intervalMinutes: number;
-  activeWindowStart: string;
-  stopCondition: "until_done";
-} | {
-  policyType: "before_event_multi";
-  reminders: Array<{
-    fireAtLocal: string;
-    minutesBefore: number;
-    label: string;
-  }>;
-  mode: "add" | "replace" | "ask";
-};
+export type ItemEditReminderMutation =
+  | {
+      policyType: "nag_until_ack";
+      startsAtLocal: string;
+      intervalMinutes: number;
+      activeWindowStart: string;
+      stopCondition: "until_done";
+    }
+  | {
+      policyType: "before_event_multi";
+      reminders: Array<{
+        fireAtLocal: string;
+        minutesBefore: number;
+        label: string;
+      }>;
+      mode: "add" | "replace" | "ask";
+      mutationSource?: string;
+    };
 
 export type ItemEditMutation = {
   itemId: string;
@@ -90,25 +94,27 @@ export function parseItemEditMutation(params: {
     now,
     baseDate: anchor,
   });
-  const timeRange = allDayRange ?? (deadline?.scheduledStartLocal && deadline.scheduledEndLocal
-    ? {
-        startLocal: deadline.scheduledStartLocal,
-        endLocal: deadline.scheduledEndLocal,
-        warnings: [],
-        pastConfirmationRequired: false,
-      }
-    : deadline
+  const timeRange =
+    allDayRange ??
+    (deadline?.scheduledStartLocal && deadline.scheduledEndLocal
+      ? {
+          startLocal: deadline.scheduledStartLocal,
+          endLocal: deadline.scheduledEndLocal,
+          warnings: [],
+          pastConfirmationRequired: false,
+        }
+      : deadline
+        ? null
+        : parsedTimeRange);
+  const dateTime =
+    timeRange || deadline
       ? null
-      : parsedTimeRange);
-  const dateTime = timeRange
-    || deadline
-    ? null
-    : parseRussianDateTime({
-        text: params.text,
-        timezone,
-        now,
-        baseDate: anchor,
-      });
+      : parseRussianDateTime({
+          text: params.text,
+          timezone,
+          now,
+          baseDate: anchor,
+        });
   const scheduledLocal = timeRange?.startLocal ?? dateTime?.local ?? null;
   const reminderPolicy = parseReminderMutation({
     text: params.text,
@@ -213,7 +219,11 @@ export async function applyItemEditMutation(params: {
             now,
           });
     policyIds.push(
-      ...("policyIds" in policyResult ? policyResult.policyIds : policyResult.policy ? [policyResult.policy.id] : []),
+      ...("policyIds" in policyResult
+        ? policyResult.policyIds
+        : policyResult.policy
+          ? [policyResult.policy.id]
+          : []),
     );
     reminderIds.push(
       ...("reminderIds" in policyResult
@@ -265,7 +275,10 @@ export function formatItemEditPreview(params: {
   }
   if (params.mutation.kind) lines.push(`Тип: ${params.mutation.kind}`);
   if (params.mutation.pastConfirmationRequired) {
-    lines.push("", "Это время уже прошло сегодня. Подтверди, если всё равно нужно поставить в прошлое.");
+    lines.push(
+      "",
+      "Это время уже прошло сегодня. Подтверди, если всё равно нужно поставить в прошлое.",
+    );
   }
   if (params.mutation.warnings.length) {
     lines.push("", `Заметки: ${params.mutation.warnings.join(", ")}`);
@@ -280,13 +293,16 @@ export function formatItemEditApplied(params: {
   timezone: string;
   calendarFeedback?: string | null;
 }) {
-  const lines = ["Готово:", formatItemVariant({
-    title: params.item.title,
-    startAt: params.item.startAt,
-    endAt: params.item.endAt,
-    dueAt: params.item.dueAt,
-    timezone: params.item.timezone || params.timezone,
-  })];
+  const lines = [
+    "Готово:",
+    formatItemVariant({
+      title: params.item.title,
+      startAt: params.item.startAt,
+      endAt: params.item.endAt,
+      dueAt: params.item.dueAt,
+      timezone: params.item.timezone || params.timezone,
+    }),
+  ];
   if (params.mutation.reminderPolicy) {
     lines.push(`• Напоминания: ${formatReminderMutation(params.mutation.reminderPolicy)}`);
   }
@@ -303,9 +319,13 @@ function parseRenamedTitle(text: string) {
     /^(?:изменить|измени|переименуй|переименовать|назови|назвать)(?:\s+(?:название|имя))?\s+(?:на|в)?\s*(.+)$/i,
   );
   if (!unquoted?.[1]) return null;
-  return unquoted[1]
-    .split(/,\s*(?:время|поставь|перенеси|на\s+(?:сегодня|завтра|понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)|напом)/i)[0]
-    ?.trim() || null;
+  return (
+    unquoted[1]
+      .split(
+        /,\s*(?:время|поставь|перенеси|на\s+(?:сегодня|завтра|понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)|напом)/i,
+      )[0]
+      ?.trim() || null
+  );
 }
 
 function parseReminderMutation(params: {
@@ -320,9 +340,10 @@ function parseReminderMutation(params: {
   const beforeEvent = parseBeforeEventMultiReminderMutation(params);
   if (beforeEvent) return beforeEvent;
   const hourly = /раз в час|каждый час|каждые 60\s*мин/i.test(normalized);
-  const untilDone = /пока\s+(?:не\s+)?(?:сделаю|сделаем|сделано|выполню|выполнено|отмечу|подтвержу|будет готово)/i.test(
-    normalized,
-  );
+  const untilDone =
+    /пока\s+(?:не\s+)?(?:сделаю|сделаем|сделано|выполню|выполнено|отмечу|подтвержу|будет готово)/i.test(
+      normalized,
+    );
   if (!asksReminder || !hourly || !untilDone) return null;
   const anchor =
     params.dateTimeLocal ??
@@ -342,66 +363,32 @@ function parseBeforeEventMultiReminderMutation(params: {
   text: string;
   timezone: string;
   item: PlannerItem;
+  now: Date;
 }): ItemEditReminderMutation | null {
   const anchor = params.item.startAt ?? params.item.dueAt;
   if (!anchor) return null;
   const normalized = params.text.toLocaleLowerCase("ru").replace(/ё/g, "е");
   if (!/(напомни|напоминай|напоминани)/i.test(normalized)) return null;
-  if (!/за\s+(?:день|\d+\s*(?:час|мин))/i.test(normalized)) return null;
-  const anchorLocal = DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(params.timezone);
-  const reminders: Extract<
-    ItemEditReminderMutation,
-    { policyType: "before_event_multi" }
-  >["reminders"] = [];
-
-  const dayMatches = [...normalized.matchAll(/за\s+день(?:\s+в\s+(\d{1,2})(?:[.:](\d{2}))?\s*(?:утра)?)?/giu)];
-  for (const match of dayMatches) {
-    const hour = Number(match[1] ?? 9);
-    const minute = Number(match[2] ?? 0);
-    if (hour > 23 || minute > 59) continue;
-    const fireLocal = anchorLocal.minus({ days: 1 }).set({ hour, minute, second: 0, millisecond: 0 });
-    const minutesBefore = Math.max(1, Math.round(anchorLocal.diff(fireLocal, "minutes").minutes));
-    reminders.push({
-      fireAtLocal: fireLocal.toISO({ suppressMilliseconds: true }) ?? "",
-      minutesBefore,
-      label: `за день в ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
-    });
-  }
-
-  for (const match of normalized.matchAll(/за\s+(\d{1,3})\s*час/giu)) {
-    const hours = Number(match[1]);
-    if (!Number.isFinite(hours) || hours <= 0) continue;
-    const minutesBefore = hours * 60;
-    reminders.push({
-      fireAtLocal: anchorLocal.minus({ minutes: minutesBefore }).toISO({ suppressMilliseconds: true }) ?? "",
-      minutesBefore,
-      label: formatBeforeEventLabel(minutesBefore),
-    });
-  }
-
-  for (const match of normalized.matchAll(/за\s+(\d{1,3})\s*мин/giu)) {
-    const minutesBefore = Number(match[1]);
-    if (!Number.isFinite(minutesBefore) || minutesBefore <= 0) continue;
-    reminders.push({
-      fireAtLocal: anchorLocal.minus({ minutes: minutesBefore }).toISO({ suppressMilliseconds: true }) ?? "",
-      minutesBefore,
-      label: formatBeforeEventLabel(minutesBefore),
-    });
-  }
-
-  const unique = new Map<string, (typeof reminders)[number]>();
-  for (const reminder of reminders) {
-    if (reminder.fireAtLocal) unique.set(`${reminder.minutesBefore}:${reminder.fireAtLocal}`, reminder);
-  }
-  const result = [...unique.values()].sort((left, right) => right.minutesBefore - left.minutesBefore);
-  if (!result.length) return null;
-  const mode =
-    /(?:замени|заменить|вместо|оставь\s+только)/i.test(normalized)
-      ? "replace"
-      : /(?:добавь|добавить|ещ[её])/i.test(normalized)
-        ? "add"
-        : "ask";
-  return { policyType: "before_event_multi", reminders: result, mode };
+  if (
+    !/за\s+(?:день|пол\s*часа|полчаса|полтора|час|один|одну|два|две|три|\d+\s*(?:час|мин))/i.test(
+      normalized,
+    )
+  )
+    return null;
+  const parsed = parseBeforeEventReminderSpecsForAnchor({
+    text: params.text,
+    anchor,
+    timezone: params.timezone,
+    now: params.now,
+    includePast: true,
+  });
+  if (!parsed.reminders.length) return null;
+  return {
+    policyType: "before_event_multi",
+    reminders: parsed.reminders,
+    mode: detectBeforeEventReminderMode(params.text),
+    mutationSource: "item_edit_session",
+  };
 }
 
 function parseAllDaySchedule(params: {
@@ -466,7 +453,9 @@ function buildItemUpdate(params: {
   if (params.mutation.deadlineAtLocal) {
     update.dueAt = DateTime.fromISO(params.mutation.deadlineAtLocal, {
       zone: params.timezone,
-    }).toUTC().toJSDate();
+    })
+      .toUTC()
+      .toJSDate();
   }
   if (!params.mutation.scheduledForLocal) return update;
 
@@ -574,7 +563,9 @@ async function upsertNagUntilAckPolicy(params: {
     from: params.now,
   });
   const reminder =
-    startsAt > params.now ? await materializeNextPolicyReminder(policy, startsAt, { now: params.now }) : null;
+    startsAt > params.now
+      ? await materializeNextPolicyReminder(policy, startsAt, { now: params.now })
+      : null;
   return {
     policy,
     reminderId: reminder?.id ?? null,
@@ -593,6 +584,7 @@ async function createBeforeEventReminderPolicies(params: {
   const reminderIds: string[] = [];
   const warnings: string[] = [];
   const timezone = params.item.timezone || params.timezone;
+  const mutationSource = params.mutation.mutationSource ?? "item_edit_session";
   if (params.mutation.mode === "replace") {
     const existing = (await listReminderPoliciesForItem(params.userId, params.item.id, 100)).filter(
       (policy) => policy.status === "active" && policy.policyType === "before_event",
@@ -610,7 +602,7 @@ async function createBeforeEventReminderPolicies(params: {
         nextFireAt: null,
         metadata: {
           replacedByMultiReminderAt: params.now.toISOString(),
-          replacementSource: "item_edit_session",
+          replacementSource: mutationSource,
         },
       });
     }
@@ -633,7 +625,7 @@ async function createBeforeEventReminderPolicies(params: {
       onWindowEnd: "expire_silently",
       idempotencyKey: `${params.item.id}:before-event:${reminder.minutesBefore}:${fireAt.toISOString()}`,
       metadata: {
-        mutationSource: "item_edit_session",
+        mutationSource,
         reminderMode: params.mutation.mode,
         minutesBefore: reminder.minutesBefore,
         relativeLabel: reminder.label,
@@ -678,15 +670,6 @@ function formatReminderMutation(mutation: ItemEditReminderMutation) {
     return `${action}: ${mutation.reminders.map((reminder) => reminder.label).join(", ")}`;
   }
   return `каждый час с ${mutation.activeWindowStart}, пока не отметишь готово`;
-}
-
-function formatBeforeEventLabel(minutes: number) {
-  if (minutes === 10) return "за 10 минут";
-  if (minutes === 30) return "за 30 минут";
-  if (minutes === 60) return "за час";
-  if (minutes === 120) return "за 2 часа";
-  if (minutes % 60 === 0) return `за ${minutes / 60} ч`;
-  return `за ${minutes} минут`;
 }
 
 function formatMutationVariant(params: {

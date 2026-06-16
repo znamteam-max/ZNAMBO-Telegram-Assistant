@@ -1,5 +1,31 @@
 # История проекта ZNAMBO Telegram Assistant
 
+## V2.16.0 reminder session routing and calendar feedback hardening
+
+V2.16.0 fixes the reminder setup routing regression where a reply like `В 7.00 и 7.30`
+inside the multi-reminder flow could be parsed as an item schedule edit.
+
+Implemented:
+
+```text
+multi_reminder_setup_session now runs before item_edit_session and only creates reminders
+reminder setup prompts are deduped through policy_editor message cleanup
+same-message event+relative reminders create attached before_event policies
+reminder-only follow-up messages attach to a recent future event
+committed summaries count policy-created reminders and list reminder labels
+calendar sync feedback is appended after local mutation confirmation
+ended event-like items move to history before today/important classification
+daily history filters fake standalone reminder rows
+/admin_repair_v2160 preview|apply covers local safe cleanup and stale sessions
+```
+
+Validation:
+
+```text
+npm test -- src/tests/v2160ReminderRouting.test.ts -> 6 passed
+npx tsc --noEmit -> passed
+```
+
 ## V2.15.0 release notification and deploy completion
 
 V2.15.0 adds a persistent, idempotent production release-completion notification without

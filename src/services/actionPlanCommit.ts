@@ -21,6 +21,7 @@ import {
   nextRecurringOccurrence,
   recurringRuleMissingField,
 } from "@/domain/recurringPolicySemantics";
+import { formatBeforeEventOffset } from "@/domain/reminderPolicyPresentation";
 
 import { storePlanMemoryFacts } from "./memory";
 
@@ -216,7 +217,11 @@ export async function commitStoredActionPlan(params: {
                   actionPlanId: planRecord.id,
                   actionPlanSequence: index,
                   reminderType: reminder.type,
-                  ...inferBeforeEventReminderMetadata(reminder.type, reminder.scheduledAt, item.timezone),
+                  ...inferBeforeEventReminderMetadata(
+                    reminder.type,
+                    reminder.scheduledAt,
+                    item.timezone,
+                  ),
                   basePriority: item.priority,
                   importanceMode: item.metadata.importanceMode ?? "auto",
                 },
@@ -320,6 +325,7 @@ export async function commitStoredActionPlan(params: {
                 campaignGroup: target?.metadata?.campaignGroup ?? null,
                 campaignSequence: target?.metadata?.campaignSequence ?? null,
                 campaignState: target?.metadata?.campaignState ?? null,
+                ...inferPolicyProposalMetadata(proposal, nextFireAt, timezone),
                 stopOnItemComplete: proposal.requireAck,
                 stopCondition: proposal.requireAck ? "until_done" : null,
                 recurrenceRuleVersion: proposal.recurrenceRule?.includes(":")
@@ -472,6 +478,18 @@ function assertReminderPoliciesAreCompleteBeforeCommit(proposals: AgentReminderP
     `Понял повторяющееся напоминание, но не хватает времени: ${incomplete.title}. Напиши время, например: 09:00.`,
     `recurring_policy_missing_${missingField ?? "reminderTime"}`,
   );
+}
+
+function inferPolicyProposalMetadata(
+  proposal: AgentReminderPolicy,
+  nextFireAt: Date,
+  timezone: string,
+) {
+  if (proposal.policyType !== "before_event" || !proposal.minutesBefore) return {};
+  return {
+    minutesBefore: proposal.minutesBefore,
+    relativeLabel: formatBeforeEventOffset(proposal.minutesBefore, nextFireAt, timezone),
+  };
 }
 
 function localDate(value: string | null, timezone: string) {
@@ -633,15 +651,16 @@ function policyCategoryForReminder(type: string, kind: string) {
 }
 
 function inferBeforeEventReminderMetadata(type: string, scheduledAt: Date, timezone: string) {
-  const minutesBefore = {
-    "10m": 10,
-    "30m": 30,
-    "1h": 60,
-    "2h": 120,
-    "24h": 1440,
-    day_morning: 1440,
-    event_before: null,
-  }[type] ?? null;
+  const minutesBefore =
+    {
+      "10m": 10,
+      "30m": 30,
+      "1h": 60,
+      "2h": 120,
+      "24h": 1440,
+      day_morning: 1440,
+      event_before: null,
+    }[type] ?? null;
   if (!minutesBefore) return {};
   const relativeLabel =
     type === "day_morning"

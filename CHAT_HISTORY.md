@@ -1,5 +1,31 @@
 # ZNAMBO Telegram Assistant Chat History
 
+## 2026-06-16 - V2.16.0 reminder session routing fix
+
+The user attached the V2.16 reminder-session-routing brief. The requested behavior was to stop
+multi-reminder setup replies from being interpreted as event schedule edits, harden event+reminder
+commit feedback, and add a local repair command.
+
+Completed in code:
+
+- dedicated `multi_reminder_setup_session` and routing before item edit;
+- shared before-event reminder parser for absolute setup times and relative offsets;
+- policy-editor prompt cleanup for reminder setup menus;
+- same-message event plus relative reminders produces attached `before_event` policies;
+- reminder-only follow-up messages attach to a recent future event;
+- committed summaries include policy-created reminder counts and labels;
+- local mutation confirmation precedes calendar best-effort feedback;
+- ended event-like items classify as history and daily snapshots filter fake reminder rows;
+- `/admin_repair_v2160 preview|apply`;
+- focused V2.16 regression tests.
+
+Validation:
+
+```text
+npm test -- src/tests/v2160ReminderRouting.test.ts -> 6 passed
+npx tsc --noEmit -> passed
+```
+
 ## 2026-06-15 - V2.15.0 release notification implementation
 
 The user attached the V2.15 release-notification brief and asked to continue. The requested

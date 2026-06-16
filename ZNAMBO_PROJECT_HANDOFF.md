@@ -4,7 +4,30 @@ This is the single canonical file to attach to a new Codex chat after every depl
 It contains the current production state, cumulative implementation history, validation results,
 and remaining limitations. It must never contain secrets.
 
-Last updated: 2026-06-15
+Last updated: 2026-06-16
+
+## Latest Local Implementation - V2.16.0
+
+V2.16.0 is implemented locally and ready for deploy validation.
+
+Implemented:
+
+- dedicated `multi_reminder_setup_session` for multiple before-event reminders;
+- reminder setup prompts are deduped through the policy-editor lifecycle;
+- same-message event+relative reminders create attached policies;
+- reminder-only follow-up messages attach to a recent future event;
+- committed summaries count and list policy-created reminders;
+- local mutation confirmation is shown before calendar feedback;
+- ended event-like items leave active/important sections;
+- daily history filters standalone fake reminder rows;
+- `/admin_repair_v2160 preview|apply` for conservative local cleanup.
+
+Validation:
+
+```text
+npm test -- src/tests/v2160ReminderRouting.test.ts: 6 passed
+npx tsc --noEmit: passed
+```
 
 ## Latest Deployment - V2.15.0
 
@@ -55,7 +78,7 @@ production, pending updates are zero, and the error timestamp did not advance du
 ## Current Production
 
 ```text
-Application version: 2.15.0
+Application version: 2.16.0 locally, 2.15.0 in the last verified deployment
 Production URL: https://znambo-telegram-assistant.vercel.app
 Validated application deployment commit: abb71c88c4dc80657a2b1cbb2f5ea327433a7c4e
 Pipeline: Jarvis / mandatory OpenAI for natural language
@@ -82,7 +105,7 @@ Implemented:
 - Reminder menu labels were rewritten around user intent: concrete time, before event, repeat,
   nag until done, multiple reminders, advanced.
 - Multiple reminders for one event are supported from one reply such as `za den v 9 utra, za 2
-  chasa i za 30 minut`; the same item receives several before-event policies and reminders.
+chasa i za 30 minut`; the same item receives several before-event policies and reminders.
 - Event reminder rendering now shows concrete offsets such as `za den v 09:00`, `za 2 chasa`,
   `za 30 minut` instead of a generic before-event label.
 - `/completed` and `/done` show completed items with pagination plus restore and archive actions.
@@ -246,7 +269,7 @@ Implemented:
 - Weekly recurring reminders with missing time remain typed drafts until the user explicitly chooses
   or provides a time; smart commit and policy execution now have missing-time guards.
 - Russian natural reminder windows now parse `с 8 утра до 8 вечера`, `с восьми утра до восьми
-  вечера`, `с 10 утра до 6 вечера`, numeric `с 8 до 20`, and local end-of-day phrases.
+вечера`, `с 10 утра до 6 вечера`, numeric `с 8 до 20`, and local end-of-day phrases.
 - Editing cadence on a recurring item updates the recurring policy (`weekly:MO@08:00` plus
   interval/window metadata) instead of creating a one-day local nag window.
 - The policy scheduler now supports recurring interval windows, so a weekly 08:00-20:00 hourly rule
@@ -254,7 +277,7 @@ Implemented:
 - Monthly `15-19 число` recurring reminders become typed drafts when time is missing and use
   `monthly_days:15,16,17,18,19@HH:mm` when time is present.
 - Plan/reminder rendering no longer duplicates `❗` in row and detail, no longer prints `без
-  времени` for unscheduled recurring rows, and formats `300 мин` as `5 часов`.
+времени` for unscheduled recurring rows, and formats `300 мин` as `5 часов`.
 - Item cards now include `❗ Маркер` controls with Auto / Show / Hide stored in item metadata.
 - Recurring filler titles such as `О том, чтобы я решил вопрос...` normalize to human task titles.
 - `/admin_repair_v2120 preview|apply` repairs the production mirror task/policies and moves the

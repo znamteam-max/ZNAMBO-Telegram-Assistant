@@ -30,22 +30,25 @@ export async function ensureDailySnapshot(params: {
     to: local.endOf("day").toUTC().toJSDate(),
     limit: 200,
   });
-  const snapshot: DailyItemSnapshot[] = items.map((item) => ({
-    itemId: item.id,
-    title: item.title,
-    kind: item.kind,
-    finalStatus:
-      item.status === "completed"
-        ? "completed"
-        : item.status === "cancelled"
-          ? "cancelled"
-          : item.kind === "event" && (item.endAt ?? item.startAt ?? item.dueAt ?? new Date()) < new Date()
-            ? "missed"
-            : "unresolved",
-    originalStartAt: item.startAt?.toISOString() ?? null,
-    originalDueAt: item.dueAt?.toISOString() ?? null,
-    completedAt: item.completedAt?.toISOString() ?? null,
-  }));
+  const snapshot: DailyItemSnapshot[] = items
+    .filter((item) => !isStandaloneReminderSnapshotItem(item))
+    .map((item) => ({
+      itemId: item.id,
+      title: item.title,
+      kind: item.kind,
+      finalStatus:
+        item.status === "completed"
+          ? "completed"
+          : item.status === "cancelled"
+            ? "cancelled"
+            : item.kind === "event" &&
+                (item.endAt ?? item.startAt ?? item.dueAt ?? new Date()) < new Date()
+              ? "missed"
+              : "unresolved",
+      originalStartAt: item.startAt?.toISOString() ?? null,
+      originalDueAt: item.dueAt?.toISOString() ?? null,
+      completedAt: item.completedAt?.toISOString() ?? null,
+    }));
   const [created] = await getDb()
     .insert(auditLog)
     .values({
@@ -56,6 +59,18 @@ export async function ensureDailySnapshot(params: {
     })
     .returning();
   return created ?? null;
+}
+
+export function isStandaloneReminderSnapshotItem(item: {
+  title: string;
+  kind: string;
+  metadata?: Record<string, unknown> | null;
+}) {
+  if (!["event", "task", "tentative_event"].includes(item.kind)) return false;
+  const normalized = item.title.toLocaleLowerCase("ru").replace(/ё/g, "е");
+  if (!/напоминан|напомн/.test(normalized)) return false;
+  if (item.metadata?.mutationSource === "multi_reminder_setup_session") return true;
+  return /за\s+(?:день|пол\s*часа|полчаса|час|два\s+часа|2\s*часа|30\s*мин)/.test(normalized);
 }
 
 export async function renderDailyHistory(params: {
@@ -90,9 +105,9 @@ export async function renderDailyHistoryView(params: {
   });
   return {
     text: validSnapshots
-    .filter(Boolean)
-    .map((snapshot) => formatSnapshot(snapshot!.details as Record<string, unknown>))
-    .join("\n\n"),
+      .filter(Boolean)
+      .map((snapshot) => formatSnapshot(snapshot!.details as Record<string, unknown>))
+      .join("\n\n"),
     keyboard: entityListKeyboard([...new Map(refs.map((ref) => [ref.id, ref])).values()]),
   };
 }
@@ -116,7 +131,9 @@ async function findDailySnapshot(userId: string, localDate: string) {
 function formatSnapshot(details: Record<string, unknown>) {
   const items = Array.isArray(details.items) ? (details.items as DailyItemSnapshot[]) : [];
   const completed = items.filter((item) => item.finalStatus === "completed");
-  const unresolved = items.filter((item) => ["unresolved", "not_completed", "missed"].includes(item.finalStatus));
+  const unresolved = items.filter((item) =>
+    ["unresolved", "not_completed", "missed"].includes(item.finalStatus),
+  );
   const cancelled = items.filter((item) => item.finalStatus === "cancelled");
   const lines = [String(details.localDate ?? "Дата")];
   addSection(lines, "Выполнено", completed);
