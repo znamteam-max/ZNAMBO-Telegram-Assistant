@@ -116,6 +116,7 @@ describe("V2.19.0 today until-done semantics", () => {
 
     expect(normalized?.dueAtLocal).toBe("2026-06-17T23:59:00");
     expect(normalized?.intervalMinutes).toBe(60);
+    expect(normalized?.title).toBe("proverit bilety");
   });
 
   it("renders local end-of-day as 23:59 and keeps the item in today's task bucket", () => {
