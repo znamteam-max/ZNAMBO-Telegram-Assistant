@@ -157,7 +157,7 @@ export async function applyV2190ProductionRepair(params: {
           now,
           deliveryAt: target.deliveryAt,
           catchUp: target.catchUp,
-        })
+        }).catch(() => null)
       : null;
     const repairedReminder =
       reminder ??
@@ -257,7 +257,7 @@ async function createReplacementPolicyReminder(params: {
       "v2190-repair",
       params.repairStartedAt.toISOString(),
     ].join(":"),
-    scheduledAt: params.deliveryAt,
+    scheduledAt: replacementDeliveryAt(params.deliveryAt),
     spacingLatestAt: ["interval_window", "nag_until_ack"].includes(params.policy.policyType)
       ? params.policy.endsAt
       : null,
@@ -285,6 +285,10 @@ async function createReplacementPolicyReminder(params: {
     });
   }
   return reminder;
+}
+
+function replacementDeliveryAt(deliveryAt: Date) {
+  return new Date(deliveryAt.getTime() + 1000);
 }
 
 function reminderTypeForPolicy(policy: ReminderPolicy) {
