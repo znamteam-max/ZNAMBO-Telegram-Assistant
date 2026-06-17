@@ -1,10 +1,11 @@
 import { listManageableItems, updatePlannerItemDetails } from "@/db/queries/items";
 import {
+  attachOccurrenceReminder,
   getPendingReminderForPolicy,
   listActiveReminderPolicies,
   updateReminderPolicy,
 } from "@/db/queries/reminderPolicies";
-import { cancelPendingRemindersForPolicy } from "@/db/queries/reminders";
+import { cancelPendingRemindersForPolicy, createReminderIfMissing } from "@/db/queries/reminders";
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { resolvePolicyReconcileTarget } from "@/domain/reminderPolicySchedule";
 import {
@@ -158,7 +159,17 @@ export async function applyV2190ProductionRepair(params: {
           catchUp: target.catchUp,
         })
       : null;
-    if (reminder) materializedPolicyIds.push(policy.id);
+    const repairedReminder =
+      reminder ??
+      (updated
+        ? await createReplacementPolicyReminder({
+            policy: updated,
+            scheduledFor: target.scheduledFor,
+            deliveryAt: target.deliveryAt,
+            repairStartedAt: now,
+          })
+        : null);
+    if (repairedReminder) materializedPolicyIds.push(policy.id);
   }
 
   return {
@@ -227,4 +238,69 @@ async function loadData(userId: string) {
     if (pending) pendingPolicyIds.add(policy.id);
   }
   return [items, policies, pendingPolicyIds] as const;
+}
+
+async function createReplacementPolicyReminder(params: {
+  policy: ReminderPolicy;
+  scheduledFor: Date;
+  deliveryAt: Date;
+  repairStartedAt: Date;
+}) {
+  const reminder = await createReminderIfMissing({
+    userId: params.policy.userId,
+    plannerItemId: params.policy.itemId,
+    type: reminderTypeForPolicy(params.policy),
+    idempotencyKey: [
+      "policy",
+      params.policy.id,
+      params.scheduledFor.toISOString(),
+      "v2190-repair",
+      params.repairStartedAt.toISOString(),
+    ].join(":"),
+    scheduledAt: params.deliveryAt,
+    spacingLatestAt: ["interval_window", "nag_until_ack"].includes(params.policy.policyType)
+      ? params.policy.endsAt
+      : null,
+    repeatUntilAck: params.policy.requireAck,
+    recurrenceKey: params.policy.recurrenceRule,
+    policyId: params.policy.id,
+    purpose: purposeForPolicy(params.policy),
+    menuType: ["after_event", "post_event_menu"].includes(params.policy.policyType)
+      ? "event_reaction"
+      : "reminder",
+    payload: {
+      title: params.policy.title,
+      policyType: params.policy.policyType,
+      category: params.policy.category,
+      requireAck: params.policy.requireAck,
+      scheduledFor: params.scheduledFor.toISOString(),
+      repairedBy: "admin_repair_v2190",
+    },
+  });
+  if (reminder) {
+    await attachOccurrenceReminder({
+      policyId: params.policy.id,
+      scheduledFor: params.scheduledFor,
+      reminderId: reminder.id,
+    });
+  }
+  return reminder;
+}
+
+function reminderTypeForPolicy(policy: ReminderPolicy) {
+  if (policy.policyType === "before_event") return "event_before";
+  if (["after_event", "post_event_menu"].includes(policy.policyType)) return "after_event";
+  if (policy.policyType === "recurring" || policy.policyType === "long_term") return "recurring";
+  if (policy.policyType === "nag_until_ack") return "until_ack";
+  return "custom";
+}
+
+function purposeForPolicy(policy: ReminderPolicy) {
+  if (policy.policyType === "before_event") return "pre_event";
+  if (["after_event", "post_event_menu"].includes(policy.policyType)) return "post_event_menu";
+  if (policy.policyType === "interval_window") return "interval_nag";
+  if (policy.policyType === "recurring" || policy.policyType === "long_term") {
+    return "recurring_check";
+  }
+  return "reminder";
 }
