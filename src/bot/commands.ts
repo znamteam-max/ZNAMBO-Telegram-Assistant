@@ -127,6 +127,10 @@ import {
   applyV2200ProductionRepair,
   previewV2200ProductionRepair,
 } from "@/services/v2200ProductionRepair";
+import {
+  applyV2210ProductionRepair,
+  previewV2210ProductionRepair,
+} from "@/services/v2210ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -135,6 +139,7 @@ import {
   renderReleaseNotifyResult,
   renderVersionMessage,
 } from "@/services/releaseNotification";
+import { formatOwnerTimeDebug, getOwnerTimeDebug } from "@/services/timeDiagnostics";
 
 import type { BotContext } from "./context";
 import { requireOwner } from "./context";
@@ -198,6 +203,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/cronhealth — статус scheduler и policy reconciler",
         "/policydebug — диагностика последней reminder policy",
         "/versiondebug — версии policy engine, interval algorithm и runner lock",
+        "/admin_time_debug — owner timezone parse/render diagnostic",
         "/version, /release — текущая production-версия и статус",
         "/release_notes, /changelog — кратко об изменениях",
         "/release_notify — отправить owner-уведомление после завершённой проверки релиза",
@@ -226,6 +232,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2180 preview|apply — encoding/reminder setup/rendering repair",
         "/admin_repair_v2190 preview|apply - today until-done due/policy audit repair",
         "/admin_repair_v2200 preview|apply - plan rendering, monthly policy and callback safety repair",
+        "/admin_repair_v2210 preview|apply - owner timezone, monthly audit and follow-up visibility repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -623,6 +630,10 @@ export function registerCommands(bot: Bot<BotContext>) {
         `Runner lock enabled: ${RUNNER_LOCK_ENABLED ? "yes" : "no"}`,
       ].join("\n"),
     );
+  });
+  bot.command("admin_time_debug", async (ctx) => {
+    requireOwner(ctx);
+    await replyAndRecord(ctx, formatOwnerTimeDebug(getOwnerTimeDebug()));
   });
   bot.command("lasttranscript", async (ctx) => {
     const owner = requireOwner(ctx);
@@ -1465,6 +1476,44 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2200 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2210", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2210ProductionRepair({ userId: owner.id, timezone: owner.timezone })
+        : await previewV2210ProductionRepair({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.21 repair applied:" : "V2.21 repair preview:",
+        `• policies missing next reminder: ${result.policiesMissingNextReminder}`,
+        `• monthly day-range skipped today: ${result.monthlyDayRangeSkippedTodayPolicies}`,
+        `• timezone shifted events: ${result.timezoneShiftedEvents}`,
+        `• Postilny concert candidates: ${result.postilnyConcertCandidates}`,
+        "• monthly audit actions: checked/materialized/missed_review",
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• materialized policies: ${arrayLength(result, "materializedPolicyIds")}`,
+              `• materialized monthly policies: ${arrayLength(result, "materializedMonthlyPolicyIds")}`,
+              `• timezone repaired items: ${arrayLength(result, "repairedTimezoneItemIds")}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2210 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {

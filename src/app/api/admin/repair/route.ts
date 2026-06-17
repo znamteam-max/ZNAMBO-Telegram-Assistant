@@ -116,8 +116,13 @@ import {
   applyV2200ProductionRepair,
   previewV2200ProductionRepair,
 } from "@/services/v2200ProductionRepair";
+import {
+  applyV2210ProductionRepair,
+  previewV2210ProductionRepair,
+} from "@/services/v2210ProductionRepair";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { notifyProductionRelease } from "@/services/releaseNotification";
+import { getOwnerTimeDebug } from "@/services/timeDiagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -166,6 +171,9 @@ export async function POST(request: Request) {
     return NextResponse.json(result, {
       status: result.ok ? 200 : result.reason === "telegram_send_failed" ? 502 : 409,
     });
+  }
+  if (body.action === "admin_time_debug") {
+    return NextResponse.json({ ok: true, debug: getOwnerTimeDebug() });
   }
   if (body.action === "policy_repair_preview") {
     const preview = await previewReminderPolicyRepair({
@@ -411,6 +419,24 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       result: await applyV2200ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2210_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV2210ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2210_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV2210ProductionRepair({
         userId: owner.id,
         timezone: owner.timezone,
       }),

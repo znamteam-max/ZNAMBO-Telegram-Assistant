@@ -176,10 +176,11 @@ describe("V2.12.0 recurring UX cleanup", () => {
       null,
       true,
       [mirrorPolicy()],
+      [],
       now,
     );
     expect(text).toContain("❗ Решить вопрос с зеркалом для машины");
-    expect(text).toContain("Правило: по понедельникам, каждый час, с 08:00 до 20:00");
+    expect(text).toContain("↻ по понедельникам, каждый час, с 08:00 до 20:00");
     expect(text).not.toContain("без времени");
     expect(text).not.toContain("🔔");
   });
@@ -191,6 +192,7 @@ describe("V2.12.0 recurring UX cleanup", () => {
       null,
       true,
       [mirrorPolicy()],
+      [],
       now,
     );
     const forced = formatDashboardItem(
@@ -198,6 +200,7 @@ describe("V2.12.0 recurring UX cleanup", () => {
       timezone,
       null,
       true,
+      [],
       [],
       now,
     );

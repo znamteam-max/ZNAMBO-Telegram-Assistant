@@ -6,7 +6,8 @@ import {
   markDashboardStatus,
 } from "@/db/queries/liveDashboards";
 import { listLegacyReminderLikeItems } from "@/db/queries/items";
-import type { PlannerItem, ReminderPolicy } from "@/db/schema";
+import { listActiveRemindersForItems } from "@/db/queries/reminders";
+import type { PlannerItem, Reminder, ReminderPolicy } from "@/db/schema";
 import { logger } from "@/lib/logger";
 import { classifyTimelineItem, getBasePriority } from "@/domain/timelineClassification";
 import { importanceMarker, visibleImportanceMarker } from "@/domain/importance";
@@ -19,6 +20,7 @@ import { detectPlanConflicts, formatConflictLine } from "@/services/planConflict
 import { reconcileActiveReminderPolicies } from "@/services/reminderPolicyReconciler";
 import {
   formatDedupedBeforeEventPolicies,
+  formatEventFollowupReminderLines,
   formatHumanReminderPolicy,
   formatItemReminderPolicyLines,
   isReminderPolicyReviewRequired,
@@ -53,6 +55,14 @@ export type LiveDashboardTelegramApi = {
   ): Promise<unknown>;
 };
 
+export type PlanRenderModel = {
+  sections: Array<{
+    id: string;
+    title: string;
+    rowCount: number;
+  }>;
+};
+
 export async function renderLiveDashboard(params: {
   userId: string;
   timezone: string;
@@ -78,6 +88,15 @@ export async function renderLiveDashboard(params: {
     (row) => row.item && !["history", "hidden"].includes(row.dateBucket),
   );
   const allItems = itemRows.map((row) => row.item!);
+  const activeItemReminders = await listActiveRemindersForItems(
+    params.userId,
+    allItems.map((item) => item.id),
+  ).catch((error) => {
+    logger.warn("Dashboard active reminders lookup failed without blocking view", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [] as Reminder[];
+  });
   const isPastActiveItem = (item: PlannerItem) => {
     const anchor = item.endAt ?? item.startAt ?? item.dueAt;
     return Boolean(anchor && anchor <= now && item.status === "active");
@@ -190,9 +209,32 @@ export async function renderLiveDashboard(params: {
     if (!policy.itemId) continue;
     policiesByItemId.set(policy.itemId, [...(policiesByItemId.get(policy.itemId) ?? []), policy]);
   }
+  const remindersByItemId = new Map<string, Reminder[]>();
+  for (const reminder of activeItemReminders) {
+    if (!reminder.plannerItemId) continue;
+    remindersByItemId.set(reminder.plannerItemId, [
+      ...(remindersByItemId.get(reminder.plannerItemId) ?? []),
+      reminder,
+    ]);
+  }
   const unattachedPolicies = healthyDisplayPolicies
     .filter((policy) => !policy.itemId && policy.metadata?.needsReview !== true)
     .slice(0, 5);
+  const planRenderModel = buildPlanRenderModel({
+    current: currentItems.length,
+    todayEvents: todayEventItems.length,
+    todayTasks: todayTaskItems.length,
+    standaloneReminders: unattachedPolicies.length,
+    requiresDecision: reviewRequiredPolicies.length,
+    requiresAnswer: actionablePostEventPolicies.length,
+    tomorrow: tomorrowItems.length,
+    soon: soonItems.length,
+    important: importantItems.length,
+    longTermRules: longTermItems.length,
+    overdue: overdueItems.length,
+    pastReview: pastReviewItems.length,
+    unresolved: unresolvedItems.length,
+  });
 
   const lines = ["JARVIS · План"];
   const refs: EntityRef[] = [];
@@ -214,6 +256,7 @@ export async function renderLiveDashboard(params: {
         calendarByItemId.get(item.id),
         includeDate,
         policiesByItemId.get(item.id) ?? [],
+        remindersByItemId.get(item.id) ?? [],
         now,
       ),
       ref: {
@@ -281,7 +324,7 @@ export async function renderLiveDashboard(params: {
     pushRows(itemRowsFor(importantItems, true));
   }
   if (longTermItems.length) {
-    lines.push("", "Долгосрочные:");
+    lines.push("", "Долгосрочные правила:");
     pushRows(itemRowsFor(longTermItems, true));
   }
   if (overdueItems.length) {
@@ -335,6 +378,7 @@ export async function renderLiveDashboard(params: {
       },
       hiddenBackgroundPolicies: hiddenBackgroundPolicies.length,
       conflictCount: conflicts.length,
+      planRenderModel,
     },
   })).catch(() => undefined);
 
@@ -345,6 +389,52 @@ export async function renderLiveDashboard(params: {
     keyboard: entityListKeyboard(refs, true),
     viewState,
     conflicts,
+  };
+}
+
+function buildPlanRenderModel(counts: {
+  current: number;
+  todayEvents: number;
+  todayTasks: number;
+  standaloneReminders: number;
+  requiresDecision: number;
+  requiresAnswer: number;
+  tomorrow: number;
+  soon: number;
+  important: number;
+  longTermRules: number;
+  overdue: number;
+  pastReview: number;
+  unresolved: number;
+}): PlanRenderModel {
+  return {
+    sections: [
+      { id: "current", title: "Сейчас / идёт", rowCount: counts.current },
+      { id: "today_events", title: "Сегодня — события", rowCount: counts.todayEvents },
+      { id: "today_tasks", title: "Сегодня — задачи", rowCount: counts.todayTasks },
+      {
+        id: "today_reminders",
+        title: "Сегодня — напоминания",
+        rowCount: counts.standaloneReminders,
+      },
+      {
+        id: "requires_decision",
+        title: "Требует решения",
+        rowCount: counts.requiresDecision,
+      },
+      { id: "requires_answer", title: "Требует ответа", rowCount: counts.requiresAnswer },
+      { id: "tomorrow", title: "Завтра", rowCount: counts.tomorrow },
+      { id: "soon", title: "Скоро", rowCount: counts.soon },
+      { id: "important", title: "Важное", rowCount: counts.important },
+      {
+        id: "long_term_rules",
+        title: "Долгосрочные правила",
+        rowCount: counts.longTermRules,
+      },
+      { id: "overdue", title: "Просрочено", rowCount: counts.overdue },
+      { id: "past_review", title: "Прошло — решить", rowCount: counts.pastReview },
+      { id: "unresolved", title: "Неразобранное", rowCount: counts.unresolved },
+    ].filter((section) => section.rowCount > 0),
   };
 }
 export async function renderReminderPolicyList(params: {
@@ -487,6 +577,7 @@ export function formatDashboardItem(
   calendar?: { status: string; lastError: string | null } | null,
   includeDate = false,
   policies: ReminderPolicy[] = [],
+  reminders: Reminder[] = [],
   now = new Date(),
 ) {
   if (item.status === "completed") return `✅ ${item.title} — завершено`;
@@ -524,17 +615,25 @@ export function formatDashboardItem(
   const beforeEventSummary = formatDedupedBeforeEventPolicies(policies, timezone, {
     item,
   });
+  const followupReminderLines = formatEventFollowupReminderLines(reminders, timezone, {
+    item,
+    now,
+    todayOnly: true,
+  });
   const itemReminderLines = formatItemReminderPolicyLines(policies, timezone, { item, now });
   const relativeReminderLabels = new Set(beforeEventSummary.split(", ").filter(Boolean));
-  const reminderPrefix = isTodayScopedItem(item, timezone, now) ? "Сегодня" : "Правило";
-  const reminderLines = beforeEventSummary
+  const compactReminderParts = [
+    beforeEventSummary,
+    ...followupReminderLines,
+    ...itemReminderLines.filter((line) => !relativeReminderLabels.has(line)),
+  ].filter(Boolean);
+  const reminderLines = compactReminderParts.length
     ? [
-        `   ${reminderPrefix}: ${beforeEventSummary}`,
-        ...itemReminderLines
-          .filter((line) => !relativeReminderLabels.has(line))
-          .map((line) => `   ${reminderPrefix}: ${line}`),
+        `   ${dashboardReminderIcon(item, policies, timezone, now)} ${[
+          ...new Set(compactReminderParts),
+        ].join("; ")}`,
       ]
-    : itemReminderLines.map((line) => `   ${reminderPrefix}: ${line}`);
+    : [];
   return [
     `${time ? `${time}${end ? `–${end}` : ""} · ` : ""}${important ? `${important} ` : ""}${persistent}${item.title}${calendarStatus}`,
     ...reminderLines,
@@ -601,6 +700,23 @@ function isTodayScopedItem(item: PlannerItem, timezone: string, now: Date) {
   const anchor = item.startAt ?? item.dueAt ?? null;
   if (!anchor) return false;
   return DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(zone).hasSame(today, "day");
+}
+
+function dashboardReminderIcon(
+  item: PlannerItem,
+  policies: ReminderPolicy[],
+  timezone: string,
+  now: Date,
+) {
+  if (
+    item.kind === "recurring_task" ||
+    item.visibility === "long_term" ||
+    policies.some((policy) => policy.recurrenceRule || policy.intervalMinutes)
+  ) {
+    return "↻";
+  }
+  if (isTodayScopedItem(item, timezone, now)) return "⏰";
+  return "🗓";
 }
 
 function isPostEventPolicy(policy: ReminderPolicy) {

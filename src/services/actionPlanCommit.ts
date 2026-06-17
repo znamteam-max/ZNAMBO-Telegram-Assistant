@@ -223,6 +223,7 @@ export async function commitStoredActionPlan(params: {
                     reminder.scheduledAt,
                     item.timezone,
                   ),
+                  ...reminderPayloadPolicyMetadata(reminder.payload),
                   basePriority: item.priority,
                   importanceMode: item.metadata.importanceMode ?? "auto",
                 },
@@ -555,6 +556,24 @@ function inferPolicyProposalMetadata(
   return metadata;
 }
 
+function reminderPayloadPolicyMetadata(payload: Record<string, unknown>) {
+  const metadata: Record<string, unknown> = {};
+  const minutesBefore = Number(payload.minutesBefore);
+  if (Number.isFinite(minutesBefore) && minutesBefore > 0) {
+    metadata.minutesBefore = Math.round(minutesBefore);
+  }
+  if (typeof payload.relativeLabel === "string" && payload.relativeLabel.trim()) {
+    metadata.relativeLabel = payload.relativeLabel.trim();
+  }
+  if (payload.eventMorningSet === true) {
+    metadata.eventMorningSet = true;
+  }
+  if (typeof payload.sourceNormalization === "string") {
+    metadata.sourceNormalization = payload.sourceNormalization;
+  }
+  return metadata;
+}
+
 function localDate(value: string | null, timezone: string) {
   return value ? localIsoToUtcDate(value, timezone) : null;
 }
@@ -675,6 +694,7 @@ function materializeAction(params: {
       actionPlanId: params.actionPlanId,
       actionPlanSequence: params.sequence,
       actionType: params.action.actionType,
+      sourceTimezone: timezone,
       confidence: params.action.confidence,
       risk: params.action.risk,
       tentative: params.action.tentative,

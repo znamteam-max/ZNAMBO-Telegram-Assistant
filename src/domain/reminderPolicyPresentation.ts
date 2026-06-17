@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 
-import type { PlannerItem, ReminderPolicy } from "@/db/schema";
+import type { PlannerItem, Reminder, ReminderPolicy } from "@/db/schema";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
 import {
   formatRecurringRuleHuman,
@@ -172,16 +172,12 @@ export function formatDedupedBeforeEventPolicies(
   for (const policy of policies) {
     const minutes = getEventLinkedReminderOffsetMinutes(policy, options?.item);
     if (!minutes) continue;
-    const key = `relative:${minutes}`;
+    const key = beforeEventDisplayKey(policy, minutes);
     if (seen.has(key)) continue;
     seen.add(key);
     offsets.push({
       minutes,
-      label: formatBeforeEventOffset(
-        minutes,
-        policy.nextFireAt ?? policy.startsAt,
-        policy.timezone || options?.item?.timezone || timezone,
-      ),
+      label: formatBeforeEventDisplayLabel(policy, minutes, timezone, options?.item),
     });
   }
   offsets.sort((left, right) => right.minutes - left.minutes);
@@ -198,7 +194,7 @@ export function formatItemReminderPolicyLines(
   for (const policy of policies) {
     const minutes = getEventLinkedReminderOffsetMinutes(policy, options.item);
     if (!minutes) continue;
-    const key = `relative:${minutes}`;
+    const key = beforeEventDisplayKey(policy, minutes);
     if (handled.has(key)) {
       handled.add(policy.id);
       continue;
@@ -207,11 +203,7 @@ export function formatItemReminderPolicyLines(
     handled.add(policy.id);
     offsets.push({
       minutes,
-      label: formatBeforeEventOffset(
-        minutes,
-        policy.nextFireAt ?? policy.startsAt,
-        policy.timezone || options.item.timezone || timezone,
-      ),
+      label: formatBeforeEventDisplayLabel(policy, minutes, timezone, options.item),
       deliveryAt: policy.nextFireAt ?? policy.startsAt,
     });
   }
@@ -243,6 +235,61 @@ export function formatItemReminderPolicyLines(
   return lines;
 }
 
+function beforeEventDisplayKey(policy: ReminderPolicy, minutes: number) {
+  if (policy.metadata?.eventMorningSet === true) return "event_morning_set";
+  return `relative:${minutes}`;
+}
+
+function formatBeforeEventDisplayLabel(
+  policy: ReminderPolicy,
+  minutes: number,
+  timezone: string,
+  item?: PlannerItem | null,
+) {
+  const label = policy.metadata?.relativeLabel;
+  if (typeof label === "string" && label.trim()) return label.trim();
+  return formatBeforeEventOffset(
+    minutes,
+    policy.nextFireAt ?? policy.startsAt,
+    policy.timezone || item?.timezone || timezone,
+  );
+}
+
+export function formatEventFollowupReminderLines(
+  reminders: Reminder[],
+  timezone: string,
+  options: { item: PlannerItem; now?: Date; todayOnly?: boolean },
+) {
+  const zone = options.item.timezone || timezone;
+  const now = options.now ?? new Date();
+  const today = DateTime.fromJSDate(now, { zone: "utc" }).setZone(zone);
+  const anchor = options.item.startAt ?? options.item.dueAt ?? null;
+  return reminders
+    .filter((reminder) => isEventFollowupReminder(reminder))
+    .filter((reminder) => !anchor || reminder.scheduledAt < anchor)
+    .filter((reminder) => {
+      if (!options.todayOnly) return true;
+      return DateTime.fromJSDate(reminder.scheduledAt, { zone: "utc" })
+        .setZone(zone)
+        .hasSame(today, "day");
+    })
+    .sort((left, right) => left.scheduledAt.getTime() - right.scheduledAt.getTime())
+    .map((reminder) => {
+      const clock = DateTime.fromJSDate(reminder.scheduledAt, { zone: "utc" })
+        .setZone(zone)
+        .toFormat("HH:mm");
+      return `доп. напоминание ${clock}`;
+    });
+}
+
+export function isEventFollowupReminder(reminder: Reminder) {
+  return (
+    reminder.purpose === "pre_event_extra" ||
+    reminder.payload?.eventReminderOnly === true ||
+    reminder.payload?.source === "event_reminder_extra"
+  );
+}
+
 export function formatBeforeEventOffset(
   minutes: number,
   deliveryAt?: Date | null,
@@ -256,10 +303,25 @@ export function formatBeforeEventOffset(
   if (minutes === 30) return "за 30 минут";
   if (minutes === 60) return "за 1 ч";
   if (minutes === 120) return "за 2 часа";
+  if (minutes === 2880) return "за 2 дня";
+  if (minutes === 4320) return "за 3 дня";
+  if (minutes === 10080) return "за неделю";
   if (minutes === 1440) return clock === "09:00" ? "за день в 09:00" : "за день";
+  if (minutes > 24 * 60 && minutes % (24 * 60) === 0) {
+    const days = minutes / (24 * 60);
+    return `за ${days} ${dayWord(days)}`;
+  }
   if (minutes > 24 * 60 && minutes <= 48 * 60 && clock) return `за день в ${clock}`;
   if (minutes % 60 === 0) return `за ${minutes / 60} ч`;
   return `за ${minutes} минут`;
+}
+
+function dayWord(days: number) {
+  const mod10 = days % 10;
+  const mod100 = days % 100;
+  if (mod10 === 1 && mod100 !== 11) return "день";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "дня";
+  return "дней";
 }
 
 function formatBeforeEventPolicy(policy: ReminderPolicy, timezone: string, item?: PlannerItem) {

@@ -9,6 +9,7 @@ import { restorePolicyReminder } from "@/db/queries/reminders";
 import { writeAudit } from "@/db/queries/audit";
 import {
   computeNextPolicySlotAfterDelivery,
+  currentCanonicalOccurrenceIfDue,
   resolvePolicyReconcileTarget,
 } from "@/domain/reminderPolicySchedule";
 
@@ -36,6 +37,16 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
       });
       expired += 1;
       continue;
+    }
+    const monthlyCurrentDue = isMonthlyDayRangePolicy(policy)
+      ? currentCanonicalOccurrenceIfDue(policy, now)
+      : null;
+    if (monthlyCurrentDue) {
+      await writeMonthlyDayRangeAudit(policy, "assistant.monthly_day_range_occurrence_checked", {
+        scheduledFor: monthlyCurrentDue.toISOString(),
+        hasNextFireAt: Boolean(policy.nextFireAt),
+        nextFireAt: policy.nextFireAt?.toISOString() ?? null,
+      });
     }
     const existingPending = await getPendingReminderForPolicy(policy.id);
     if (existingPending) continue;
@@ -97,6 +108,17 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
           }
         : undefined,
     });
+    if (isMonthlyDayRangePolicy(policy) && target.catchUp) {
+      await writeMonthlyDayRangeAudit(
+        policy,
+        "assistant.monthly_day_range_occurrence_missed_review",
+        {
+          scheduledFor: target.scheduledFor.toISOString(),
+          deliveryAt: target.deliveryAt.toISOString(),
+          catchUp: true,
+        },
+      );
+    }
     const reminder = await materializeNextPolicyReminder(
       { ...policy, nextFireAt: target.scheduledFor },
       target.scheduledFor,
@@ -121,6 +143,16 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
             reminderId: reminder.id,
           },
         }).catch(() => undefined);
+        await writeMonthlyDayRangeAudit(
+          policy,
+          "assistant.monthly_day_range_occurrence_materialized",
+          {
+            scheduledFor: target.scheduledFor.toISOString(),
+            deliveryAt: target.deliveryAt.toISOString(),
+            catchUp: target.catchUp,
+            reminderId: reminder.id,
+          },
+        );
       }
     }
   }
@@ -131,4 +163,31 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
     advanced,
     expired,
   };
+}
+
+function isMonthlyDayRangePolicy(policy: { recurrenceRule: string | null }) {
+  return /^monthly_days:/i.test(policy.recurrenceRule ?? "");
+}
+
+async function writeMonthlyDayRangeAudit(
+  policy: {
+    id: string;
+    userId: string;
+    recurrenceRule: string | null;
+    timezone: string;
+  },
+  action: string,
+  details: Record<string, unknown>,
+) {
+  await writeAudit({
+    userId: policy.userId,
+    action,
+    entityType: "reminder_policy",
+    entityId: policy.id,
+    details: {
+      recurrenceRule: policy.recurrenceRule,
+      timezone: policy.timezone,
+      ...details,
+    },
+  }).catch(() => undefined);
 }

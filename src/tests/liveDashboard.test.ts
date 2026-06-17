@@ -407,7 +407,7 @@ describe("live dashboard lifecycle", () => {
     });
 
     expect(result.text).toContain("<b>1</b> ·");
-    expect(result.text).toContain("Сегодня: за 2 часа");
+    expect(result.text).toContain("⏰ за 2 часа");
     expect(result.text).not.toContain("Спросить как прошло");
     expect(result.text).not.toContain("после события");
     expect(result.policies.map((policy) => policy.id)).not.toContain("post-call");

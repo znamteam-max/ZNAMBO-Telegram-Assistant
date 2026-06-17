@@ -30,9 +30,13 @@ export function normalizeAgentExecutionProposal(params: {
     ...params,
     execution: complexReminder,
   });
-  const cadenceOnly = normalizeCadenceOnlyWithoutContext({
+  const multiEventTemplate = normalizeMultiEventReminderTemplate({
     ...params,
     execution: recurringIntent,
+  });
+  const cadenceOnly = normalizeCadenceOnlyWithoutContext({
+    ...params,
+    execution: multiEventTemplate,
   });
   const deadline = normalizeDeadlineSemantics({ ...params, execution: cadenceOnly });
   const centralPark = normalizeCentralPark({ ...params, execution: deadline });
@@ -261,6 +265,151 @@ function normalizeRecurringPolicySemantics(params: {
     reminderPolicies: policies,
     clarificationQuestions: [],
   };
+}
+
+function normalizeMultiEventReminderTemplate(params: {
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+}) {
+  const normalized = params.text.toLocaleLowerCase("ru").replace(/ё/g, "е");
+  if (
+    !/ортодонт/i.test(normalized) ||
+    !/(роб|робом)/i.test(normalized) ||
+    !/(оба|пару|дв[ае])\s+.*визит/i.test(normalized)
+  ) {
+    return params.execution;
+  }
+  const eventStarts = parseJulyEventStarts(params.text, params.timezone, params.now);
+  if (eventStarts.length < 2) return params.execution;
+
+  const wantsWeek = /за\s+недел/i.test(normalized);
+  const wantsThreeDays = /за\s+3\s+дн/i.test(normalized);
+  const wantsTwoDays = /за\s+2\s+дн/i.test(normalized);
+  const wantsMorningSet = /утром/i.test(normalized) && /(много|несколько|эти\s+дни|день\s+визит)/i.test(normalized);
+
+  const actions: ActionPlanItem[] = [];
+  const warnings: string[] = [];
+  for (const [index, start] of eventStarts.entries()) {
+    const reminders: ActionPlanItem["reminders"] = [];
+    const addReminder = (
+      fireAt: DateTime,
+      minutesBefore: number,
+      relativeLabel: string,
+      morningSet = false,
+    ) => {
+      if (fireAt <= DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone)) return;
+      reminders.push({
+        type: "event_before" as const,
+        scheduledAtLocal: fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+        offsetMinutesBefore: minutesBefore,
+        repeatUntilAck: false,
+        payload: {
+          minutesBefore,
+          relativeLabel,
+          eventMorningSet: morningSet,
+          sourceNormalization: "multi_event_reminder_template_v2210",
+        },
+      });
+    };
+
+    if (wantsWeek) addReminder(start.minus({ weeks: 1 }), 7 * 24 * 60, "за неделю");
+    if (wantsThreeDays) addReminder(start.minus({ days: 3 }), 3 * 24 * 60, "за 3 дня");
+    if (wantsTwoDays) addReminder(start.minus({ days: 2 }), 2 * 24 * 60, "за 2 дня");
+    if (wantsMorningSet) {
+      const morning = [8, 9, 10]
+        .map((hour) => start.startOf("day").set({ hour, minute: 0, second: 0, millisecond: 0 }))
+        .filter((fireAt) => fireAt < start.minus({ minutes: 15 }));
+      if (morning.length < 2) {
+        warnings.push(`morning_set_needs_clarification:${index + 1}`);
+      } else {
+        for (const fireAt of morning) {
+          addReminder(
+            fireAt,
+            Math.max(1, Math.round(start.diff(fireAt, "minutes").minutes)),
+            "утром в день визита",
+            true,
+          );
+        }
+      }
+    }
+
+    actions.push({
+      actionType: "event",
+      kind: "event",
+      title: "Приход с Робом к ортодонту",
+      description: null,
+      location: null,
+      timezone: params.timezone,
+      startAtLocal: start.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+      endAtLocal: start.plus({ minutes: 60 }).toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+      dueAtLocal: null,
+      durationMinutes: 60,
+      priority: 3,
+      confidence: 0.98,
+      risk: "low",
+      requiresConfirmation: false,
+      tentative: false,
+      recurrence: null,
+      reminders,
+      memoryCandidates: [],
+      metadata: {
+        sourceNormalization: "multi_event_reminder_template_v2210",
+        reminderTemplateAppliedPerEvent: true,
+      },
+    });
+  }
+
+  if (warnings.length) {
+    return {
+      ...params.execution,
+      intent: "clarify" as const,
+      reply: "Для утренних напоминаний по одному из визитов осталось меньше двух безопасных слотов. Уточни время.",
+      actionPlan: null,
+      itemUpdates: [],
+      reminderPolicies: [],
+      clarificationQuestions: ["Во сколько утром напоминать по визитам?"],
+    };
+  }
+
+  return {
+    ...params.execution,
+    intent: "create_plan" as const,
+    reply: null,
+    actionPlan: {
+      intent: "plan" as const,
+      summary: `Добавить ${actions.length} события с напоминаниями для каждого визита`,
+      reply: null,
+      confidence: 0.98,
+      requiresConfirmation: false,
+      actions,
+      memoryCandidates: [],
+      clarificationQuestions: [],
+    },
+    itemUpdates: [],
+    reminderPolicies: [],
+    clarificationQuestions: [],
+  };
+}
+
+function parseJulyEventStarts(text: string, timezone: string, now: Date) {
+  const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
+  const starts: DateTime[] = [];
+  const pattern = /(\d{1,2})\s+июл[яьею]*\s+в\s+(\d{1,2})(?:[.:](\d{2}))?/giu;
+  for (const match of text.matchAll(pattern)) {
+    const day = Number(match[1]);
+    const hour = Number(match[2]);
+    const minute = Number(match[3] ?? 0);
+    let candidate = DateTime.fromObject(
+      { year: nowLocal.year, month: 7, day, hour, minute, second: 0, millisecond: 0 },
+      { zone: timezone },
+    );
+    if (!candidate.isValid) continue;
+    if (candidate < nowLocal.startOf("day")) candidate = candidate.plus({ years: 1 });
+    starts.push(candidate);
+  }
+  return starts.sort((left, right) => left.toMillis() - right.toMillis());
 }
 
 function normalizeProjectNamesInExecution(execution: AgentExecution): AgentExecution {

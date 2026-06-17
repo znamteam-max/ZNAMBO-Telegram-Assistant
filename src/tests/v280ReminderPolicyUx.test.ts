@@ -79,9 +79,9 @@ describe("V2.8.0 reminder policy UX and snooze", () => {
 
   it("shows policies inline with a persistent marker and no raw policy type", () => {
     const policy = reminderPolicy();
-    const text = formatDashboardItem(plannerItem(), timezone, null, true, [policy], new Date());
+    const text = formatDashboardItem(plannerItem(), timezone, null, true, [policy], [], new Date());
     expect(text).toContain("❗ Перенести визит Роба к ортодонту");
-    expect(text).toContain("Правило: каждый час, с 08:00 до 18:00, пока не отмечу");
+    expect(text).toContain("↻ каждый час, с 08:00 до 18:00, пока не отмечу");
     expect(text).not.toContain("nag_until_ack");
   });
 

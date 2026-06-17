@@ -10,7 +10,10 @@ import {
 } from "@/domain/dateTime";
 import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
 import { isEventLikePlannerItem } from "@/domain/eventReminderSemantics";
-import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
+import {
+  formatHumanReminderPolicy,
+  formatItemReminderPolicyLines,
+} from "@/domain/reminderPolicyPresentation";
 
 const kindLabels: Record<string, string> = {
   event: "Встреча",
@@ -106,10 +109,28 @@ export function formatCommittedPlanSummary(params: {
   const lines = [
     params.intro ?? `Добавил ${params.items.length} ${itemCountLabel(params.items.length)}:`,
   ];
+  const policiesByItemId = new Map<string, ReminderPolicy[]>();
+  for (const policy of params.reminderPolicies ?? []) {
+    if (!policy.itemId) continue;
+    policiesByItemId.set(policy.itemId, [...(policiesByItemId.get(policy.itemId) ?? []), policy]);
+  }
+  const groupedReminderTemplate = params.items.some(
+    (item) => item.metadata?.reminderTemplateAppliedPerEvent === true,
+  );
   for (const [index, item] of params.items.entries()) {
     lines.push(
       `${index + 1}. ${getItemLabel(item)}: ${item.title} — ${formatItemScheduleAndDeadline(item, params.timezone)}`,
     );
+    if (groupedReminderTemplate) {
+      const reminderLines = formatItemReminderPolicyLines(
+        policiesByItemId.get(item.id) ?? [],
+        params.timezone,
+        { item },
+      );
+      if (reminderLines.length) {
+        lines.push(`   Напоминания: ${reminderLines.join(", ")}`);
+      }
+    }
   }
   const hasUnremindedDeadline =
     params.items.some((item) => item.dueAt) && params.reminderCount === 0;
@@ -120,7 +141,7 @@ export function formatCommittedPlanSummary(params: {
         ? "Напоминаний пока нет."
         : "Будущих напоминаний не добавлял.",
   );
-  if (params.reminderPolicies?.length) {
+  if (params.reminderPolicies?.length && !groupedReminderTemplate) {
     lines.push("", "Напоминания:");
     for (const policy of params.reminderPolicies) {
       lines.push(

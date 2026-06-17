@@ -237,7 +237,7 @@ describe("V2.19.0 today until-done semantics", () => {
       timezone,
       now,
     });
-    const dashboard = formatDashboardItem(item, timezone, null, false, [policy], now);
+    const dashboard = formatDashboardItem(item, timezone, null, false, [policy], [], now);
     const policyText = formatHumanReminderPolicy(policy, timezone, {
       item,
       now,

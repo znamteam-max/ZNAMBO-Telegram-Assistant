@@ -4,7 +4,8 @@ import { z } from "zod";
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
-  DEFAULT_TIMEZONE: z.string().default("Europe/Helsinki"),
+  DEFAULT_TIMEZONE: z.string().default("Europe/Moscow"),
+  OWNER_TIMEZONE: z.string().default("Europe/Moscow"),
   APP_ENCRYPTION_KEY: z.string().optional(),
   DATABASE_URL: z.string().optional(),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
@@ -49,9 +50,8 @@ let cachedEnv: AppEnv | null = null;
 export function getEnv(): AppEnv {
   if (!cachedEnv) {
     cachedEnv = envSchema.parse(process.env);
-    if (!DateTime.local().setZone(cachedEnv.DEFAULT_TIMEZONE).isValid) {
-      throw new Error(`Invalid DEFAULT_TIMEZONE: ${cachedEnv.DEFAULT_TIMEZONE}`);
-    }
+    validateTimezone("DEFAULT_TIMEZONE", cachedEnv.DEFAULT_TIMEZONE);
+    validateTimezone("OWNER_TIMEZONE", cachedEnv.OWNER_TIMEZONE);
   }
   return cachedEnv;
 }
@@ -75,6 +75,16 @@ export function getAllowedTelegramUserIds(): Set<string> {
       .map((value) => value.trim())
       .filter(Boolean),
   );
+}
+
+export function getOwnerTimezone(): string {
+  return getEnv().OWNER_TIMEZONE;
+}
+
+function validateTimezone(name: string, timezone: string) {
+  if (!DateTime.local().setZone(timezone).isValid) {
+    throw new Error(`Invalid ${name}: ${timezone}`);
+  }
 }
 
 export function isGoogleCalendarConfigured(): boolean {

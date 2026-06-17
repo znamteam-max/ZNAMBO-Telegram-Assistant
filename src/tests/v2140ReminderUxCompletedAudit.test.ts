@@ -169,9 +169,10 @@ describe("V2.14.0 reminder UX, completed and audit hardening", () => {
           metadata: { minutesBefore: 30 },
         }),
       ],
+      [],
       now,
     );
-    expect(text).toContain("Правило: за день в 09:00, за 2 часа, за 30 минут");
+    expect(text).toContain("🗓 за день в 09:00, за 2 часа, за 30 минут");
     expect(text).not.toContain("до события");
   });
 

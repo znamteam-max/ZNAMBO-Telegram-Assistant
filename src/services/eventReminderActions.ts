@@ -111,6 +111,11 @@ async function scheduleEventReminderOnly(params: {
         plannerItemId: params.item.id,
         sourceReminderId: params.reminder.id,
         scheduledAt: reminder.scheduledAt.toISOString(),
+        source: params.idempotencySuffix.startsWith("again:")
+          ? "event_reminder_again"
+          : params.idempotencySuffix.startsWith("snooze:")
+            ? "event_reminder_snooze"
+            : "event_reminder_extra",
         eventTimeUnchanged: true,
       },
     }).catch(() => undefined);

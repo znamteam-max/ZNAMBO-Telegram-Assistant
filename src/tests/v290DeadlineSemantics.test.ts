@@ -117,7 +117,7 @@ describe("V2.9.0 deadline semantics", () => {
       expect.objectContaining({ dateBucket: "tomorrow", classification: "soon" }),
     );
 
-    const text = formatDashboardItem(item, timezone, null, true, [], now);
+    const text = formatDashboardItem(item, timezone, null, true, [], [], now);
     expect(text).toContain("Пн, 15.06 до 14:00");
     expect(text).not.toContain("12:00–14:00");
     expect(text).not.toContain("🔴");

@@ -24,6 +24,7 @@ export function parseBeforeEventReminderSpecs(params: {
   const candidates: Array<{ fireAt: DateTime; label: string }> = [];
 
   candidates.push(...parseRelativeDayReminders(normalized, params.eventStartLocal));
+  candidates.push(...parseRelativeCalendarOffsetReminders(normalized, params.eventStartLocal));
   candidates.push(...parseRelativeOffsetReminders(normalized, params.eventStartLocal));
   if (params.allowAbsoluteTimes) {
     candidates.push(...parseAbsoluteReminderTimes(normalized, params.eventStartLocal));
@@ -124,6 +125,24 @@ function parseRelativeOffsetReminders(text: string, eventStartLocal: DateTime) {
   return reminders;
 }
 
+function parseRelativeCalendarOffsetReminders(text: string, eventStartLocal: DateTime) {
+  const reminders: Array<{ fireAt: DateTime; label: string }> = [];
+  const pattern =
+    /за\s+(неделю|одну\s+неделю|(\d{1,2}|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)\s+(день|дня|дней|неделю|недели|недель))/giu;
+  for (const match of text.matchAll(pattern)) {
+    const amount = match[2] ? parseCalendarAmount(match[2]) : 1;
+    if (!amount) continue;
+    const unit = (match[3] ?? match[1] ?? "").toLocaleLowerCase("ru");
+    const minutes = /недел/.test(unit) ? amount * 7 * 24 * 60 : amount * 24 * 60;
+    const fireAt = eventStartLocal.minus({ minutes }).set({ second: 0, millisecond: 0 });
+    reminders.push({
+      fireAt,
+      label: formatRelativeOffsetLabel(minutes),
+    });
+  }
+  return reminders;
+}
+
 function parseAbsoluteReminderTimes(text: string, eventStartLocal: DateTime) {
   if (!/(^|\s)в\s*\d{1,2}(?:[.:]\d{2})?/iu.test(text)) return [];
   const reminders: Array<{ fireAt: DateTime; label: string }> = [];
@@ -176,6 +195,11 @@ function wordNumber(value: string) {
   )[value.toLocaleLowerCase("ru")];
 }
 
+function parseCalendarAmount(value: string) {
+  const normalized = value.toLocaleLowerCase("ru").trim();
+  return /^\d+$/.test(normalized) ? Number(normalized) : wordNumber(normalized);
+}
+
 function normalizeHour(hour: number, marker?: string) {
   const normalizedMarker = marker?.toLocaleLowerCase("ru");
   if ((normalizedMarker === "вечера" || normalizedMarker === "дня") && hour >= 1 && hour <= 11) {
@@ -213,8 +237,23 @@ function formatRelativeOffsetLabel(minutes: number) {
   if (minutes === 90) return "за 1 час 30 минут";
   if (minutes === 120) return "за 2 часа";
   if (minutes === 1440) return "за день";
+  if (minutes === 2880) return "за 2 дня";
+  if (minutes === 4320) return "за 3 дня";
+  if (minutes === 10080) return "за неделю";
+  if (minutes > 24 * 60 && minutes % (24 * 60) === 0) {
+    const days = minutes / (24 * 60);
+    return `за ${days} ${dayWord(days)}`;
+  }
   if (minutes % 60 === 0) return `за ${minutes / 60} ${hourWord(minutes / 60)}`;
   return `за ${minutes} минут`;
+}
+
+function dayWord(days: number) {
+  const mod10 = days % 10;
+  const mod100 = days % 100;
+  if (mod10 === 1 && mod100 !== 11) return "день";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "дня";
+  return "дней";
 }
 
 function hourWord(hours: number) {

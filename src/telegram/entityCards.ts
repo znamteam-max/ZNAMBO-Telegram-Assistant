@@ -15,6 +15,7 @@ import {
   listReminderPoliciesForCampaign,
   listReminderPoliciesForItem,
 } from "@/db/queries/reminderPolicies";
+import { listActiveRemindersForItems } from "@/db/queries/reminders";
 import type { PlannerItem } from "@/db/schema";
 import type { EntityRef } from "@/domain/entityRefs";
 import { importanceLabel, urgencyExplanation, visibleImportanceLabel } from "@/domain/importance";
@@ -28,6 +29,7 @@ import { safeCalendarErrorClass } from "@/services/calendarDiagnostics";
 import { getCalendarProvider } from "@/lib/env";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
 import {
+  formatEventFollowupReminderLines,
   formatHumanReminderPolicy,
   formatItemReminderPolicyLines,
 } from "@/domain/reminderPolicyPresentation";
@@ -65,8 +67,9 @@ async function renderItemCard(params: {
   if (!item) return null;
   const now = params.now ?? new Date();
   const calendarProvider = getCalendarProvider();
-  const [policies, calendar] = await Promise.all([
+  const [policies, activeReminders, calendar] = await Promise.all([
     listReminderPoliciesForItem(params.userId, item.id),
+    listActiveRemindersForItems(params.userId, [item.id]),
     getItemCalendarSyncState(
       item.id,
       calendarProvider === "yandex" ? "yandex_calendar" : "google_calendar",
@@ -86,11 +89,18 @@ async function renderItemCard(params: {
     ...beforeEventPolicies,
     ...activePolicies.filter((policy) => policy.policyType !== "before_event"),
   ];
-  const reminderLines = formatItemReminderPolicyLines(displayPolicies, item.timezone, {
-    item,
-    now,
-    includeNextBeforeEvent: true,
-  });
+  const reminderLines = [
+    ...formatItemReminderPolicyLines(displayPolicies, item.timezone, {
+      item,
+      now,
+      includeNextBeforeEvent: true,
+    }),
+    ...formatEventFollowupReminderLines(activeReminders, item.timezone, {
+      item,
+      now,
+      todayOnly: false,
+    }),
+  ];
   return {
     text: [
       item.title,

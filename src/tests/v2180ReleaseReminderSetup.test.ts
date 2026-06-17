@@ -36,11 +36,11 @@ describe("current release notification and reminder setup", () => {
       inspection: healthyInspection(),
     });
 
-    expect(text).toContain("сделал /plan компактнее");
-    expect(text).toContain("скрыл фоновые post-event follow-up policies");
-    expect(text).toContain("починил daily recurring без времени");
-    expect(text).toContain("укоротил опасные Telegram callback payloads");
-    expect(text).toContain("обновлён до V2.20.0");
+    expect(text).toContain("owner timezone Europe/Moscow");
+    expect(text).toContain("multi-event reminder template");
+    expect(text).toContain("monthly day-range audit");
+    expect(text).toContain("owner timezone Europe/Moscow");
+    expect(text).toContain("обновлён до V2.21.0");
     expect(text).not.toContain("????");
     expect(text).not.toContain("пїЅ");
     expect(hasMojibakeSignal(text)).toBe(false);
@@ -60,7 +60,7 @@ describe("current release notification and reminder setup", () => {
     );
 
     const sentText = harness.send.mock.calls[0]?.[0].text ?? "";
-    expect(sentText).toContain("сделал /plan компактнее");
+    expect(sentText).toContain("owner timezone Europe/Moscow");
     expect(sentText).not.toContain("????");
   });
 

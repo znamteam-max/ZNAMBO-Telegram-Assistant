@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   getCalendarProvider,
   getEnv,
+  getOwnerTimezone,
   isGoogleCalendarConfigured,
   isYandexCalendarConfigured,
 } from "@/lib/env";
@@ -78,6 +79,7 @@ export async function GET() {
     deploymentCommit: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
     appUrl: env.NEXT_PUBLIC_APP_URL,
     defaultTimezone: env.DEFAULT_TIMEZONE,
+    ownerTimezone: getOwnerTimezone(),
     pipelineMode: env.JARVIS_MODE_ENABLED ? "jarvis" : "legacy_v2",
     jarvisModeEnabled: env.JARVIS_MODE_ENABLED,
     liveDashboardEnabled: true,

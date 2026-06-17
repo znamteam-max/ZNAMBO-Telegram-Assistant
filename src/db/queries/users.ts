@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 
-import { getEnv } from "@/lib/env";
+import { getOwnerTimezone } from "@/lib/env";
 
 import { getDb } from "../client";
 import { users, type User } from "../schema";
@@ -23,7 +23,7 @@ export async function getUserByTelegramId(
     .from(users)
     .where(eq(users.telegramUserId, toTelegramBigInt(telegramUserId)))
     .limit(1);
-  return user ?? null;
+  return user ? { ...user, timezone: getOwnerTimezone() } : null;
 }
 
 export async function getUserById(userId: string): Promise<User | null> {
@@ -43,7 +43,7 @@ export async function getOrCreateOwnerUser(profile: TelegramProfile): Promise<Us
       telegramUserId: toTelegramBigInt(profile.id),
       telegramUsername: profile.username,
       firstName: profile.firstName,
-      timezone: getEnv().DEFAULT_TIMEZONE,
+      timezone: getOwnerTimezone(),
       updatedAt: now,
     })
     .onConflictDoUpdate({
@@ -56,7 +56,7 @@ export async function getOrCreateOwnerUser(profile: TelegramProfile): Promise<Us
     })
     .returning();
 
-  return user;
+  return { ...user, timezone: getOwnerTimezone() };
 }
 
 export async function markUserOnboarded(userId: string) {

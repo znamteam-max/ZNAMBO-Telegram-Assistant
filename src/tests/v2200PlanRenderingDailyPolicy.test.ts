@@ -64,12 +64,13 @@ describe("V2.20.0 plan rendering, daily policy and callback safety", () => {
           metadata: { minutesBefore: 60 },
         }),
       ],
+      [],
       now,
     );
 
-    expect(text).toContain("Сегодня: за 3 ч, за 2 часа, за 1 ч");
+    expect(text).toContain("⏰ за 3 ч, за 2 часа, за 1 ч");
     expect(text).not.toContain("🔔");
-    expect(text.match(/Сегодня:/g)).toHaveLength(1);
+    expect(text.match(/⏰/g)).toHaveLength(1);
   });
 
   it("materializes a skipped current monthly day-range occurrence", () => {
