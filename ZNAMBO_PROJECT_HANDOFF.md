@@ -4,61 +4,80 @@ This is the single canonical file to attach to a new Codex chat after every depl
 It contains the current production state, cumulative implementation history, validation results,
 and remaining limitations. It must never contain secrets.
 
-Last updated: 2026-06-16
+Last updated: 2026-06-17
 
 ## Latest Deployment - V2.18.0
 
-Production commit: `d03f1cd17cd422ceacf0b4f41a61b65f1a237f0a`
+Production commit: `8ca05a588c9b89e31727443a24c0dcae0a7d5f6c`
 
-V2.18.0 is deployed to production.
+V2.18.0 hotfix is deployed to production. This supersedes the earlier V2.18.0 production
+commit `d03f1cd17cd422ceacf0b4f41a61b65f1a237f0a` without changing the app version.
 
 Implemented:
 
 - release notification text is UTF-8 guarded end-to-end; unsafe `????` / replacement-char summaries
   fall back to server-side release notes;
-- release metadata and `/release_notes` updated to V2.18.0;
+- release metadata and `/release_notes` now use the final V2.18.0 bullets:
+  similar event/call targeting, before-event offsets, until-done buttons, and collision spacing;
+- callback reliability middleware added: every inline callback is acknowledged, audited, and gets a
+  visible stale/error fallback instead of silent no-op;
+- stale callback/session branches now write `assistant.callback_stale_session` and show a fresh
+  user-facing stale-button message;
 - active `multi_reminder_setup_session` handles multiple before-event reminders deterministically
   before AI routing;
+- Jarvis session routing now checks `multi_reminder_setup_session` before
+  `reminder_policy_edit_session`;
 - reminder setup failures now produce targeted clarification/debug trace instead of generic
   `agent_execution_failed_closed`;
+- `сегодня целый день`, `до конца дня`, `весь день`, and `пока не сделаю` in reminder setup create
+  hourly `nag_until_ack` policy until local 23:59 with `requireAck=true`;
+- targetless bare until-done replies ask which current item should receive the reminder instead of
+  rendering a dashboard or creating a garbage task;
+- reminder creation uses deterministic 5-minute collision spacing and stores original desired time
+  plus spacing metadata in reminder payload;
+- before-event spacing is bounded so it cannot move a reminder after the event start;
+- active multi-reminder setup summary is compact:
+  `Готово / • <event> / Напоминания добавлены: за 2 часа, за час, за 30 минут.`;
 - before-event, one-time event-linked, and unknown reminder policies render through a shared
   review-aware helper, with duplicate offsets hidden;
 - similar same-slot Winline CHM/CP calls use overlap-aware target scoring and clearer resolution
   buttons;
-- `/admin_repair_v2180 preview|apply` and protected actions `v2180_repair_preview|apply` added;
-- V2.18 repair is calendar-safe and changes zero Yandex Calendar objects.
+- `/admin_repair_v2180 preview|apply` and protected actions `v2180_repair_preview|apply` are
+  extended for review-required/one-time before-event rows and stale pending prompt sessions;
+- V2.18 repair remains calendar-safe and changes zero Yandex Calendar objects.
 
 Validation:
 
 ```text
-Local validation: npm test 318/318, npm run lint passed, npx tsc --noEmit passed,
-npm run build passed, git diff --check passed
+Local validation: npm test 326/326, npm run lint passed, npm run build passed,
+git diff --check passed
 Changed-file secret scan: passed; only intentional fake redaction fixtures matched
 Schema migration: not required; V2.18 uses existing tables and metadata
 Production deploy: GitHub push to main, Vercel auto-deploy
 /api/health after deploy: ok, appVersion 2.18.0,
-commit d03f1cd17cd422ceacf0b4f41a61b65f1a237f0a, runner healthy
+commit 8ca05a588c9b89e31727443a24c0dcae0a7d5f6c, runner healthy
 Protected webhook status: ok, URL https://znambo-telegram-assistant.vercel.app/api/telegram/webhook,
 pending updates 0
-Protected AI health: ok, model gpt-4o-mini-2024-07-18,
-response id resp_0af25985c5551186006a31aab1fda081a2a56a696035f03272, latency 1755 ms
+Protected AI health: ok, model gpt-4o-mini-2024-07-18, response id present,
+latency 1720 ms, structured output valid
 V2.18 repair preview before apply: generic before-event policies 0, duplicate before-event offsets 0,
 past important events 0, stale reminder sessions 0, fake reminder rows 0, calendar objects to change 0
 V2.18 repair apply: cancelled duplicate policies 0, inferred before-event policies 0,
-review-required policies 0, marked past-review items 0, cleared reminder sessions 0,
+review-required policies 0, cancelled invalid before-event policies 0,
+marked past-review items 0, cleared reminder sessions 0,
 cancelled fake reminder rows 0, calendar objects changed 0
 V2.18 repair preview after apply: all counts 0, calendar objects to change 0
-Reminder smoke: created item ab5a5cdc-8541-436e-9072-3d4665e04ef0,
-scheduled 2026-06-16T19:59:56.481Z, delivered by cron-job.org at 2026-06-16T20:00:42.551Z
-Smoke item: auto-archived after delivery
-Release notification: sent at 2026-06-16T20:01:03.063Z
-Telegram message id: 966
-Notification idempotency: verified; repeat protected call returned already_sent with message id 966
+Reminder smoke: created item f2777614-3c53-4853-b8a4-84c4e47f149f,
+requested for 2026-06-17T05:03:49.784Z, delivered by cron-job.org at 2026-06-17T05:11:10.879Z
+Smoke item: auto-archived after delivery. The longer-than-2-minute delay is consistent with the
+new collision-spacing behavior around existing pending reminder slots.
+Release notification: sent at 2026-06-17T05:11:44.787Z
+Telegram message id: 982
+Notification idempotency: verified; repeat protected call returned already_sent with message id 982
 Final /api/health: ok, appVersion 2.18.0,
-commit d03f1cd17cd422ceacf0b4f41a61b65f1a237f0a,
+commit 8ca05a588c9b89e31727443a24c0dcae0a7d5f6c,
 latestReleaseNotification V2.18.0 sent, runner succeeded
-Post-handoff runner sanity check: protected /api/reminders/run returned ok with claimed/sent/failed 0/0/0
-and /api/health reported lastRunnerSucceeded true at 2026-06-16T20:03:24.772Z
+Final runner health: schedulerConfigured true, lastRunnerSucceeded true at 2026-06-17T05:12:08.450Z
 ```
 
 Remaining notes:
@@ -70,8 +89,10 @@ Release notification was sent without shell-provided Cyrillic summary; productio
 Russian release notes server-side. Automated tests assert no "????" and no replacement characters.
 Production release inspection records one safe warning: historical_webhook_error; webhook is healthy
 with pending updates 0.
-Health currently reports policiesMissingNextReminder: 1. Runner is healthy and reminder smoke passed;
-this is a non-blocking follow-up candidate for a later policy audit.
+Health recently reported policiesMissingNextReminder: 1. Runner is healthy and reminder smoke passed;
+this remains a non-blocking follow-up candidate for a later policy audit.
+Because reminder collision spacing is now active, `/remindertest 2` / protected smoke may deliver
+later than exactly two minutes if nearby pending reminders already occupy that slot.
 ```
 
 ## Previous Deployment - V2.17.0
