@@ -6,7 +6,127 @@ and remaining limitations. It must never contain secrets.
 
 Last updated: 2026-06-17
 
-## Latest Deployment - V2.20.0 Plan Rendering, Daily Policy, Event Follow-up and Button Safety
+## Latest Deployment - V2.21.0 Plan Visual Semantics, Owner Timezone and Multi-Event Reminder Template
+
+Production application code commit: `9d8b5ccb2abe56277778e7e59f3e47fed306d0ad`
+
+This deployment is a focused V2.21 corrective release on top of V2.20.0. It keeps the Jarvis
+planner, mandatory OpenAI path, ActionPlan execution, Yandex Calendar integration, and cron-job.org
+runner architecture intact.
+
+Implemented:
+
+- owner timezone is centralized as `Europe/Moscow`; owner-facing natural-language times without an
+  explicit timezone parse in Moscow time, store UTC internally, and render back in Moscow time;
+- planner item metadata records `sourceTimezone` when committing action plans;
+- `/api/health` exposes safe timezone diagnostics, including `ownerTimezone`;
+- protected `/admin_time_debug` and admin action `admin_time_debug` were added with safe UTC/local
+  sample parse-render diagnostics;
+- `/admin_repair_v2210 preview|apply` and protected `v2210_repair_preview|apply` were added as a
+  calendar-safe repair wrapper for timezone candidates, monthly range audit, event follow-up
+  visibility, and callback payload hardening;
+- `/plan` / `/dashboard` now build a dedicated render model with compact rows, bold indexes,
+  one concise reminder line per item, today's reminder markers, recurring long-term rule markers,
+  and hidden background `after_event` noise in normal rows;
+- event reminder-only follow-ups created from event cards are visible in item cards and, when due
+  today, in the compact plan reminder line without moving the event time;
+- event follow-up creation audit now includes safe event/reminder/scheduledAt/source details;
+- before-event reminder offsets render human labels such as `za nedelyu`, `za 3 dnya`, and
+  `za 2 dnya` instead of technical hour/minute offsets;
+- the orthodontist multi-event reminder template is normalized into two event items with the same
+  per-event reminder template, including same-day morning reminders at 08:00, 09:00, and 10:00
+  local when valid;
+- monthly day-range policies now audit checked/materialized/missed-review states with
+  `assistant.monthly_day_range_occurrence_checked`,
+  `assistant.monthly_day_range_occurrence_materialized`, and
+  `assistant.monthly_day_range_occurrence_missed_review`;
+- daily recurring requests without a time keep the existing first-class clarification draft UX.
+
+Validation:
+
+```text
+Local validation:
+npm test: 65 files passed, 351/351 tests passed
+npm run lint: passed
+npx tsc --noEmit: passed
+npm run build: passed
+git diff --check: passed; only CRLF warnings from Git
+Changed-file secret scan: passed; only intentional fake redaction fixtures matched
+Database migration: not required
+
+Production health before handoff docs commit:
+/api/health ok, appVersion 2.21.0
+deploymentCommit 9d8b5ccb2abe56277778e7e59f3e47fed306d0ad
+defaultTimezone Europe/Moscow, ownerTimezone Europe/Moscow
+schedulerConfigured true, lastRunnerSucceeded true
+lastRunnerRunAt 2026-06-17T14:54:10.919Z during protected gate run
+policiesMissingNextReminder 0
+OpenAI configured true, OpenAI required for natural language true
+
+Telegram webhook:
+ok true, expected URL configured, pending updates 0
+safe warning: historical last_error remains visible from Telegram getWebhookInfo
+
+AI health:
+ok true, model gpt-4o-mini-2024-07-18
+response id resp_0b10692f78ae3dba006a32b53682ac819e98affd74d3de1627
+latency 3832 ms, structured output valid, test tool accepted
+
+Admin time debug:
+ownerTimezone Europe/Moscow
+serverTimezone UTC
+sample local time 2026-06-19T21:30:00
+sample stored UTC 2026-06-19T18:30:00.000Z
+sample rendered owner-facing time 19.06 21:30-22:30
+
+V2.21 repair preview/apply/post-preview:
+safeToApply true
+policiesMissingNextReminder 0
+repairablePolicies 0
+expiredPolicies 0
+reviewRequiredPolicies 0
+todayUntilDoneItemsMissingDueAt 0
+monthlyDayRangeSkippedTodayPolicies 0
+missingEventFollowupReminders 0
+callbackPayloadTooLongRecords 0
+timezoneShiftedEvents 0
+postilnyConcertCandidates 0
+calendarObjectsToChange 0
+calendarObjectsChanged 0
+monthly day-range audit actions present
+
+Reminder smoke:
+smoke item f889b6a5-fba0-4466-b459-eb321041d2d6
+scheduledAt 2026-06-17T14:57:11.181Z
+deliveredAt 2026-06-17T14:58:11.754Z
+reminderStatus sent, deliveryStatus sent, item autoArchivedAfterDelivery true
+delivery was observed through the normal cron-job.org scheduler; no manual runner fallback used
+```
+
+Release notification:
+
+```text
+Sent: yes
+Telegram message id: 1127
+Sent at: 2026-06-17T15:01:36.852Z
+Idempotency: second call returned already_sent with the same Telegram message id 1127
+Safe warning recorded by release gate: historical_webhook_error
+```
+
+Remaining notes:
+
+```text
+No schema migration was required for V2.21.0.
+Yandex Calendar remains best-effort and was not changed by V2.21 repair.
+The V2.21 production repair found 0 real timezone-shifted or Postilny candidates during acceptance;
+the invariant is covered by code, tests, and protected time diagnostics.
+Owner live acceptance prompts for the Postilny concert, orthodontist pair, and /dashboard remain
+optional manual checks after deployment; automated production gates passed.
+Vercel MCP deployment listing returned a scope 403 in this Codex session, so deployment was verified
+through production /api/health and the deployed Git commit instead.
+```
+
+## Previous Deployment - V2.20.0 Plan Rendering, Daily Policy, Event Follow-up and Button Safety
 
 Production code commit: `347ade29566dafa4e258dc185fb8b5a2de4f5f84`
 
@@ -489,15 +609,17 @@ production, pending updates are zero, and the error timestamp did not advance du
 ## Current Production
 
 ```text
-Application version: 2.19.0
+Application version: 2.21.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 2d27fc13a7038b413dd60cd20cad79d088fd2d86
+Validated application code commit: 9d8b5ccb2abe56277778e7e59f3e47fed306d0ad
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
 Reconciler: enabled
 Runner lock: enabled
 Production scheduler: cron-job.org
+Owner timezone: Europe/Moscow
+Calendar provider: Yandex CalDAV, best-effort
 ```
 
 ## Previous Deployment - V2.14.0
@@ -1322,6 +1444,8 @@ V2.16.0 - Multi-reminder setup, event-relative reminder routing and safe repair
 V2.17.0 - Target resolution, reminder offsets and past-event review
 V2.18.0 - Event reminder semantics, today plan buttons and spacing fixes
 V2.19.0 - Today until-done task due semantics and policy audit repair
+V2.20.0 - Plan rendering, daily policy, event follow-up and button safety
+V2.21.0 - Plan visual semantics, owner timezone and multi-event reminder templates
 ```
 
 ## Remaining Limitations
