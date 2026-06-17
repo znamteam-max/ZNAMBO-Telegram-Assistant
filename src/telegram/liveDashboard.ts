@@ -711,7 +711,15 @@ function dashboardReminderIcon(
   if (
     item.kind === "recurring_task" ||
     item.visibility === "long_term" ||
-    policies.some((policy) => policy.recurrenceRule || policy.intervalMinutes)
+    policies.some((policy) =>
+      Boolean(
+        policy.recurrenceRule ||
+          policy.policyType === "recurring" ||
+          policy.policyType === "long_term" ||
+          policy.policyType === "nag_until_ack" ||
+          (policy.intervalMinutes && policy.policyType !== "interval_window"),
+      ),
+    )
   ) {
     return "↻";
   }

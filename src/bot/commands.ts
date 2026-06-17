@@ -131,6 +131,10 @@ import {
   applyV2210ProductionRepair,
   previewV2210ProductionRepair,
 } from "@/services/v2210ProductionRepair";
+import {
+  applyV2220ProductionRepair,
+  previewV2220ProductionRepair,
+} from "@/services/v2220ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -233,6 +237,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2190 preview|apply - today until-done due/policy audit repair",
         "/admin_repair_v2200 preview|apply - plan rendering, monthly policy and callback safety repair",
         "/admin_repair_v2210 preview|apply - owner timezone, monthly audit and follow-up visibility repair",
+        "/admin_repair_v2220 preview|apply - session escape, interval-window and recurring-card repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -1514,6 +1519,44 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2210 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2220", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2220ProductionRepair({ userId: owner.id, timezone: owner.timezone })
+        : await previewV2220ProductionRepair({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.22 repair applied:" : "V2.22 repair preview:",
+        `• stale sessions: ${result.staleSessions}`,
+        `• interval policies attached to wrong item: ${result.intervalPoliciesAttachedToWrongItem}`,
+        `• interval-window items missing window fields: ${result.intervalWindowItemsMissingWindowFields}`,
+        `• finite-window next outside window: ${result.finiteWindowPoliciesNextOutsideWindow}`,
+        `• duplicate dense reminder windows: ${result.duplicateDenseReminderWindows}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• cleared sessions: ${arrayLength(result, "clearedSessionActionIds")}`,
+              `• repaired items: ${arrayLength(result, "repairedItemIds")}`,
+              `• repaired policies: ${arrayLength(result, "repairedPolicyIds")}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2220 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {

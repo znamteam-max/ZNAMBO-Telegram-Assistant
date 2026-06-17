@@ -36,11 +36,10 @@ describe("current release notification and reminder setup", () => {
       inspection: healthyInspection(),
     });
 
-    expect(text).toContain("owner timezone Europe/Moscow");
-    expect(text).toContain("multi-event reminder template");
-    expect(text).toContain("monthly day-range audit");
-    expect(text).toContain("owner timezone Europe/Moscow");
-    expect(text).toContain("обновлён до V2.21.0");
+    expect(text).toContain("session escape");
+    expect(text).toContain("interval-window reminder");
+    expect(text).toContain("recurring reminder card UX");
+    expect(text).toContain("V2.22.0");
     expect(text).not.toContain("????");
     expect(text).not.toContain("пїЅ");
     expect(hasMojibakeSignal(text)).toBe(false);
@@ -60,7 +59,7 @@ describe("current release notification and reminder setup", () => {
     );
 
     const sentText = harness.send.mock.calls[0]?.[0].text ?? "";
-    expect(sentText).toContain("owner timezone Europe/Moscow");
+    expect(sentText).toContain("interval-window reminder");
     expect(sentText).not.toContain("????");
   });
 

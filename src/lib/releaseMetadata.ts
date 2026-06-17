@@ -1,21 +1,20 @@
 export const RELEASE_NOTES = {
-  version: "2.21.0",
-  previousVersion: "2.20.0",
-  title: "Plan visual semantics, owner timezone and multi-event reminder fix",
+  version: "2.22.0",
+  previousVersion: "2.21.0",
+  title: "Session escape, interval-window reminders and recurring card UX fix",
   bullets: [
-    "закрепил owner timezone Europe/Moscow для natural-language планирования, вывода и /admin_time_debug",
-    "обновил /plan: одна компактная строка напоминаний на пункт, ⏰ для сегодняшнего и ↻ для долгосрочных правил",
-    "сделал event follow-up reminder-only записи видимыми в карточке события и сегодняшнем плане",
-    "добавил multi-event reminder template для двух визитов к ортодонту с человеческими offset labels",
-    "усилил monthly day-range audit и добавил /admin_repair_v2210 preview|apply",
+    "добавил session escape: новое самостоятельное interval-window reminder больше не захватывается старой recurring card/session; owner timezone Europe/Moscow сохранен для вывода",
+    "создаю один finite interval-window reminder item plus policy для окон вроде завтра 06:00-07:30 каждые 10 минут",
+    "закрепил morning window parsing: 6 до 7.30 означает 06:00-07:30 Europe/Moscow, не вечернее окно",
+    "обновил recurring reminder card UX: явные кнопки Выполнено сейчас, Через 30 мин, Через 1 час, Через 2 часа, Завтра, Изменить правило, Остановить правило",
+    "добавил calendar-safe /admin_repair_v2220 preview|apply и protected v2220 repair actions",
   ],
   testPrompts: [
     "/dashboard",
-    "/admin_time_debug",
-    "Концерт Вадима Постильного в пятницу в 21.30 в Большевик Лофт",
-    "Повторные два прихода с Робом к ортодонту сначала 1 июля в 19.00 и 2 июля в 11.45, напомни про пару этих визитов за неделю, за 3 дня, за 2 дня, и утром в эти дни много раз",
+    "/admin_repair_v2220 preview",
+    "Завтра с 6 до 7.30 напоминай мне каждые 10 минут взять с собой спицы",
     "/dashboard",
-    "/admin_repair_v2210 preview",
+    "/admin_repair_v2220 apply",
   ],
 } as const;
 

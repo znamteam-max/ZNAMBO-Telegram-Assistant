@@ -38,9 +38,15 @@ import {
 } from "@/bot/recurringPolicyDraftFlow";
 import {
   clearActiveInteractionSessions,
+  clearActiveInteractionSessionsWithDetails,
   isGlobalCreationIntent,
   isSessionCancelText,
 } from "@/bot/sessionRouting";
+import { parseStandaloneIntervalWindowReminderIntent } from "@/domain/intervalWindowReminderIntent";
+import {
+  createIntervalWindowReminderFromIntent,
+  formatIntervalWindowCreationReply,
+} from "@/services/intervalWindowReminderCreation";
 import {
   candidateFromItem,
   extractProposedEventFromExecution,
@@ -135,6 +141,67 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
           ? "Ок, отменил текущую настройку или редактирование. Ничего не изменил."
           : "Активной настройки не было. Ничего не изменил.",
       );
+      return;
+    }
+
+    const intervalWindowIntent = parseStandaloneIntervalWindowReminderIntent({
+      text,
+      timezone,
+      now,
+    });
+    if (intervalWindowIntent) {
+      const cleared = await clearActiveInteractionSessionsWithDetails({
+        userId: owner.id,
+        reason: "standalone_interval_window_reminder_escape",
+      });
+      if (cleared.length) {
+        for (const session of cleared) {
+          await writeAudit({
+            userId: owner.id,
+            action: "assistant.session_escape_to_new_intent",
+            entityType: "telegram_message",
+            entityId: ctx.dbMessageId,
+            details: {
+              escapedSessionType: session.type,
+              escapedItemId: session.itemId,
+              escapedActionId: session.actionId,
+              newIntent: intervalWindowIntent.intent,
+              reason: intervalWindowIntent.reason,
+              textHash: intervalWindowIntent.textHash,
+              timezone,
+            },
+          }).catch(() => undefined);
+        }
+      }
+      const created = await createIntervalWindowReminderFromIntent({
+        userId: owner.id,
+        sourceMessageId: ctx.dbMessageId,
+        intent: intervalWindowIntent,
+        now,
+      });
+      trace.aiRequired = false;
+      trace.preRouterIntent = intervalWindowIntent.intent;
+      trace.toolCallsProposed = [intervalWindowIntent.intent];
+      trace.toolCallsExecuted = ["create_interval_window_reminder"];
+      trace.createdItemIds = [created.item.id];
+      trace.createdPolicyIds = [created.policy.id];
+      trace.createdReminderIds = created.reminder ? [created.reminder.id] : [];
+      trace.transactionStarted = true;
+      trace.transactionCommitted = true;
+      trace.proposedMutationCount = 2;
+      trace.committedMutationCount = 2 + (created.reminder ? 1 : 0);
+      trace.finalAction = "created_interval_window_reminder";
+      trace.naturalLanguagePlanResult = "created_interval_window_reminder";
+      trace.sessionRouting = {
+        escaped: cleared.length > 0,
+        cleared,
+        newIntent: intervalWindowIntent.intent,
+      };
+      await replyAndRecord(
+        ctx,
+        formatIntervalWindowCreationReply({ result: created, intent: intervalWindowIntent }),
+      );
+      await refreshDashboardBestEffort(ctx, timezone);
       return;
     }
 

@@ -120,6 +120,11 @@ import {
   applyV2210ProductionRepair,
   previewV2210ProductionRepair,
 } from "@/services/v2210ProductionRepair";
+import {
+  applyV2220ProductionRepair,
+  previewV2220ProductionRepair,
+} from "@/services/v2220ProductionRepair";
+import { runV2220IntervalWindowSmoke } from "@/services/v2220ProductionSmoke";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { notifyProductionRelease } from "@/services/releaseNotification";
 import { getOwnerTimeDebug } from "@/services/timeDiagnostics";
@@ -441,6 +446,31 @@ export async function POST(request: Request) {
         timezone: owner.timezone,
       }),
     });
+  }
+  if (body.action === "v2220_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV2220ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2220_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV2220ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2220_interval_window_smoke" && body.confirm === true) {
+    const result = await runV2220IntervalWindowSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
   }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {
     const result = await runV242SnoozeProductionProbe({

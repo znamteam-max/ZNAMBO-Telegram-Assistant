@@ -3,6 +3,7 @@ import { clearActiveItemEditSession } from "@/services/itemEditSessions";
 import { clearActiveMultiReminderSetupSession } from "@/services/multiReminderSetupSessions";
 import { clearActiveRecurringPolicyDraftSession } from "@/services/recurringPolicyDraftSessions";
 import { clearActiveReminderPolicyEditSession } from "@/services/reminderPolicyEditSessions";
+import { isStandaloneIntervalWindowReminderText } from "@/domain/intervalWindowReminderIntent";
 
 export type ClearedInteractionSession =
   | "item_edit_session"
@@ -10,6 +11,12 @@ export type ClearedInteractionSession =
   | "reminder_policy_edit_session"
   | "recurring_policy_draft"
   | "external_calendar_edit_session";
+
+export type ClearedInteractionSessionDetails = {
+  type: ClearedInteractionSession;
+  actionId: string;
+  itemId: string | null;
+};
 
 export function isSessionCancelText(text: string) {
   const normalized = normalizeSessionText(text);
@@ -21,6 +28,15 @@ export function isSessionCancelText(text: string) {
 export function isGlobalCreationIntent(text: string) {
   const normalized = normalizeSessionText(text);
   if (!normalized) return false;
+  if (
+    isStandaloneIntervalWindowReminderText({
+      text,
+      timezone: "Europe/Moscow",
+      now: new Date(),
+    })
+  ) {
+    return true;
+  }
 
   const hasReminderVerb =
     /(?:напомни|напомнить|напоминай|напоминать|добавь напоминание|создай напоминание)/.test(
@@ -53,7 +69,16 @@ export async function clearActiveInteractionSessions(params: {
   reason: string;
   preserve?: ClearedInteractionSession[];
 }) {
-  const cleared: ClearedInteractionSession[] = [];
+  const detailed = await clearActiveInteractionSessionsWithDetails(params);
+  return detailed.map((entry) => entry.type);
+}
+
+export async function clearActiveInteractionSessionsWithDetails(params: {
+  userId: string;
+  reason: string;
+  preserve?: ClearedInteractionSession[];
+}) {
+  const cleared: ClearedInteractionSessionDetails[] = [];
   const preserve = new Set(params.preserve ?? []);
   const results = await Promise.allSettled([
     preserve.has("item_edit_session")
@@ -72,20 +97,44 @@ export async function clearActiveInteractionSessions(params: {
       ? Promise.resolve(null)
       : clearExternalCalendarEditSession({ userId: params.userId, reason: params.reason }),
   ]);
-  if (results[0].status === "fulfilled" && results[0].value) cleared.push("item_edit_session");
+  if (results[0].status === "fulfilled" && results[0].value) {
+    cleared.push(details("item_edit_session", results[0].value));
+  }
   if (results[1].status === "fulfilled" && results[1].value) {
-    cleared.push("multi_reminder_setup_session");
+    cleared.push(details("multi_reminder_setup_session", results[1].value));
   }
   if (results[2].status === "fulfilled" && results[2].value) {
-    cleared.push("reminder_policy_edit_session");
+    cleared.push(details("reminder_policy_edit_session", results[2].value));
   }
   if (results[3].status === "fulfilled" && results[3].value) {
-    cleared.push("recurring_policy_draft");
+    cleared.push(details("recurring_policy_draft", results[3].value));
   }
   if (results[4].status === "fulfilled" && results[4].value) {
-    cleared.push("external_calendar_edit_session");
+    cleared.push(details("external_calendar_edit_session", results[4].value));
   }
   return cleared;
+}
+
+function details(
+  type: ClearedInteractionSession,
+  action: { id: string; input?: Record<string, unknown>; output?: Record<string, unknown> },
+): ClearedInteractionSessionDetails {
+  return {
+    type,
+    actionId: action.id,
+    itemId: extractSessionItemId(action.input, action.output),
+  };
+}
+
+function extractSessionItemId(
+  input?: Record<string, unknown>,
+  output?: Record<string, unknown>,
+) {
+  for (const key of ["itemId", "activeEditItemId", "externalEventId"]) {
+    const value = output?.[key] ?? input?.[key];
+    if (typeof value === "string") return value;
+  }
+  return null;
 }
 
 function normalizeSessionText(text: string) {

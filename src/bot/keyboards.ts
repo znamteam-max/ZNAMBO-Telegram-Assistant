@@ -618,17 +618,22 @@ export function tentativeEventFollowupKeyboard(itemId: string) {
 
 export function reminderActionKeyboard(reminderId: string, plannerItemId?: string | null) {
   const keyboard = new InlineKeyboard()
-    .text("Готово на сегодня", `reminder:ack:${reminderId}`)
+    .text("✅ Выполнено сейчас", `reminder:ack:${reminderId}`)
     .row()
-    .text("Напомни через час", `reminder:snooze:${reminderId}:60`)
-    .text("Пропустить сегодня", `reminder:skip:${reminderId}`)
+    .text("😴 Через 30 мин", `reminder:snooze:${reminderId}:30`)
+    .text("😴 Через 1 час", `reminder:snooze:${reminderId}:60`)
+    .row()
+    .text("😴 Через 2 часа", `reminder:snooze:${reminderId}:120`)
+    .text("😴 Завтра", `reminder:snooze_tomorrow:${reminderId}`)
+    .row()
+    .text("✏️ Изменить правило", `reminder:edit:${reminderId}`)
     .row();
 
   if (plannerItemId) {
-    keyboard.text("Больше не напоминать", `item:stop_recurring:${plannerItemId}`);
+    keyboard.text("🔕 Остановить правило", `item:stop_recurring:${plannerItemId}`).row();
   }
 
-  return keyboard;
+  return keyboard.text("⬅️ К плану", "dashboard:refresh");
 }
 
 export function actionPlanKeyboard(planId: string) {

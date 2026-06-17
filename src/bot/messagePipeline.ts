@@ -57,10 +57,70 @@ import { replyAndRecord } from "./reply";
 import { handleItemEditTurn } from "./itemEditFlow";
 import { handleMultiReminderSetupTurn } from "./multiReminderSetupFlow";
 import { handleRecentEventReminderTurn } from "./recentEventReminderFlow";
+import { clearActiveInteractionSessionsWithDetails } from "./sessionRouting";
+import { parseStandaloneIntervalWindowReminderIntent } from "@/domain/intervalWindowReminderIntent";
+import {
+  createIntervalWindowReminderFromIntent,
+  formatIntervalWindowCreationReply,
+} from "@/services/intervalWindowReminderCreation";
 
 export async function handleIncomingUserMessage(ctx: BotContext, text: string, timezone: string) {
   const owner = requireOwner(ctx);
   const now = new Date();
+  const intervalWindowIntent = parseStandaloneIntervalWindowReminderIntent({ text, timezone, now });
+  if (intervalWindowIntent) {
+    const cleared = await clearActiveInteractionSessionsWithDetails({
+      userId: owner.id,
+      reason: "standalone_interval_window_reminder_escape",
+    });
+    for (const session of cleared) {
+      await writeAudit({
+        userId: owner.id,
+        action: "assistant.session_escape_to_new_intent",
+        entityType: "telegram_message",
+        entityId: ctx.dbMessageId,
+        details: {
+          escapedSessionType: session.type,
+          escapedItemId: session.itemId,
+          escapedActionId: session.actionId,
+          newIntent: intervalWindowIntent.intent,
+          reason: intervalWindowIntent.reason,
+          textHash: intervalWindowIntent.textHash,
+          timezone,
+        },
+      }).catch(() => undefined);
+    }
+    const created = await createIntervalWindowReminderFromIntent({
+      userId: owner.id,
+      sourceMessageId: ctx.dbMessageId,
+      intent: intervalWindowIntent,
+      now,
+    });
+    await replyAndRecord(
+      ctx,
+      formatIntervalWindowCreationReply({ result: created, intent: intervalWindowIntent }),
+    );
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.decision_trace",
+      entityType: "telegram_message",
+      entityId: ctx.dbMessageId,
+      details: {
+        pipelineUsed: "legacy_v2",
+        preRouterIntent: intervalWindowIntent.intent,
+        finalIntent: intervalWindowIntent.intent,
+        fallbackUsed: false,
+        createItemAttempted: true,
+        createItemBlockedByValidator: false,
+        finalAction: "created_interval_window_reminder",
+        savedItemIds: [created.item.id],
+        createdPolicyIds: [created.policy.id],
+        createdReminderIds: created.reminder ? [created.reminder.id] : [],
+        sessionRouting: { escaped: cleared.length > 0, cleared },
+      },
+    });
+    return;
+  }
   const multiReminderSetupHandled = await handleMultiReminderSetupTurn(ctx, text, timezone);
   if (multiReminderSetupHandled) {
     await writeAudit({

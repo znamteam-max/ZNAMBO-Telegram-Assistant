@@ -88,12 +88,15 @@ async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
         r.user_id,
         r.planner_item_id,
         r.policy_id,
+        p.policy_type,
+        p.ends_at,
         r.scheduled_at as old_scheduled_at,
         row_number() over (
           partition by r.user_id, date_trunc('minute', r.scheduled_at)
           order by r.scheduled_at asc, r.created_at asc, r.id asc
         ) as rn
       from "assistant"."reminders" r
+      left join "assistant"."reminder_policies" p on p.id = r.policy_id
       where r.status = 'pending'
         and r.scheduled_at <= ${nowIso}::timestamptz
     )
@@ -103,6 +106,11 @@ async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
     from ranked
     where r.id = ranked.id
       and ranked.rn > 1
+      and not (
+        ranked.policy_type in ('interval_window', 'nag_until_ack')
+        and ranked.ends_at is not null
+        and ${nowIso}::timestamptz + ((ranked.rn - 1) * interval '5 minutes') > ranked.ends_at
+      )
     returning
       r.id,
       r.user_id as "userId",
