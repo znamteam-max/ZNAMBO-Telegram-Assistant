@@ -102,7 +102,7 @@ export const agentReminderPolicySchema = z.object({
     .enum(["none", "latest_only", "one_immediate_then_resume"])
     .default("one_immediate_then_resume"),
   onWindowEnd: z
-    .enum(["expire_silently", "final_check", "carry_to_next_day"])
+    .enum(["expire_silently", "final_check", "carry_to_next_day", "move_to_overdue_or_review"])
     .default("expire_silently"),
   quietHoursStart: z.string().nullable().default(null),
   quietHoursEnd: z.string().nullable().default(null),

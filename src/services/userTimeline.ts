@@ -11,12 +11,17 @@ import type { EntityRef } from "@/domain/entityRefs";
 import {
   classifyTimelineItem,
   compareTimelineEntries,
+  getTimelineAnchor,
   type TimelineClassification,
 } from "@/domain/timelineClassification";
 import {
   parseExternalCalendarVisibilityPreferences,
   shouldShowExternalCalendarEvent,
 } from "@/services/externalCalendarHygiene";
+import {
+  isTodayUntilDoneReminderPolicy,
+  todayUntilDoneMetadataFromPolicy,
+} from "@/domain/todayUntilDoneTask";
 
 export type TimelineDateBucket =
   | "today"
@@ -78,8 +83,16 @@ export function buildUserTimelineViewFromData(params: {
   now?: Date;
 }) {
   const now = params.now ?? new Date();
+  const policiesByItemId = new Map<string, ReminderPolicy[]>();
+  for (const policy of params.policies) {
+    if (!policy.itemId) continue;
+    policiesByItemId.set(policy.itemId, [...(policiesByItemId.get(policy.itemId) ?? []), policy]);
+  }
+  const plannerItemsWithDerivedDue = params.items.map((item) =>
+    withTodayUntilDoneDerivedDue(item, policiesByItemId.get(item.id) ?? [], now, params.timezone),
+  );
   const rows: UserTimelineRow[] = [
-    ...params.items.map((item) => buildItemRow(item, now, params.timezone)),
+    ...plannerItemsWithDerivedDue.map((item) => buildItemRow(item, now, params.timezone)),
     ...(params.externalEvents ?? []).map((event) =>
       buildItemRow(externalEventAsPlannerItem(event), now, params.timezone, {
         type: "external_calendar_event",
@@ -123,7 +136,7 @@ function buildItemRow(
   timezone: string,
   entityRef?: EntityRef,
 ): UserTimelineRow {
-  const anchor = item.startAt ?? item.dueAt;
+  const anchor = getTimelineAnchor({ item }, now, timezone);
   const overdue =
     item.status === "active" &&
     item.metadata?.needsReview !== true &&
@@ -206,6 +219,35 @@ function externalEventAsPlannerItem(event: ExternalCalendarEvent): PlannerItem {
     },
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
+  };
+}
+
+function withTodayUntilDoneDerivedDue(
+  item: PlannerItem,
+  policies: ReminderPolicy[],
+  now: Date,
+  timezone: string,
+): PlannerItem {
+  if (item.startAt || item.dueAt) return item;
+  const zone = item.timezone || timezone;
+  const policy = policies.find((candidate) => {
+    if (candidate.status !== "active") return false;
+    if (!isTodayUntilDoneReminderPolicy(candidate) || !candidate.endsAt) return false;
+    const endLocal = DateTime.fromJSDate(candidate.endsAt, { zone: "utc" }).setZone(
+      candidate.timezone || zone,
+    );
+    const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(candidate.timezone || zone);
+    return endLocal.hasSame(nowLocal, "day") || endLocal >= nowLocal;
+  });
+  if (!policy?.endsAt) return item;
+  return {
+    ...item,
+    dueAt: policy.endsAt,
+    metadata: {
+      ...item.metadata,
+      ...todayUntilDoneMetadataFromPolicy(policy),
+      derivedDueAtFromPolicyId: policy.id,
+    },
   };
 }
 

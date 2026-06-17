@@ -14,6 +14,7 @@ import {
   parseRecurringPolicyIntents,
 } from "@/domain/recurringPolicySemantics";
 import { parseBeforeEventReminderSpecs } from "@/domain/beforeEventReminderParsing";
+import { normalizeTodayUntilDoneTask } from "@/domain/todayUntilDoneTask";
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 
@@ -51,9 +52,13 @@ export function normalizeAgentExecutionProposal(params: {
     ...params,
     execution: sameMessageReminder,
   });
-  const interval = normalizeIntervalWindow({
+  const todayUntilDone = normalizeTodayUntilDoneSemantics({
     ...params,
     execution: clearReminder,
+  });
+  const interval = normalizeIntervalWindow({
+    ...params,
+    execution: todayUntilDone,
   });
   const recurring = normalizeLongTermRecurrence({
     ...params,
@@ -501,6 +506,115 @@ function normalizeClearReminderIntent(params: {
     },
     itemUpdates: [],
     reminderPolicies: policy ? [policy] : [],
+    clarificationQuestions: [],
+  };
+}
+
+function normalizeTodayUntilDoneSemantics(params: {
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+}): AgentExecution {
+  if ((params.execution.actionPlan?.actions.length ?? 0) > 1) return params.execution;
+  if (
+    params.execution.reminderPolicies.some((policy) =>
+      ["before_event", "recurring", "long_term", "post_event_menu", "after_event"].includes(
+        policy.policyType,
+      ),
+    )
+  ) {
+    return params.execution;
+  }
+
+  const proposed = params.execution.actionPlan?.actions[0];
+  const policyTitle =
+    params.execution.reminderPolicies.find((policy) =>
+      ["interval_window", "nag_until_ack"].includes(policy.policyType),
+    )?.itemTitle ?? null;
+  const normalized = normalizeTodayUntilDoneTask({
+    text: params.text,
+    timezone: params.timezone,
+    now: params.now,
+    title: proposed?.title ?? policyTitle,
+  });
+  if (!normalized) return params.execution;
+
+  const action: ActionPlanItem = {
+    ...(proposed ?? buildSyntheticReminderAction(normalized.title, params.timezone)),
+    actionType: "task",
+    kind: "task",
+    title: normalized.title,
+    timezone: proposed?.timezone || params.timezone,
+    startAtLocal: null,
+    endAtLocal: null,
+    dueAtLocal: normalized.dueAtLocal,
+    durationMinutes: null,
+    reminders: [],
+    confidence: Math.max(proposed?.confidence ?? 0, 0.99),
+    risk: "low",
+    requiresConfirmation: false,
+    metadata: {
+      ...(proposed?.metadata ?? {}),
+      ...normalized.metadata,
+      reminderIntentExplicit: true,
+    },
+  };
+  const policy: AgentReminderPolicy = {
+    operation: "create_interval_window_policy",
+    itemIds: [],
+    itemTitle: normalized.title,
+    title: normalized.title,
+    category: "nag_until_done",
+    policyType: "nag_until_ack",
+    startsAtLocal: normalized.startsAtLocal,
+    endsAtLocal: normalized.endsAtLocal,
+    nextFireAtLocal: normalized.startsAtLocal,
+    recurrenceRule: null,
+    intervalMinutes: normalized.intervalMinutes,
+    requireAck: true,
+    maxOccurrences: null,
+    minutesBefore: null,
+    windowEndInclusive: true,
+    catchUpMode: "one_immediate_then_resume",
+    onWindowEnd: "move_to_overdue_or_review",
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    allowDuringQuietHours: false,
+  };
+
+  return {
+    ...params.execution,
+    intent: "create_plan" as const,
+    reply: null,
+    actionPlan: {
+      ...(params.execution.actionPlan ?? {
+        intent: "plan" as const,
+        summary: normalized.title,
+        reply: null,
+        confidence: 0.99,
+        requiresConfirmation: false,
+        actions: [],
+        memoryCandidates: [],
+        clarificationQuestions: [],
+      }),
+      intent: "plan" as const,
+      summary: normalized.title,
+      reply: null,
+      confidence: Math.max(params.execution.actionPlan?.confidence ?? 0, 0.99),
+      requiresConfirmation: false,
+      actions: [action],
+      clarificationQuestions: [],
+    },
+    itemUpdates: [],
+    reminderPolicies: [
+      policy,
+      ...params.execution.reminderPolicies.filter(
+        (candidate) =>
+          !["interval_window", "nag_until_ack"].includes(candidate.policyType) &&
+          candidate.itemTitle !== normalized.title,
+      ),
+    ],
     clarificationQuestions: [],
   };
 }

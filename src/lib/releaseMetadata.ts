@@ -1,17 +1,17 @@
 export const RELEASE_NOTES = {
-  version: "2.18.0",
-  previousVersion: "2.17.0",
-  title: "Release encoding, overlap target choice and deterministic reminder setup",
+  version: "2.19.0",
+  previousVersion: "2.18.0",
+  title: "Today until-done task due date and policy audit fix",
   bullets: [
-    "исправил выбор похожих событий и созвонов",
-    "исправил напоминания до события: за 2 часа, за час, за 30 минут",
-    "исправил кнопки и сценарии «пока не сделаю»",
-    "развёл совпадающие напоминания, чтобы они не приходили потоком",
+    "исправил сценарий «сегодня + пока не сделаю»: задача получает дедлайн сегодня 23:59",
+    "исправил окно until-done policy: в интерфейсе показывается 23:59, а не UTC-сдвиг",
+    "закрепил today until-done задачи в разделе «Сегодня — задачи», включая snooze-состояние",
+    "добавил /admin_repair_v2190 preview|apply для аудита policiesMissingNextReminder",
   ],
   testPrompts: [
-    "Созвон с Винлайном по ЦП завтра в 15.30. Напомни мне за два часа и за полчаса",
-    "За 3 часа, за 2 часа, за час",
-    "/admin_repair_v2180 preview",
+    "Напомни мне сегодня проверить билеты на концерт Вадима Постильного. Напоминай до тех пор, пока я это не сделаю сегодня.",
+    "/dashboard",
+    "/admin_repair_v2190 preview",
   ],
 } as const;
 

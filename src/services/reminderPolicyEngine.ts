@@ -93,6 +93,7 @@ export async function applyAgentReminderPolicies(params: {
         metadata: {
           operation: proposal.operation,
           minutesBefore: proposal.minutesBefore,
+          ...inferPolicyProposalMetadata(proposal, target, timezone),
           stopOnItemComplete: proposal.requireAck,
           stopCondition: proposal.requireAck ? "until_done" : null,
           recurrenceRuleVersion: proposal.recurrenceRule?.includes(":")
@@ -186,6 +187,9 @@ export async function materializeNextPolicyReminder(
 }
 
 function latestSpacingAtForPolicy(policy: ReminderPolicy, deliveryAt: Date) {
+  if (["interval_window", "nag_until_ack"].includes(policy.policyType) && policy.endsAt) {
+    return policy.endsAt;
+  }
   if (policy.policyType !== "before_event") return null;
   const minutesBefore =
     typeof policy.metadata?.minutesBefore === "number"
@@ -193,6 +197,44 @@ function latestSpacingAtForPolicy(policy: ReminderPolicy, deliveryAt: Date) {
       : Number(policy.metadata?.minutesBefore ?? 0);
   if (!Number.isFinite(minutesBefore) || minutesBefore <= 0) return deliveryAt;
   return new Date(deliveryAt.getTime() + Math.max(1, minutesBefore - 1) * 60_000);
+}
+
+function inferPolicyProposalMetadata(
+  proposal: AgentReminderPolicy,
+  target: PlannerItem | null,
+  timezone: string,
+) {
+  if (
+    proposal.policyType !== "nag_until_ack" ||
+    proposal.requireAck !== true ||
+    !proposal.endsAtLocal ||
+    (proposal.category !== "nag_until_done" &&
+      proposal.onWindowEnd !== "move_to_overdue_or_review")
+  ) {
+    return {};
+  }
+  const policyWindowEndLocal = localIsoWithOffset(proposal.endsAtLocal, timezone);
+  return {
+    sourceNormalization: "today_until_done_v2190",
+    normalization: "today_until_done",
+    timeScope: "today",
+    untilDone: true,
+    endOfDayLocal: "23:59",
+    activeWindowEnd: "23:59",
+    itemDueAtLocal: target?.dueAt
+      ? DateTime.fromJSDate(target.dueAt, { zone: "utc" })
+          .setZone(target.timezone || timezone)
+          .toISO({ suppressMilliseconds: true })
+      : policyWindowEndLocal,
+    policyWindowEndLocal,
+    intervalMinutes: proposal.intervalMinutes,
+    onWindowEndSemantic: "move_to_overdue_or_review",
+  };
+}
+
+function localIsoWithOffset(value: string, timezone: string) {
+  const parsed = DateTime.fromISO(value, { zone: timezone });
+  return parsed.isValid ? parsed.toISO({ suppressMilliseconds: true }) : value;
 }
 
 export async function advancePolicyAfterDelivery(reminderId: string, deliveredAt = new Date()) {

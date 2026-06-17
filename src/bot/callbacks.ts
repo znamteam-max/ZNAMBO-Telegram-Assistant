@@ -103,6 +103,10 @@ import { startMultiReminderSetupSession } from "@/services/multiReminderSetupSes
 import { deleteYandexCalendarObject } from "@/integrations/yandexCalendar";
 import { parseBeforeEventReminderSpecsForAnchor } from "@/domain/beforeEventReminderParsing";
 import {
+  isTodayUntilDonePlannerItem,
+  isTodayUntilDoneReminderPolicy,
+} from "@/domain/todayUntilDoneTask";
+import {
   applyReminderSpecsToItem,
   createSeparateEventFromSession,
   finishTargetResolutionAction,
@@ -1313,6 +1317,39 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       userId: owner.id,
       reminderId,
     });
+    if (ctx.match[1] === "tomorrow") {
+      const row = await getPolicyForReminder(reminderId);
+      const item = row?.policy.itemId
+        ? await getPlannerItemById(owner.id, row.policy.itemId)
+        : null;
+      if (isTodayUntilDoneReminderPolicy(row?.policy) || isTodayUntilDonePlannerItem(item)) {
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          [
+            "Эта задача была на сегодня.",
+            "Перенести задачу на завтра или только отложить напоминание?",
+          ].join("\n"),
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: "Перенести задачу",
+                    callback_data: `reminder:confirm_move_tomorrow:${reminderId}`,
+                  },
+                  {
+                    text: "Только напоминание",
+                    callback_data: `reminder:snooze_tomorrow_only:${reminderId}`,
+                  },
+                ],
+                [{ text: "Отмена", callback_data: "dashboard:refresh" }],
+              ],
+            },
+          },
+        );
+        return;
+      }
+    }
     const snoozed = await snoozeReminder({
       userId: owner.id,
       reminderId,
@@ -1399,6 +1436,100 @@ export function registerCallbacks(bot: Bot<BotContext>) {
         `Ок, отложил «${row?.policy.title ?? "напоминание"}» до ${until}. До этого времени не буду напоминать по этой задаче.`,
       );
     } else await ctx.reply("Не удалось отложить это напоминание.");
+    await refreshAfterCallback(ctx);
+  });
+
+  bot.callbackQuery(/^reminder:confirm_move_tomorrow:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const reminderId = ctx.match[1];
+    const row = await getPolicyForReminder(reminderId);
+    const item = row?.policy.itemId
+      ? await getPlannerItemById(owner.id, row.policy.itemId)
+      : null;
+    if (!row?.policy || !item) {
+      await ctx.answerCallbackQuery("Не нашёл задачу");
+      return;
+    }
+    const nowLocal = DateTime.now().setZone(owner.timezone);
+    const start = nowLocal
+      .plus({ days: 1 })
+      .set({ hour: 9, minute: 0, second: 0, millisecond: 0 })
+      .toUTC()
+      .toJSDate();
+    const end = nowLocal
+      .plus({ days: 1 })
+      .set({ hour: 23, minute: 59, second: 0, millisecond: 0 })
+      .toUTC()
+      .toJSDate();
+    await updatePlannerItemDetails({
+      userId: owner.id,
+      itemId: item.id,
+      dueAt: end,
+      metadata: {
+        timeScope: "tomorrow",
+        untilDone: true,
+        movedFromTodayAt: new Date().toISOString(),
+        moveReason: "owner_confirmed_tomorrow_from_today_until_done",
+      },
+    });
+    const updatedPolicy = await updateReminderPolicy({
+      userId: owner.id,
+      policyId: row.policy.id,
+      startsAt: start,
+      endsAt: end,
+      nextFireAt: start,
+      snoozedUntil: null,
+      snoozeScope: null,
+      status: "active",
+      metadata: {
+        timeScope: "tomorrow",
+        movedFromTodayAt: new Date().toISOString(),
+        moveReason: "owner_confirmed_tomorrow_from_today_until_done",
+      },
+    });
+    await cancelPendingRemindersForPolicy({
+      userId: owner.id,
+      policyId: row.policy.id,
+      from: new Date(0),
+    });
+    if (updatedPolicy) await materializeNextPolicyReminder(updatedPolicy, start, { now: new Date() });
+    await ctx.answerCallbackQuery("Перенёс");
+    await ctx.reply("Ок, перенёс задачу на завтра и поставил первое напоминание на утро.");
+    await refreshAfterCallback(ctx);
+  });
+
+  bot.callbackQuery(/^reminder:snooze_tomorrow_only:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const reminderId = ctx.match[1];
+    const row = await getPolicyForReminder(reminderId);
+    if (!row?.policy) {
+      await ctx.answerCallbackQuery("Не нашёл напоминание");
+      return;
+    }
+    const tomorrowMorning = DateTime.now()
+      .setZone(owner.timezone)
+      .plus({ days: 1 })
+      .set({ hour: 9, minute: 0, second: 0, millisecond: 0 })
+      .toUTC()
+      .toJSDate();
+    await cancelPendingRemindersForPolicy({
+      userId: owner.id,
+      policyId: row.policy.id,
+      from: new Date(0),
+    });
+    await updateReminderPolicy({
+      userId: owner.id,
+      policyId: row.policy.id,
+      snoozedUntil: tomorrowMorning,
+      snoozeScope: "policy",
+      metadata: {
+        lastSnoozedAt: new Date().toISOString(),
+        snoozedUntil: tomorrowMorning.toISOString(),
+        todayTaskDueKept: true,
+      },
+    });
+    await ctx.answerCallbackQuery("Отложил только напоминание");
+    await ctx.reply("Ок, задачу оставил в сегодняшнем плане, а напоминание отложил.");
     await refreshAfterCallback(ctx);
   });
 

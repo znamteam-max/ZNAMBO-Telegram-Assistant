@@ -26,7 +26,7 @@ const timezone = "Europe/Moscow";
 const userId = "22222222-2222-4222-8222-222222222222";
 const itemId = "11111111-1111-4111-8111-111111111111";
 
-describe("V2.18.0 release encoding and reminder setup", () => {
+describe("current release notification and reminder setup", () => {
   it("release_notification_renders_cyrillic_without_mojibake", () => {
     const text = buildReleaseNotificationText({
       version: RELEASE_NOTES.version,
@@ -36,11 +36,11 @@ describe("V2.18.0 release encoding and reminder setup", () => {
       inspection: healthyInspection(),
     });
 
-    expect(text).toContain("исправил выбор похожих событий и созвонов");
-    expect(text).toContain("исправил напоминания до события: за 2 часа, за час, за 30 минут");
-    expect(text).toContain("исправил кнопки и сценарии «пока не сделаю»");
-    expect(text).toContain("развёл совпадающие напоминания");
-    expect(text).toContain("обновлён до V2.18.0");
+    expect(text).toContain("исправил сценарий «сегодня + пока не сделаю»");
+    expect(text).toContain("исправил окно until-done policy");
+    expect(text).toContain("закрепил today until-done задачи");
+    expect(text).toContain("добавил /admin_repair_v2190 preview|apply");
+    expect(text).toContain("обновлён до V2.19.0");
     expect(text).not.toContain("????");
     expect(text).not.toContain("пїЅ");
     expect(hasMojibakeSignal(text)).toBe(false);
@@ -60,7 +60,7 @@ describe("V2.18.0 release encoding and reminder setup", () => {
     );
 
     const sentText = harness.send.mock.calls[0]?.[0].text ?? "";
-    expect(sentText).toContain("исправил выбор похожих событий и созвонов");
+    expect(sentText).toContain("исправил сценарий «сегодня + пока не сделаю»");
     expect(sentText).not.toContain("????");
   });
 

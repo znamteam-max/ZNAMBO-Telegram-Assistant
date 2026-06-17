@@ -22,6 +22,7 @@ import {
   recurringRuleMissingField,
 } from "@/domain/recurringPolicySemantics";
 import { formatBeforeEventOffset } from "@/domain/reminderPolicyPresentation";
+import { findNextAvailableReminderSlot } from "@/services/reminderCollisionSpacing";
 
 import { storePlanMemoryFacts } from "./memory";
 
@@ -325,7 +326,7 @@ export async function commitStoredActionPlan(params: {
                 campaignGroup: target?.metadata?.campaignGroup ?? null,
                 campaignSequence: target?.metadata?.campaignSequence ?? null,
                 campaignState: target?.metadata?.campaignState ?? null,
-                ...inferPolicyProposalMetadata(proposal, nextFireAt, timezone),
+                ...inferPolicyProposalMetadata(proposal, nextFireAt, timezone, target),
                 stopOnItemComplete: proposal.requireAck,
                 stopCondition: proposal.requireAck ? "until_done" : null,
                 recurrenceRuleVersion: proposal.recurrenceRule?.includes(":")
@@ -337,6 +338,11 @@ export async function commitStoredActionPlan(params: {
           if (!policy) throw new UserFacingError("Не получилось создать reminder policy.");
           createdPolicies.push(policy);
 
+          const spacing = await findNextAvailableReminderSlot({
+            ownerId: params.userId,
+            desiredAt: nextFireAt,
+            latestAt: spacingLatestAtForPolicyProposal(proposal, endsAt, nextFireAt),
+          });
           const [reminder] = await tx
             .insert(reminders)
             .values({
@@ -344,7 +350,7 @@ export async function commitStoredActionPlan(params: {
               plannerItemId: target?.id,
               type: reminderTypeForPolicyProposal(proposal.policyType),
               idempotencyKey: `policy:${policy.id}:${nextFireAt.toISOString()}`,
-              scheduledAt: nextFireAt,
+              scheduledAt: spacing.scheduledAt,
               repeatUntilAck: proposal.requireAck,
               recurrenceKey: proposal.recurrenceRule,
               policyId: policy.id,
@@ -358,6 +364,9 @@ export async function commitStoredActionPlan(params: {
                 category: policy.category,
                 requireAck: policy.requireAck,
                 scheduledFor: nextFireAt.toISOString(),
+                originalDesiredAt: nextFireAt.toISOString(),
+                spacingShiftMinutes: spacing.shiftMinutes,
+                spacingBlockedReason: spacing.blockedReason ?? null,
               },
             })
             .onConflictDoNothing({ target: reminders.idempotencyKey })
@@ -368,8 +377,30 @@ export async function commitStoredActionPlan(params: {
             policyId: policy.id,
             reminderId: reminder.id,
             scheduledFor: nextFireAt,
-            metadata: { actionPlanId: planRecord.id, policyIndex },
+            metadata: {
+              actionPlanId: planRecord.id,
+              policyIndex,
+              deliveryAt: spacing.scheduledAt.toISOString(),
+            },
           });
+          if (spacing.shifted || spacing.blockedReason) {
+            await tx.insert(auditLog).values({
+              userId: params.userId,
+              action: "assistant.reminder_spacing_applied",
+              entityType: "reminder",
+              entityId: reminder.id,
+              details: {
+                phase: "action_plan_commit",
+                plannerItemId: target?.id ?? null,
+                policyId: policy.id,
+                originalDesiredAt: nextFireAt.toISOString(),
+                scheduledAt: spacing.scheduledAt.toISOString(),
+                shifted: spacing.shifted,
+                shiftMinutes: spacing.shiftMinutes,
+                blockedReason: spacing.blockedReason ?? null,
+              },
+            });
+          }
         }
       }
 
@@ -484,16 +515,60 @@ function inferPolicyProposalMetadata(
   proposal: AgentReminderPolicy,
   nextFireAt: Date,
   timezone: string,
+  target?: typeof plannerItems.$inferSelect | null,
 ) {
-  if (proposal.policyType !== "before_event" || !proposal.minutesBefore) return {};
-  return {
-    minutesBefore: proposal.minutesBefore,
-    relativeLabel: formatBeforeEventOffset(proposal.minutesBefore, nextFireAt, timezone),
-  };
+  const metadata: Record<string, unknown> = {};
+  if (proposal.policyType === "before_event" && proposal.minutesBefore) {
+    metadata.minutesBefore = proposal.minutesBefore;
+    metadata.relativeLabel = formatBeforeEventOffset(proposal.minutesBefore, nextFireAt, timezone);
+  }
+  if (isTodayUntilDonePolicyProposal(proposal)) {
+    const policyWindowEndLocal = localIsoWithOffset(proposal.endsAtLocal, timezone);
+    metadata.sourceNormalization = "today_until_done_v2190";
+    metadata.normalization = "today_until_done";
+    metadata.timeScope = "today";
+    metadata.untilDone = true;
+    metadata.endOfDayLocal = "23:59";
+    metadata.activeWindowEnd = "23:59";
+    metadata.itemDueAtLocal = target?.dueAt
+      ? DateTime.fromJSDate(target.dueAt, { zone: "utc" })
+          .setZone(target.timezone || timezone)
+          .toISO({ suppressMilliseconds: true })
+      : policyWindowEndLocal;
+    metadata.policyWindowEndLocal = policyWindowEndLocal;
+    metadata.intervalMinutes = proposal.intervalMinutes;
+    metadata.onWindowEndSemantic = "move_to_overdue_or_review";
+  }
+  return metadata;
 }
 
 function localDate(value: string | null, timezone: string) {
   return value ? localIsoToUtcDate(value, timezone) : null;
+}
+
+function isTodayUntilDonePolicyProposal(proposal: AgentReminderPolicy) {
+  if (proposal.policyType !== "nag_until_ack") return false;
+  if (proposal.requireAck !== true) return false;
+  if (!proposal.endsAtLocal) return false;
+  return proposal.category === "nag_until_done" || proposal.onWindowEnd === "move_to_overdue_or_review";
+}
+
+function localIsoWithOffset(value: string | null, timezone: string) {
+  if (!value) return null;
+  const parsed = DateTime.fromISO(value, { zone: timezone });
+  return parsed.isValid ? parsed.toISO({ suppressMilliseconds: true }) : value;
+}
+
+function spacingLatestAtForPolicyProposal(
+  proposal: AgentReminderPolicy,
+  endsAt: Date | null,
+  nextFireAt: Date,
+) {
+  if (endsAt && ["interval_window", "nag_until_ack"].includes(proposal.policyType)) return endsAt;
+  if (proposal.policyType !== "before_event") return null;
+  const minutesBefore = proposal.minutesBefore ?? 0;
+  if (!minutesBefore) return nextFireAt;
+  return new Date(nextFireAt.getTime() + Math.max(1, minutesBefore - 1) * 60_000);
 }
 
 function reminderTypeForPolicyProposal(policyType: string) {

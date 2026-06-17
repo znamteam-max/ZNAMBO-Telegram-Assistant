@@ -1,6 +1,10 @@
 import { DateTime } from "luxon";
 
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
+import {
+  isTodayUntilDonePlannerItem,
+  isTodayUntilDoneReminderPolicy,
+} from "@/domain/todayUntilDoneTask";
 
 export type TimelineClassification =
   | "now"
@@ -33,7 +37,7 @@ export function classifyTimelineItem(
   if (metadataValue(item, policy, "campaignState") === "waiting") return "campaign_waiting";
   if (metadataValue(item, policy, "campaignState") === "active") return "campaign_active";
 
-  const anchor = item?.startAt ?? item?.dueAt ?? policy?.nextFireAt ?? policy?.startsAt ?? null;
+  const anchor = getTimelineAnchor(entry, now, timezone);
   const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
   const anchorLocal = anchor
     ? DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(
@@ -87,14 +91,24 @@ export function getBasePriority(entry: TimelineEntry): number {
   return clampPriority(raw);
 }
 
-export function getEffectivePriority(entry: TimelineEntry, now: Date, timezone: string): number {
-  const base = getBasePriority(entry);
-  const anchor =
+export function getTimelineAnchor(
+  entry: TimelineEntry,
+  now: Date,
+  timezone: string,
+): Date | null {
+  return (
     entry.item?.startAt ??
     entry.item?.dueAt ??
+    metadataAnchor(entry, now, timezone) ??
     entry.policy?.nextFireAt ??
     entry.policy?.startsAt ??
-    null;
+    null
+  );
+}
+
+export function getEffectivePriority(entry: TimelineEntry, now: Date, timezone: string): number {
+  const base = getBasePriority(entry);
+  const anchor = getTimelineAnchor(entry, now, timezone);
   let boost = 0;
   if (anchor) {
     const hours = (anchor.getTime() - now.getTime()) / (60 * 60 * 1000);
@@ -133,6 +147,26 @@ function metadataValue(
   key: string,
 ) {
   return policy?.metadata?.[key] ?? item?.metadata?.[key] ?? null;
+}
+
+function metadataAnchor(entry: TimelineEntry, now: Date, timezone: string) {
+  const zone = entry.item?.timezone || entry.policy?.timezone || timezone;
+  const raw =
+    metadataValue(entry.item, entry.policy, "itemDueAtLocal") ??
+    metadataValue(entry.item, entry.policy, "policyWindowEndLocal");
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = DateTime.fromISO(raw, { zone });
+    if (parsed.isValid) return parsed.toUTC().toJSDate();
+  }
+  if (entry.policy?.endsAt && isTodayUntilDoneReminderPolicy(entry.policy)) return entry.policy.endsAt;
+  if (entry.item && isTodayUntilDonePlannerItem(entry.item)) {
+    return DateTime.fromJSDate(now, { zone: "utc" })
+      .setZone(zone)
+      .set({ hour: 23, minute: 59, second: 0, millisecond: 0 })
+      .toUTC()
+      .toJSDate();
+  }
+  return null;
 }
 
 function isHidden(item?: PlannerItem | null, policy?: ReminderPolicy | null) {

@@ -6,6 +6,7 @@ import {
   formatRecurringRuleHuman,
   parseCanonicalRecurrenceRule,
 } from "@/domain/recurringPolicySemantics";
+import { isTodayUntilDoneReminderPolicy } from "@/domain/todayUntilDoneTask";
 
 export function isPersistentReminderPolicy(policy: ReminderPolicy) {
   return (
@@ -38,6 +39,8 @@ export function formatHumanReminderPolicy(
   timezone: string,
   options?: { includeNext?: boolean; now?: Date; includeMarker?: boolean; item?: PlannerItem },
 ) {
+  const todayUntilDone = formatTodayUntilDonePolicy(policy, timezone, options);
+  if (todayUntilDone) return todayUntilDone;
   const concreteOneTime = formatConcreteOneTimePolicy(policy, timezone, {
     item: options?.item,
     now: options?.now,
@@ -83,6 +86,47 @@ export function formatHumanReminderPolicy(
     );
   }
   return `${options?.includeMarker === false || !isPersistentReminderPolicy(policy) ? "" : "❗ "}${parts.join(", ")}`;
+}
+
+function formatTodayUntilDonePolicy(
+  policy: ReminderPolicy,
+  timezone: string,
+  options?: { includeNext?: boolean; now?: Date; includeMarker?: boolean; item?: PlannerItem },
+) {
+  if (!isTodayUntilDoneReminderPolicy(policy)) return null;
+  const interval = policy.intervalMinutes ? formatInterval(policy.intervalMinutes) : null;
+  if (!interval) return null;
+  const zone = policy.timezone || options?.item?.timezone || timezone;
+  const endClock =
+    typeof policy.metadata?.activeWindowEnd === "string" && policy.metadata.activeWindowEnd
+      ? policy.metadata.activeWindowEnd
+      : policy.endsAt
+        ? DateTime.fromJSDate(policy.endsAt, { zone: "utc" }).setZone(zone).toFormat("HH:mm")
+        : "23:59";
+  const parts: string[] = [];
+  const now = options?.now ?? new Date();
+  if (policy.snoozedUntil && policy.snoozedUntil > now) {
+    const snoozedClock = DateTime.fromJSDate(policy.snoozedUntil, { zone: "utc" })
+      .setZone(zone)
+      .toFormat("HH:mm");
+    parts.push(
+      `\u043e\u0442\u043b\u043e\u0436\u0435\u043d\u043e \u0434\u043e ${snoozedClock}`,
+      `\u043f\u043e\u0442\u043e\u043c ${interval} \u0434\u043e ${endClock}`,
+    );
+  } else {
+    parts.push(`${interval} \u0434\u043e ${endClock}`);
+  }
+  parts.push("\u043f\u043e\u043a\u0430 \u043d\u0435 \u043e\u0442\u043c\u0435\u0447\u0443");
+  if (options?.includeNext && policy.nextFireAt) {
+    parts.push(
+      `\u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u0435: ${formatRuWeekdayDateTime(
+        policy.nextFireAt,
+        zone,
+      )}`,
+    );
+  }
+  const marker = options?.includeMarker === false ? "" : "\u2757 ";
+  return `${marker}${parts.join(", ")}`;
 }
 
 export function getBeforeEventOffsetMinutes(policy: ReminderPolicy, item?: PlannerItem | null) {

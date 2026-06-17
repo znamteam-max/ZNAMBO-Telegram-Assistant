@@ -223,7 +223,12 @@ export const agentExecutionTool = {
             },
             onWindowEnd: {
               type: "string",
-              enum: ["expire_silently", "final_check", "carry_to_next_day"],
+              enum: [
+                "expire_silently",
+                "final_check",
+                "carry_to_next_day",
+                "move_to_overdue_or_review",
+              ],
             },
             quietHoursStart: { type: ["string", "null"] },
             quietHoursEnd: { type: ["string", "null"] },
