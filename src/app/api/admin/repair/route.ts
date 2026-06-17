@@ -593,19 +593,20 @@ export async function POST(request: Request) {
       dueAt: scheduledAt,
       metadata: { isTest: true, source: "remindertest", debug: true },
     });
-    await createReminderIfMissing({
+    const reminder = await createReminderIfMissing({
       userId: owner.id,
       plannerItemId: item.id,
       type: "custom",
       idempotencyKey: `${item.id}:production-repair-smoke`,
       scheduledAt,
+      disableSpacing: true,
       payload: { title: item.title, isTest: true, source: "remindertest", debug: true },
     });
     return NextResponse.json({
       ok: true,
       action: "reminder_smoke",
       itemId: item.id,
-      scheduledAt,
+      scheduledAt: reminder?.scheduledAt ?? scheduledAt,
     });
   }
   if (body.action === "smoke_status" && typeof body.itemId === "string") {
@@ -617,6 +618,7 @@ export async function POST(request: Request) {
       action: "smoke_status",
       itemStatus: item?.status ?? null,
       autoArchivedAfterDelivery: item?.metadata?.autoArchivedAfterDelivery === true,
+      scheduledAt: reminder?.scheduledAt ?? null,
       reminderStatus: reminder?.status ?? null,
       deliveryStatus: delivery?.status ?? null,
       deliveredAt: delivery?.deliveredAt ?? null,
