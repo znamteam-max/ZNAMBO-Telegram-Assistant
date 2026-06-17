@@ -34,6 +34,7 @@ import {
   undoActionKeyboard,
 } from "./keyboards";
 import { replyAndRecord } from "./reply";
+import { replyStaleCallback } from "./callbackReliability";
 
 export async function handleItemEditTurn(
   ctx: BotContext,
@@ -157,7 +158,7 @@ export async function chooseMultiReminderMode(
   const owner = requireOwner(ctx);
   const action = await getAgentActionById({ userId: owner.id, actionId });
   if (!action || action.actionType !== "item_edit_preview" || action.status !== "pending") {
-    await ctx.answerCallbackQuery("Уже обработано или устарело");
+    await replyStaleCallback(ctx, { reason: "item_edit_multi_reminder_preview_missing" });
     return;
   }
   const mutation = parseStoredMutation(action.output?.mutation);
@@ -186,8 +187,7 @@ export async function confirmItemEditPreview(ctx: BotContext, actionId: string) 
   const owner = requireOwner(ctx);
   const action = await getAgentActionById({ userId: owner.id, actionId });
   if (!action || action.actionType !== "item_edit_preview" || action.status !== "pending") {
-    await ctx.answerCallbackQuery("Уже обработано или устарело");
-    await replyAndRecord(ctx, "Это изменение уже обработано или устарело.");
+    await replyStaleCallback(ctx, { reason: "item_edit_preview_missing" });
     return;
   }
   const output = action.output as {

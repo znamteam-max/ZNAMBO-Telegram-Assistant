@@ -16,6 +16,11 @@ import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { formatRuWeekdayDateRange } from "@/domain/dateTime";
 import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
 import {
+  formatUntilDoneReminderSummary,
+  normalizeUntilDoneReminder,
+  type UntilDoneReminderNormalization,
+} from "@/domain/untilDoneReminderText";
+import {
   nextRecurringOccurrence,
   parseCanonicalRecurrenceRule,
   parseStopCondition,
@@ -38,6 +43,44 @@ export async function handleReminderPolicyEditTurn(
   const owner = requireOwner(ctx);
   const session = await getActiveReminderPolicyEditSession({ userId: owner.id }).catch(() => null);
   if (!session) return false;
+  const normalizedUntilDone = normalizeUntilDoneReminder({
+    text,
+    timezone: session.item.timezone || timezone,
+    now: new Date(),
+  });
+  if (normalizedUntilDone) {
+    await applyNormalizedUntilDonePolicy({
+      ctx,
+      userId: owner.id,
+      item: session.item,
+      actionId: session.action.id,
+      timezone: session.item.timezone || timezone,
+      normalized: normalizedUntilDone,
+      now: new Date(),
+    });
+    ctx.deterministicTrace = {
+      preRouterIntent: "reminder_policy_edit_session",
+      aiRequired: false,
+      aiCalled: false,
+      aiSucceeded: false,
+      structuredOutputValid: true,
+      toolCallsProposed: ["normalize_until_done_reminder", "upsert_reminder_policy"],
+      toolCallsExecuted: ["normalize_until_done_reminder", "upsert_reminder_policy"],
+      fallbackUsed: false,
+      fallbackReason: null,
+      validationWarnings: [],
+      finalAction: "reminder_policy_edit_until_done_applied",
+      errorCode: null,
+      safeErrorMessage: null,
+      sessionRouting: {
+        handledBy: "reminder_policy_edit_session",
+        parserResult: "until_done_end_of_day",
+        targetItemId: session.item.id,
+        targetItemTitle: session.item.title,
+      },
+    };
+    return true;
+  }
   const input = parseReminderPolicyDraftInput(text);
   const stop = parseStopCondition(text);
   const fullCadence = parseReminderCadence({
@@ -66,6 +109,9 @@ export async function handleReminderPolicyEditTurn(
     draft.windowStart = fullCadence.windowStart;
     draft.windowEnd = fullCadence.windowEnd;
     draft.windowEndDayOffset = undefined;
+  }
+  if (draft.stopCondition === "until_done" && !draft.intervalMinutes) {
+    draft.intervalMinutes = 60;
   }
   if (!fullCadence && !stop && !input.intervalMinutes && input.windowEnd === undefined) {
     await replyAndRecord(
@@ -192,6 +238,83 @@ export async function handleReminderPolicyEditTurn(
     { reply_markup: itemMenuKeyboard(session.item.id) },
   );
   return true;
+}
+
+async function applyNormalizedUntilDonePolicy(params: {
+  ctx: BotContext;
+  userId: string;
+  item: PlannerItem;
+  actionId: string;
+  timezone: string;
+  normalized: UntilDoneReminderNormalization;
+  now: Date;
+}) {
+  const activePolicies = await listReminderPoliciesForItem(params.userId, params.item.id, 30);
+  const active = activePolicies.find(
+    (policy) => policy.status === "active" && policy.policyType === "nag_until_ack",
+  );
+  const metadata = {
+    activeWindowStart: params.normalized.windowStart,
+    activeWindowEnd: params.normalized.windowEnd,
+    stopCondition: "until_done",
+    stopOnItemComplete: true,
+    ackAliases: ["done"],
+    mutationSource: "reminder_policy_edit_session",
+    reminderSetupTextNormalizer: "until_done_end_of_day",
+  };
+  const policy = active
+    ? await updateReminderPolicy({
+        userId: params.userId,
+        policyId: active.id,
+        title: params.item.title,
+        policyType: "nag_until_ack",
+        startsAt: params.normalized.startsAt,
+        endsAt: params.normalized.endsAt,
+        nextFireAt: params.normalized.startsAt,
+        intervalMinutes: params.normalized.intervalMinutes,
+        requireAck: true,
+        catchUpMode: params.normalized.catchUpMode,
+        onWindowEnd: "keep_open",
+        snoozedUntil: null,
+        snoozeScope: null,
+        metadata,
+      })
+    : await createReminderPolicyIfMissing({
+        userId: params.userId,
+        itemId: params.item.id,
+        title: params.item.title,
+        category: params.item.category ?? "reminder_edit",
+        policyType: "nag_until_ack",
+        timezone: params.timezone,
+        startsAt: params.normalized.startsAt,
+        endsAt: params.normalized.endsAt,
+        nextFireAt: params.normalized.startsAt,
+        intervalMinutes: params.normalized.intervalMinutes,
+        requireAck: true,
+        catchUpMode: params.normalized.catchUpMode,
+        onWindowEnd: "keep_open",
+        idempotencyKey: `${params.item.id}:until-done:${params.normalized.startsAt.toISOString()}:${params.normalized.intervalMinutes}`,
+        metadata,
+      });
+  await cancelPendingRemindersForPolicy({ userId: params.userId, policyId: policy.id });
+  await materializeNextPolicyReminder(policy, params.normalized.startsAt, { now: params.now });
+  await clearActiveReminderPolicyEditSession({ userId: params.userId, reason: "policy_applied" });
+  await replyAndRecord(
+    params.ctx,
+    formatUntilDoneReminderSummary({ normalized: params.normalized, timezone: params.timezone }),
+    { reply_markup: itemMenuKeyboard(params.item.id) },
+  );
+  await updateReminderPolicyEditSessionDraft({
+    userId: params.userId,
+    actionId: params.actionId,
+    draft: {
+      intervalMinutes: params.normalized.intervalMinutes,
+      windowStart: params.normalized.windowStart,
+      windowEnd: params.normalized.windowEnd,
+      stopCondition: "until_done",
+      ackAliases: ["done"],
+    },
+  }).catch(() => null);
 }
 
 export function parseReminderPolicyDraftInput(text: string) {

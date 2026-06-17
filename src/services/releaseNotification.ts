@@ -485,10 +485,12 @@ function releaseSummaryOrFallback(summary?: string[]) {
 }
 
 export function hasMojibakeSignal(value: string) {
+  const cyrillicMojibakePairs = value.match(/[РС][\u0400-\u04ff]/g)?.length ?? 0;
   return (
     /\uFFFD/.test(value) ||
     /пїЅ/i.test(value) ||
     /\?{4,}/.test(value) ||
-    /[\u0080-\u009f]/.test(value)
+    /[\u0080-\u009f]/.test(value) ||
+    cyrillicMojibakePairs >= 4
   );
 }

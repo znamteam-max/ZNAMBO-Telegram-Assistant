@@ -63,6 +63,7 @@ import {
   renderYesterdayReviewTool,
 } from "./jarvisTools";
 import type { JarvisToolResult } from "./types";
+import { normalizeUntilDoneReminder } from "@/domain/untilDoneReminderText";
 
 const AI_SAFE_FAILURE_REPLY =
   "Не могу безопасно обработать это сообщение без OpenAI. Ничего не создал и не изменил. Попробуй ещё раз чуть позже или проверь /aihealth.";
@@ -152,13 +153,6 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
         ];
       }
     } else {
-      const reminderPolicyEditHandled = await handleReminderPolicyEditTurn(ctx, text, timezone);
-      if (reminderPolicyEditHandled) {
-        Object.assign(trace, ctx.deterministicTrace ?? {});
-        trace.finalAction = "reminder_policy_edit_session_handled";
-        trace.toolCallsExecuted = ["reminder_policy_edit_session"];
-        return;
-      }
       const multiReminderSetupHandled = await handleMultiReminderSetupTurn(ctx, text, timezone);
       if (multiReminderSetupHandled) {
         Object.assign(trace, ctx.deterministicTrace ?? {});
@@ -173,6 +167,18 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
           handledBy: "multi_reminder_setup_session",
           itemEditSessionBypassed: true,
         };
+        return;
+      }
+      const reminderPolicyEditHandled = await handleReminderPolicyEditTurn(ctx, text, timezone);
+      if (reminderPolicyEditHandled) {
+        Object.assign(trace, ctx.deterministicTrace ?? {});
+        trace.finalAction =
+          typeof ctx.deterministicTrace?.finalAction === "string"
+            ? ctx.deterministicTrace.finalAction
+            : "reminder_policy_edit_session_handled";
+        trace.toolCallsExecuted = Array.isArray(ctx.deterministicTrace?.toolCallsExecuted)
+          ? ctx.deterministicTrace.toolCallsExecuted
+          : ["reminder_policy_edit_session"];
         return;
       }
       const recurringDraftHandled = await handleRecurringPolicyDraftTurn(ctx, text, timezone);
@@ -198,6 +204,9 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       if (recentEventReminderHandled) {
         trace.finalAction = "recent_event_reminder_followup_handled";
         trace.toolCallsExecuted = ["recent_event_reminder_followup"];
+        return;
+      }
+      if (await maybeAskUntilDoneTarget({ ctx, text, timezone, now, trace })) {
         return;
       }
     }
@@ -382,6 +391,58 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
       details: trace,
     });
   }
+}
+
+async function maybeAskUntilDoneTarget(params: {
+  ctx: BotContext;
+  text: string;
+  timezone: string;
+  now: Date;
+  trace: Record<string, unknown>;
+}) {
+  const owner = requireOwner(params.ctx);
+  const normalized = normalizeUntilDoneReminder({
+    text: params.text,
+    timezone: params.timezone,
+    now: params.now,
+  });
+  if (!normalized || !isTargetlessUntilDoneReply(params.text)) return false;
+  const items = (await listManageableItems(owner.id, 8)).filter(
+    (item) => item.status === "active" && !["history", "hidden"].includes(item.visibility ?? ""),
+  );
+  await replyAndRecord(
+    params.ctx,
+    [
+      "К чему добавить напоминание до конца дня?",
+      ...items.slice(0, 8).map((item, index) => `${index + 1}. ${item.title}`),
+    ].join("\n"),
+    items.length
+      ? {
+          reply_markup: entityListKeyboard(
+            items.slice(0, 8).map((item) => ({ type: "planner_item", id: item.id })),
+          ),
+        }
+      : undefined,
+  );
+  params.trace.finalAction = "until_done_target_needed";
+  params.trace.toolCallsExecuted = ["ask_until_done_target"];
+  params.trace.validationWarnings = items.length ? [] : ["no_active_items_for_until_done_target"];
+  params.trace.sessionRouting = {
+    handledBy: "until_done_target_prompt",
+    parserResult: "target_missing",
+  };
+  return true;
+}
+
+function isTargetlessUntilDoneReply(text: string) {
+  const normalized = text.toLocaleLowerCase("ru").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+  return (
+    normalized.length <= 90 &&
+    /^(?:напоминай(?:\s+мне)?\s*)?(?:сегодня\s+целый\s+день|целый\s+день|весь\s+день|до\s+конца\s+дня|пока\s+не\s+(?:сделаю|выполню|отмечу)|долби,?\s+пока\s+не\s+сделаю)/i.test(
+      normalized,
+    ) &&
+    !/\b(?:про|о|об|для|к)\s+\S{3,}/i.test(normalized)
+  );
 }
 
 async function maybePresentTargetResolution(params: {

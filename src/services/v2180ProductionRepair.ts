@@ -18,6 +18,7 @@ const STALE_SESSION_TYPES = [
   "reminder_policy_edit_session",
   "event_target_resolution",
   "reminder_target_resolution",
+  "pending_prompt_renag_session",
 ];
 
 export type V2180RepairCandidates = {
@@ -65,6 +66,7 @@ export async function applyV2180ProductionRepair(params: { userId: string; now?:
   const cancelledDuplicatePolicyIds: string[] = [];
   const inferredBeforeEventPolicyIds: string[] = [];
   const reviewRequiredPolicyIds: string[] = [];
+  const cancelledInvalidBeforeEventPolicyIds: string[] = [];
   const markedPastReviewItemIds: string[] = [];
   const clearedReminderSessionActionIds: string[] = [];
   const cancelledFakeReminderItemIds: string[] = [];
@@ -96,43 +98,40 @@ export async function applyV2180ProductionRepair(params: { userId: string; now?:
   )) {
     const item = itemsById.get(policy.itemId ?? "");
     const inferred = item ? inferBeforeEventPolicy(policy, item) : null;
-    const updated = await updateReminderPolicy({
-      userId: params.userId,
-      policyId: policy.id,
-      ...(inferred
-        ? {
-            policyType: "before_event",
-            category: "pre_event",
-            startsAt: inferred.fireAt,
-            nextFireAt: inferred.fireAt,
-            metadata: {
-              repairedBy: "admin_repair_v2180",
-              repairReason: "generic_before_event_inferred_from_fire_at",
-              repairedAt: now.toISOString(),
-              minutesBefore: inferred.minutesBefore,
-              relativeLabel: formatBeforeEventOffset(
-                inferred.minutesBefore,
-                inferred.fireAt,
-                item?.timezone || policy.timezone,
-              ),
-              reviewRequired: false,
-              reviewedAt: now.toISOString(),
-            },
-          }
-        : {
-            metadata: {
-              repairedBy: "admin_repair_v2180",
-              repairReason: "generic_before_event_needs_review",
-              repairedAt: now.toISOString(),
-              reviewRequired: true,
-              reviewReason: "before_event_offset_not_inferable",
-              reviewedAt: null,
-            },
-          }),
-    });
+    const updated = inferred
+      ? await updateReminderPolicy({
+          userId: params.userId,
+          policyId: policy.id,
+          policyType: "before_event",
+          category: "pre_event",
+          startsAt: inferred.fireAt,
+          nextFireAt: inferred.fireAt,
+          metadata: {
+            repairedBy: "admin_repair_v2180",
+            repairReason: "generic_before_event_inferred_from_fire_at",
+            repairedAt: now.toISOString(),
+            minutesBefore: inferred.minutesBefore,
+            relativeLabel: formatBeforeEventOffset(
+              inferred.minutesBefore,
+              inferred.fireAt,
+              item?.timezone || policy.timezone,
+            ),
+            reviewRequired: false,
+            reviewedAt: now.toISOString(),
+          },
+        })
+      : await cancelInvalidBeforeEventPolicy({
+          userId: params.userId,
+          policy,
+          item,
+          now,
+        });
     if (!updated) continue;
     if (inferred) inferredBeforeEventPolicyIds.push(updated.id);
-    else reviewRequiredPolicyIds.push(updated.id);
+    else {
+      reviewRequiredPolicyIds.push(updated.id);
+      cancelledInvalidBeforeEventPolicyIds.push(updated.id);
+    }
   }
 
   for (const item of items.filter((candidate) =>
@@ -189,6 +188,7 @@ export async function applyV2180ProductionRepair(params: { userId: string; now?:
     cancelledDuplicatePolicyIds,
     inferredBeforeEventPolicyIds,
     reviewRequiredPolicyIds,
+    cancelledInvalidBeforeEventPolicyIds,
     markedPastReviewItemIds,
     clearedReminderSessionActionIds,
     cancelledFakeReminderItemIds,
@@ -248,14 +248,61 @@ function duplicateBeforeEventPolicyIds(
 }
 
 function isGenericBeforeEventPolicy(policy: ReminderPolicy, item?: PlannerItem) {
-  if (!item || policy.metadata?.reviewRequired === true) return false;
+  if (!item) return false;
   if (!["event", "training", "tentative_event"].includes(item.kind)) return false;
+  if (policy.metadata?.reviewRequired === true) return true;
   if (policy.policyType === "before_event") {
     return !getBeforeEventPolicyKey(policy, item);
   }
   if (!["one_time", "custom"].includes(policy.policyType)) return false;
   if (policy.recurrenceRule || policy.intervalMinutes) return false;
+  if (
+    typeof policy.metadata?.minutesBefore === "number" ||
+    policy.metadata?.policyType === "before_event" ||
+    policy.metadata?.reminderType === "before_event" ||
+    policy.metadata?.purpose === "pre_event"
+  ) {
+    return true;
+  }
   return !getEventLinkedReminderOffsetMinutes(policy, item);
+}
+
+async function cancelInvalidBeforeEventPolicy(params: {
+  userId: string;
+  policy: ReminderPolicy;
+  item?: PlannerItem;
+  now: Date;
+}) {
+  await cancelPendingRemindersForPolicy({
+    userId: params.userId,
+    policyId: params.policy.id,
+    from: params.now,
+  });
+  if (params.item) {
+    await mergePlannerItemMetadata({
+      userId: params.userId,
+      itemId: params.item.id,
+      metadata: {
+        reminderReviewRequiredAt: params.now.toISOString(),
+        reminderReviewReason: "before_event_offset_not_inferable",
+        repairedBy: "admin_repair_v2180",
+      },
+    });
+  }
+  return updateReminderPolicy({
+    userId: params.userId,
+    policyId: params.policy.id,
+    status: "cancelled",
+    nextFireAt: null,
+    metadata: {
+      repairedBy: "admin_repair_v2180",
+      repairReason: "invalid_before_event_policy_cancelled_needs_review",
+      repairedAt: params.now.toISOString(),
+      reviewRequired: true,
+      reviewReason: "before_event_offset_not_inferable",
+      reviewedAt: null,
+    },
+  });
 }
 
 function inferBeforeEventPolicy(policy: ReminderPolicy, item: PlannerItem) {

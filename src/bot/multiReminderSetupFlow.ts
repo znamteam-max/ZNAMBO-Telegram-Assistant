@@ -1,5 +1,3 @@
-import { DateTime } from "luxon";
-
 import { recordAgentAction, updateAgentAction } from "@/db/queries/agentActions";
 import type { PlannerItem } from "@/db/schema";
 import {
@@ -267,17 +265,16 @@ export async function handleMultiReminderSetupTurn(
   return true;
 }
 
-function formatMultiReminderApplied(
+export function formatMultiReminderApplied(
   item: PlannerItem,
   reminders: Array<{ label: string; fireAtLocal: string }>,
   pastLabels: string[],
 ) {
-  const zone = item.timezone || "Europe/Moscow";
-  const lines = ["Готово:", item.title, "", "Напоминания:"];
-  for (const reminder of reminders) {
-    const fire = DateTime.fromISO(reminder.fireAtLocal, { zone });
-    lines.push(`• ${reminder.label}${fire.isValid ? ` (${fire.toFormat("dd.LL HH:mm")})` : ""}`);
-  }
+  const lines = [
+    "Готово:",
+    `• ${item.title}`,
+    `Напоминания добавлены: ${reminders.map((reminder) => reminder.label).join(", ")}.`,
+  ];
   if (pastLabels.length) {
     lines.push("", `Не добавил прошедшие: ${pastLabels.join(", ")}.`);
   }

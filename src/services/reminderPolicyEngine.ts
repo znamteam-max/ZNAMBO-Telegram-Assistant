@@ -153,6 +153,7 @@ export async function materializeNextPolicyReminder(
     type: reminderTypeForPolicy(policy),
     idempotencyKey,
     scheduledAt: deliveryAt,
+    spacingLatestAt: latestSpacingAtForPolicy(policy, scheduledAt),
     repeatUntilAck: policy.requireAck,
     recurrenceKey: policy.recurrenceRule,
     policyId: policy.id,
@@ -182,6 +183,16 @@ export async function materializeNextPolicyReminder(
     });
   }
   return reminder;
+}
+
+function latestSpacingAtForPolicy(policy: ReminderPolicy, deliveryAt: Date) {
+  if (policy.policyType !== "before_event") return null;
+  const minutesBefore =
+    typeof policy.metadata?.minutesBefore === "number"
+      ? policy.metadata.minutesBefore
+      : Number(policy.metadata?.minutesBefore ?? 0);
+  if (!Number.isFinite(minutesBefore) || minutesBefore <= 0) return deliveryAt;
+  return new Date(deliveryAt.getTime() + Math.max(1, minutesBefore - 1) * 60_000);
 }
 
 export async function advancePolicyAfterDelivery(reminderId: string, deliveredAt = new Date()) {

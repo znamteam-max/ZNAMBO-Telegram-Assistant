@@ -148,6 +148,7 @@ import {
   finishRecurringPolicyDuplicateDecision,
   getRecurringPolicyDuplicateDecisionSession,
 } from "@/services/recurringPolicyDuplicateDetection";
+import { replyStaleCallback } from "./callbackReliability";
 
 export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery("noop", async (ctx) => {
@@ -187,8 +188,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       actionId: ctx.match[2],
     });
     if (!session) {
-      await ctx.answerCallbackQuery("Устарело");
-      await ctx.reply("Это решение уже устарело. Пришли правило ещё раз.");
+      await replyStaleCallback(ctx, { reason: "recurring_duplicate_session_missing" });
       return;
     }
     if (decision === "cancel") {
@@ -237,8 +237,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     const index = Number(ctx.match[3] ?? 0);
     const active = await getEventTargetResolutionSession({ userId: owner.id, actionId });
     if (!active) {
-      await ctx.answerCallbackQuery("Устарело");
-      await ctx.reply("Выбор цели устарел. Пришли запрос ещё раз, я заново проверю похожие события.");
+      await replyStaleCallback(ctx, { reason: "event_target_resolution_session_missing" });
       return;
     }
     const { action, session } = active;
@@ -413,8 +412,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     const actionId = ctx.match[2];
     const active = await getReminderTargetResolutionSession({ userId: owner.id, actionId });
     if (!active) {
-      await ctx.answerCallbackQuery("Устарело");
-      await ctx.reply("Выбор события для напоминаний устарел. Пришли оффсеты ещё раз.");
+      await replyStaleCallback(ctx, { reason: "reminder_target_resolution_session_missing" });
       return;
     }
     const { action, session } = active;

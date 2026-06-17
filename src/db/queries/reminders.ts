@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 
 import { planPolicySnooze } from "@/domain/reminderPolicySchedule";
+import { findNextAvailableReminderSlot } from "@/services/reminderCollisionSpacing";
 
 import { getDb } from "../client";
 import {
@@ -351,6 +352,8 @@ export async function createReminderIfMissing(params: {
   type: string;
   idempotencyKey: string;
   scheduledAt: Date;
+  spacingLatestAt?: Date | null;
+  disableSpacing?: boolean;
   repeatUntilAck?: boolean;
   parentReminderId?: string | null;
   recurrenceKey?: string | null;
@@ -360,6 +363,19 @@ export async function createReminderIfMissing(params: {
   autoDeleteAfterResponse?: boolean;
   payload?: Record<string, unknown>;
 }) {
+  const spacing: {
+    scheduledAt: Date;
+    shifted: boolean;
+    shiftMinutes: number;
+    blockedReason?: string;
+  } = params.disableSpacing
+    ? { scheduledAt: params.scheduledAt, shifted: false, shiftMinutes: 0 as const }
+    : await findNextAvailableReminderSlot({
+        ownerId: params.userId,
+        desiredAt: params.scheduledAt,
+        latestAt: params.spacingLatestAt,
+      });
+  const payload = withSpacingPayload(params.payload ?? {}, params.scheduledAt, spacing);
   const [row] = await getDb()
     .insert(reminders)
     .values({
@@ -367,7 +383,7 @@ export async function createReminderIfMissing(params: {
       plannerItemId: params.plannerItemId,
       type: params.type,
       idempotencyKey: params.idempotencyKey,
-      scheduledAt: params.scheduledAt,
+      scheduledAt: spacing.scheduledAt,
       repeatUntilAck: params.repeatUntilAck ?? false,
       parentReminderId: params.parentReminderId,
       recurrenceKey: params.recurrenceKey,
@@ -375,11 +391,36 @@ export async function createReminderIfMissing(params: {
       purpose: params.purpose,
       menuType: params.menuType,
       autoDeleteAfterResponse: params.autoDeleteAfterResponse ?? true,
-      payload: params.payload ?? {},
+      payload,
     })
     .onConflictDoNothing({ target: reminders.idempotencyKey })
     .returning();
   return row ?? null;
+}
+
+function withSpacingPayload(
+  payload: Record<string, unknown>,
+  desiredAt: Date,
+  spacing: { scheduledAt: Date; shifted: boolean; shiftMinutes: number; blockedReason?: string },
+) {
+  if (!spacing.shifted && !spacing.blockedReason) return payload;
+  const metadata =
+    payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
+      ? (payload.metadata as Record<string, unknown>)
+      : {};
+  return {
+    ...payload,
+    metadata: {
+      ...metadata,
+      originalDesiredAt: desiredAt.toISOString(),
+      spacingShiftMinutes: spacing.shiftMinutes,
+      spacingReason: spacing.shifted ? "collision_avoidance" : "collision_avoidance_blocked",
+      ...(spacing.blockedReason ? { spacingBlockedReason: spacing.blockedReason } : {}),
+    },
+    originalDesiredAt: desiredAt.toISOString(),
+    spacingShiftMinutes: spacing.shiftMinutes,
+    spacingReason: spacing.shifted ? "collision_avoidance" : "collision_avoidance_blocked",
+  };
 }
 
 export async function ackReminderForToday(params: {

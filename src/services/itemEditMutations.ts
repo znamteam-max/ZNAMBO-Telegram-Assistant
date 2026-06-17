@@ -15,6 +15,7 @@ import {
   detectBeforeEventReminderMode,
   parseBeforeEventReminderSpecsForAnchor,
 } from "@/domain/beforeEventReminderParsing";
+import { normalizeUntilDoneReminder } from "@/domain/untilDoneReminderText";
 
 import { parseRussianDateTime, parseRussianTimeRange } from "./russianDateTime";
 
@@ -22,8 +23,10 @@ export type ItemEditReminderMutation =
   | {
       policyType: "nag_until_ack";
       startsAtLocal: string;
+      endsAtLocal?: string;
       intervalMinutes: number;
       activeWindowStart: string;
+      activeWindowEnd?: string;
       stopCondition: "until_done";
     }
   | {
@@ -339,22 +342,30 @@ function parseReminderMutation(params: {
   const asksReminder = /напоминай|напомни|напоминать/i.test(normalized);
   const beforeEvent = parseBeforeEventMultiReminderMutation(params);
   if (beforeEvent) return beforeEvent;
-  const hourly = /раз в час|каждый час|каждые 60\s*мин/i.test(normalized);
-  const untilDone =
-    /пока\s+(?:не\s+)?(?:сделаю|сделаем|сделано|выполню|выполнено|отмечу|подтвержу|будет готово)/i.test(
-      normalized,
-    );
-  if (!asksReminder || !hourly || !untilDone) return null;
-  const anchor =
+  const untilDone = normalizeUntilDoneReminder({
+    text: params.text,
+    timezone: params.timezone,
+    now: params.now,
+  });
+  if (!untilDone || !asksReminder) return null;
+  const startLocal =
     params.dateTimeLocal ??
-    DateTime.fromJSDate(params.item.startAt ?? params.item.dueAt ?? params.now, {
-      zone: "utc",
-    }).setZone(params.timezone);
+    DateTime.fromJSDate(untilDone.startsAt, { zone: "utc" }).setZone(params.timezone);
+  const usesEndOfDayWindow = untilDone.endOfDayExplicit && !params.dateTimeLocal;
   return {
     policyType: "nag_until_ack",
-    startsAtLocal: anchor.toISO({ suppressMilliseconds: true }) ?? "",
-    intervalMinutes: 60,
-    activeWindowStart: anchor.toFormat("HH:mm"),
+    startsAtLocal: startLocal.toISO({ suppressMilliseconds: true }) ?? "",
+    ...(usesEndOfDayWindow
+      ? {
+          endsAtLocal:
+            DateTime.fromJSDate(untilDone.endsAt, { zone: "utc" })
+              .setZone(params.timezone)
+              .toISO({ suppressMilliseconds: true }) ?? "",
+          activeWindowEnd: untilDone.windowEnd,
+        }
+      : {}),
+    intervalMinutes: untilDone.intervalMinutes,
+    activeWindowStart: startLocal.toFormat("HH:mm"),
     stopCondition: "until_done",
   };
 }
@@ -515,6 +526,9 @@ async function upsertNagUntilAckPolicy(params: {
   const startsAt = DateTime.fromISO(params.mutation.startsAtLocal, { zone: params.timezone })
     .toUTC()
     .toJSDate();
+  const endsAt = params.mutation.endsAtLocal
+    ? DateTime.fromISO(params.mutation.endsAtLocal, { zone: params.timezone }).toUTC().toJSDate()
+    : null;
   const active = (await listReminderPoliciesForItem(params.userId, params.item.id, 20)).find(
     (policy) => policy.status === "active" && policy.policyType === "nag_until_ack",
   );
@@ -522,6 +536,7 @@ async function upsertNagUntilAckPolicy(params: {
     mutationSource: "item_edit_session",
     stopCondition: params.mutation.stopCondition,
     activeWindowStart: params.mutation.activeWindowStart,
+    activeWindowEnd: params.mutation.activeWindowEnd ?? null,
     stopOnItemComplete: true,
   };
   const policy = active
@@ -532,7 +547,7 @@ async function upsertNagUntilAckPolicy(params: {
         category: params.item.category ?? "item_edit",
         policyType: "nag_until_ack",
         startsAt,
-        endsAt: null,
+        endsAt,
         nextFireAt: startsAt,
         intervalMinutes: params.mutation.intervalMinutes,
         requireAck: true,
@@ -548,6 +563,7 @@ async function upsertNagUntilAckPolicy(params: {
         policyType: "nag_until_ack",
         timezone: params.item.timezone || params.timezone,
         startsAt,
+        endsAt,
         nextFireAt: startsAt,
         intervalMinutes: params.mutation.intervalMinutes,
         requireAck: true,
