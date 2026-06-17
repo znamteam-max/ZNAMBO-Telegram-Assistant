@@ -6,7 +6,110 @@ and remaining limitations. It must never contain secrets.
 
 Last updated: 2026-06-17
 
-## Latest Deployment - V2.18.0 Event Reminder Semantics Hotfix
+## Latest Deployment - V2.19.0 Today Until-Done Task Due and Policy Audit
+
+Production commit: `2d27fc13a7038b413dd60cd20cad79d088fd2d86`
+
+This deployment completes V2.19.0 acceptance and includes a same-version production hotfix on top of
+the initial V2.19 rollout commits. The hotfix was required because protected production acceptance
+proved that a messy OpenAI proposal with two task-like actions plus an erroneous recurring reminder
+could bypass the V2.19 today-until-done normalization.
+
+Implemented:
+
+- `today + until done` / `segodnya + poka ne sdelayu` task requests are forced into one today task
+  due at local `23:59`;
+- the same requests create one `nag_until_ack` policy with 60-minute default interval,
+  `requireAck=true`, local window end `23:59`, and `onWindowEnd=move_to_overdue_or_review`;
+- messy AI proposals that split the user intent into a task plus reminder task, or propose an
+  `every_hour` recurring reminder, are collapsed into the correct one-task policy shape;
+- today-until-done tasks stay in the Today task bucket instead of Long-term, including when old data
+  has an attached until-done policy but no item due date;
+- snoozed today-until-done policies render with local snooze state and still show the 23:59 window;
+- `move to tomorrow` on a today-until-done task requires explicit confirmation;
+- `/admin_repair_v2190 preview|apply` audits and repairs policies missing next reminders and
+  today-until-done items missing due dates without changing Yandex Calendar objects;
+- production repair materialization was hardened for existing reminder conflicts;
+- release metadata and tests were updated for V2.19.0.
+
+Validation:
+
+```text
+Local validation after final hotfix:
+npm test: 63 files passed, 339/339 tests passed
+npm run lint: passed
+npx tsc --noEmit: passed
+npm run build: passed
+git diff --check: passed; only CRLF warnings from Git
+Changed-file secret scan: passed; no matches
+Database migration: not required
+
+Initial V2.19 production repair before final hotfix:
+preview found policiesMissingNextReminder 1, repairablePolicies 1
+apply materialized 1 replacement reminder safely
+post-apply preview returned policiesMissingNextReminder 0, repairablePolicies 0
+
+Final production deploy:
+GitHub push to main, Vercel auto-deploy
+/api/health: ok, appVersion 2.19.0,
+commit 2d27fc13a7038b413dd60cd20cad79d088fd2d86
+schedulerConfigured true, lastRunnerSucceeded true,
+policiesMissingNextReminder 0
+
+Protected webhook status:
+ok, URL https://znambo-telegram-assistant.vercel.app/api/telegram/webhook,
+pending updates 0
+safe warning: historical_webhook_error still visible from Telegram getWebhookInfo
+
+Protected AI health:
+ok, model gpt-4o-mini-2024-07-18,
+response id resp_0ef41a60ad16fe29006a3272eb551881928d6924db9ebb2e70,
+latency 1074 ms, structured output valid, test tool accepted
+
+V2.19 repair preview/apply/post-preview after final hotfix:
+policiesMissingNextReminder 0
+repairablePolicies 0
+expiredPolicies 0
+reviewRequiredPolicies 0
+todayUntilDoneItemsMissingDueAt 0
+calendarObjectsToChange 0
+
+Protected agent execution acceptance after final hotfix:
+input: segodnya v2190 smoke alpha, napominay kazhdyy chas poka ne sdelayu
+result: ok true, finalAction agent_execute_committed_action_plan
+created one task: dueAt 2026-06-17T20:59:00.000Z, which is 23:59 Europe/Moscow
+created one policy: nag_until_ack, intervalMinutes 60, requireAck true,
+endsAt 2026-06-17T20:59:00.000Z, onWindowEnd move_to_overdue_or_review
+test item was archived after verification
+
+Reminder smoke after final hotfix:
+created item becfcde2-cd5a-4177-9e0a-51c161bc85cb
+scheduledAt 2026-06-17T10:10:44.620Z
+delivered at 2026-06-17T10:11:08.775Z
+reminder status sent, delivery status sent, smoke item auto-archived
+cron-job.org remains the production scheduler; protected manual runner also returned ok
+```
+
+Release notification:
+
+```text
+Pending at the moment this handoff entry is committed.
+It must be sent immediately after this handoff commit reaches production, because the release gate
+checks the active production commit and handoff evidence.
+```
+
+Remaining notes:
+
+```text
+No schema migration was required for V2.19.0.
+Yandex Calendar remains best-effort and was not changed by V2.19 repair.
+The protected acceptance run intentionally found and fixed one admin agent_execute production bug.
+The failed test item was archived; the successful post-hotfix test item was also archived.
+Telegram getWebhookInfo still reports a historical 500 last_error, but the webhook URL is correct
+and pending updates are 0.
+```
+
+## Previous Deployment - V2.18.0 Event Reminder Semantics Hotfix
 
 Production commit: `4324c44720585121798aba6c64156ec2e39f287a`
 
@@ -267,9 +370,9 @@ production, pending updates are zero, and the error timestamp did not advance du
 ## Current Production
 
 ```text
-Application version: 2.18.0
+Application version: 2.19.0
 Production URL: https://znambo-telegram-assistant.vercel.app
-Validated application deployment commit: 4324c44720585121798aba6c64156ec2e39f287a
+Validated application deployment commit: 2d27fc13a7038b413dd60cd20cad79d088fd2d86
 Pipeline: Jarvis / mandatory OpenAI for natural language
 Policy engine: 2.5.3
 Interval algorithm: anchor-grid-v2
@@ -1091,6 +1194,15 @@ V2.7.0 - Reminder capture regression fix and calendar import hygiene
 V2.8.0 - Reminder policy UX, real policy snooze and Plan routing
 V2.9.0 - Deadline semantics, due-task rendering and safe production repair
 V2.10.0 - Weekly/monthly recurring execution, typed clarification and local end-of-day semantics
+V2.11.0 - Reminder setup state machine and session escape fixes
+V2.12.0 - Recurring UX cleanup, markers and monthly drafts fixes
+V2.13.0 - Command targeting, draft integrity and action log fixes
+V2.14.0 - Reminder UX, multi-reminders, completed-item controls and audit hardening
+V2.15.0 - Release notification flow and deploy completion gates
+V2.16.0 - Multi-reminder setup, event-relative reminder routing and safe repair
+V2.17.0 - Target resolution, reminder offsets and past-event review
+V2.18.0 - Event reminder semantics, today plan buttons and spacing fixes
+V2.19.0 - Today until-done task due semantics and policy audit repair
 ```
 
 ## Remaining Limitations
