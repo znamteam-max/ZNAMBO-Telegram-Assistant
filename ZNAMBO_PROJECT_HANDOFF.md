@@ -6,14 +6,15 @@ and remaining limitations. It must never contain secrets.
 
 Last updated: 2026-06-17
 
-## Current Release Candidate - V2.20.0 Plan Rendering, Daily Policy, Event Follow-up and Button Safety
+## Latest Deployment - V2.20.0 Plan Rendering, Daily Policy, Event Follow-up and Button Safety
 
-Production commit: pending until this release candidate is pushed and Vercel deploys it.
+Production code commit: `347ade29566dafa4e258dc185fb8b5a2de4f5f84`
 
-This release hardens the V2.19 planner without rewriting the planner. It focuses on the daily
-assistant UX that showed up in production: noisy plan rendering, background post-event follow-up
-noise, monthly range reminders skipping a valid current day, event reminder-only follow-ups, long
-Telegram callback payloads, daily recurring requests without time, and today task due consistency.
+This deployment hardens the V2.19 planner without rewriting it. It focuses on the daily assistant UX
+that showed up in production: noisy plan rendering, background post-event follow-up noise, monthly
+range reminders skipping a valid current day, event reminder-only follow-ups, long Telegram callback
+payloads, daily recurring requests without time, today task due consistency, and a production smoke
+fixture that could be shifted by collision spacing.
 
 Implemented:
 
@@ -25,8 +26,8 @@ Implemented:
   into one compact line;
 - monthly day-range recurring policies such as `monthly_days:15,16,17,18,19@12:00` can materialize
   the current valid day even if `nextFireAt` incorrectly points to a later date in the range;
-- the reminder reconciler now treats sent/acked/skipped occurrences as consumed and advances the
-  policy instead of recreating the same occurrence;
+- the reminder reconciler treats sent/acked/skipped occurrences as consumed and advances the policy
+  instead of recreating the same occurrence;
 - event extra reminder actions create reminder-only follow-ups and audit
   `assistant.event_followup_reminder_created` without moving the event time;
 - daily recurring requests without a time are parsed as typed recurring intents and create a
@@ -41,11 +42,14 @@ Implemented:
   and `assistant.today_task_due_normalized`;
 - `/admin_repair_v2200 preview|apply` and protected actions `v2200_repair_preview|apply` were added
   on top of the existing V2.19 repair flow. The repair is calendar-safe and reports Yandex objects
-  to change as `0`.
+  to change as `0`;
+- protected `reminder_smoke` now disables collision spacing and returns the actual reminder
+  `scheduledAt`, so release acceptance proves delivery instead of a shifted fixture.
 
-Local validation before commit:
+Validation:
 
 ```text
+Local validation:
 npm test: 64 files passed, 347/347 tests passed
 npm run lint: passed
 npm run build: passed
@@ -54,25 +58,74 @@ Callback payload spot check: deadline/event/policy payloads <= 62 bytes, item im
 Changed-file secret scan: only existing fake redaction fixtures in release-notification tests;
 no real secrets, API keys, bearer tokens, passwords, or connection strings added
 Database migration: not required
-Yandex Calendar objects changed: 0
+
+Production health:
+/api/health ok, appVersion 2.20.0
+deploymentCommit 347ade29566dafa4e258dc185fb8b5a2de4f5f84
+schedulerConfigured true, lastRunnerSucceeded true
+lastRunnerRunAt 2026-06-17T11:36:12.777Z
+policiesMissingNextReminder 0
+
+Telegram webhook:
+ok true, expected URL configured, pending updates 0
+safe warning: historical_webhook_error remains visible from Telegram getWebhookInfo
+
+AI health:
+ok true, model gpt-4o-mini-2024-07-18
+response id resp_0f64d3f0d1e45480006a32860d0118819e9514dce765009337
+latency 1192 ms, structured output valid
+
+V2.20 repair preview/apply/post-preview:
+policiesMissingNextReminder 0
+repairablePolicies 0
+monthlyDayRangeSkippedTodayPolicies 0
+missingEventFollowupReminders 0
+callbackPayloadTooLongRecords 0
+calendarObjectsToChange 0
+calendarObjectsChanged 0
+safeToApply true
+
+Dashboard snapshot:
+itemCount 7, policyCount 4
+bold numbered rows true
+repeated leading bell lines 0
+Today label true, Rule label true
+background post-event noise false
+
+Agent probes:
+daily missing-time probe called OpenAI and returned recurrenceRule daily, policyType recurring
+today task probe called OpenAI and returned dueAtLocal 2026-06-17T23:59:00
+
+Reminder smoke:
+old shifted smoke item archived safely
+new smoke item bb0f5732-11ee-4d31-9bce-9b32e8bc1f30
+scheduledAt 2026-06-17T11:35:42.008Z
+deliveredAt 2026-06-17T11:36:10.351Z
+reminderStatus sent, deliveryStatus sent, item autoArchivedAfterDelivery true
+delivery was observed after scheduler/cron-job.org runner, without manual runner fallback
 ```
 
-Production acceptance still required after deploy:
+Release notification:
 
 ```text
-/api/health must report appVersion 2.20.0 and the deployed commit
-webhook status must be ok with pending updates 0
-AI health must pass
-/admin_repair_v2200 preview and apply must be safe
-post-apply repair preview must be clean or documented
-reminder smoke must be delivered by cron-job.org
-callback smoke must show no BUTTON_DATA_INVALID
-monthly day-range and event follow-up probes must pass or be documented as safe rejection
-plan snapshot must show compact formatting and no background post-event noise
-release notification must be sent once and idempotency verified
+Sent: yes
+Telegram message id: 1079
+Sent at: 2026-06-17T11:36:43.693Z
+Idempotency: second call returned already_sent with the same Telegram message id 1079
 ```
 
-## Latest Deployment - V2.19.0 Today Until-Done Task Due and Policy Audit
+Remaining notes:
+
+```text
+No schema migration was required for V2.20.0.
+Yandex Calendar remains best-effort and was not changed by V2.20 repair.
+The monthly day-range and missing event follow-up production repair paths had 0 real production
+candidates during acceptance; behavior is covered by local tests and safe repair counters.
+Telegram getWebhookInfo still reports a historical last_error, but the webhook URL is correct,
+pending updates are 0, health is ok, and runner is fresh.
+```
+
+## Previous Deployment - V2.19.0 Today Until-Done Task Due and Policy Audit
 
 Production commit: `2d27fc13a7038b413dd60cd20cad79d088fd2d86`
 
