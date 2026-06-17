@@ -124,6 +124,30 @@ describe("V2.18.0 release encoding and reminder setup", () => {
     expect(isReminderPolicyReviewRequired(brokenPolicy, item)).toBe(true);
   });
 
+  it("renders post-event follow-up policies without broken-policy noise", () => {
+    const item = plannerItem({
+      title: "Созвон с Винлайном по ЧМ",
+      startAt: new Date("2026-06-17T12:30:00.000Z"),
+      endAt: new Date("2026-06-17T13:30:00.000Z"),
+    });
+    const policy = reminderPolicy({
+      itemId: item.id,
+      policyType: "post_event_menu",
+      category: "post_event",
+      startsAt: new Date("2026-06-17T14:00:00.000Z"),
+      nextFireAt: new Date("2026-06-17T14:00:00.000Z"),
+    });
+
+    const lines = formatItemReminderPolicyLines([policy], timezone, {
+      item,
+      now: new Date("2026-06-16T12:00:00.000Z"),
+    });
+
+    expect(lines.join("\n")).toContain("после события");
+    expect(lines.join("\n")).not.toContain("требует проверки");
+    expect(isReminderPolicyReviewRequired(policy, item)).toBe(false);
+  });
+
   it("similar_winline_cp_chm_same_time_asks_disambiguation", () => {
     const item = plannerItem({
       title: "Созвон с Винлайном по ЧМ",

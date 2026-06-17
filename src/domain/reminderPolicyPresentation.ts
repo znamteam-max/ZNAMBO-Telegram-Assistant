@@ -23,6 +23,9 @@ export function isReminderPolicyReviewRequired(policy: ReminderPolicy, item?: Pl
   if (policy.policyType === "before_event") {
     return !getBeforeEventPolicyKey(policy, item);
   }
+  if (["after_event", "post_event_menu"].includes(policy.policyType)) {
+    return !(policy.nextFireAt ?? policy.startsAt ?? item?.endAt ?? item?.startAt ?? item?.dueAt);
+  }
   if (!item || policy.itemId !== item.id) return false;
   if (!["event", "training", "tentative_event"].includes(item.kind)) return false;
   if (!["one_time", "custom"].includes(policy.policyType)) return false;
@@ -55,8 +58,12 @@ export function formatHumanReminderPolicy(
     policy.policyType === "before_event"
       ? formatBeforeEventPolicy(policy, timezone, options?.item)
       : null;
+  const postEvent = ["after_event", "post_event_menu"].includes(policy.policyType)
+    ? formatPostEventPolicy(policy, timezone, options?.item)
+    : null;
   const parts = [
-    beforeEvent ||
+    postEvent ||
+      beforeEvent ||
       concreteOneTime ||
       [recurrence, interval].filter(Boolean).join(", ") ||
       (policy.policyType === "before_event"
@@ -235,6 +242,16 @@ function formatBeforeEventPolicy(policy: ReminderPolicy, timezone: string, item?
     }
   }
   return null;
+}
+
+function formatPostEventPolicy(policy: ReminderPolicy, timezone: string, item?: PlannerItem) {
+  const fireAt = policy.nextFireAt ?? policy.startsAt ?? item?.endAt ?? item?.startAt ?? item?.dueAt;
+  const zone = item?.timezone || policy.timezone || timezone;
+  if (!fireAt) return null;
+  const clock = DateTime.fromJSDate(fireAt, { zone: "utc" }).setZone(zone).toFormat("HH:mm");
+  return policy.policyType === "post_event_menu"
+    ? `после события — спросить как прошло, ${clock}`
+    : `после события, ${clock}`;
 }
 
 function formatConcreteOneTimePolicy(
