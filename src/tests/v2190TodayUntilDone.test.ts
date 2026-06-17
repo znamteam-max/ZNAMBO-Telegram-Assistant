@@ -107,6 +107,86 @@ describe("V2.19.0 today until-done semantics", () => {
     ]);
   });
 
+  it("collapses messy AI task plus recurring-reminder proposals into one today until-done task", () => {
+    const text = "segodnya proverit bilety, napominay kazhdyy chas poka ne sdelayu";
+    const execution = normalizeAgentExecutionProposal({
+      execution: agentExecutionSchema.parse({
+        intent: "create_plan",
+        reply: null,
+        actionPlan: actionPlanSchema.parse({
+          intent: "plan",
+          summary: "proverit bilety",
+          reply: null,
+          confidence: 0.82,
+          requiresConfirmation: false,
+          actions: [
+            action({ title: "proverit bilety", dueAtLocal: null }),
+            action({ title: "napominanie o proverke biletov", dueAtLocal: null }),
+          ],
+          memoryCandidates: [],
+          clarificationQuestions: [],
+        }),
+        viewScope: null,
+        resetMode: null,
+        itemUpdates: [],
+        reminderPolicies: [
+          {
+            operation: "create_recurring_policy",
+            itemIds: [],
+            itemTitle: "napominanie o proverke biletov",
+            title: "napominanie o proverke biletov",
+            category: "task_deadline",
+            policyType: "recurring",
+            startsAtLocal: null,
+            endsAtLocal: null,
+            nextFireAtLocal: null,
+            recurrenceRule: "every_hour",
+            intervalMinutes: 60,
+            requireAck: false,
+            maxOccurrences: null,
+            minutesBefore: null,
+            windowEndInclusive: true,
+            catchUpMode: "one_immediate_then_resume",
+            onWindowEnd: "expire_silently",
+            quietHoursStart: null,
+            quietHoursEnd: null,
+            allowDuringQuietHours: false,
+          },
+        ],
+        memoryFacts: [],
+        clarificationQuestions: [],
+      }),
+      text,
+      timezone,
+      now,
+      activeContext: "none",
+    });
+
+    expect(execution.actionPlan?.actions).toHaveLength(1);
+    expect(execution.actionPlan?.actions[0]).toEqual(
+      expect.objectContaining({
+        title: "proverit bilety",
+        kind: "task",
+        dueAtLocal: "2026-06-17T23:59:00",
+        metadata: expect.objectContaining({
+          normalization: "today_until_done",
+          timeScope: "today",
+          untilDone: true,
+        }),
+      }),
+    );
+    expect(execution.reminderPolicies).toEqual([
+      expect.objectContaining({
+        policyType: "nag_until_ack",
+        intervalMinutes: 60,
+        requireAck: true,
+        recurrenceRule: null,
+        endsAtLocal: "2026-06-17T23:59:00",
+        onWindowEnd: "move_to_overdue_or_review",
+      }),
+    ]);
+  });
+
   it("supports translit trigger text", () => {
     const normalized = normalizeTodayUntilDoneTask({
       text: "napominay segodnya proverit bilety poka ne sdelayu",

@@ -516,18 +516,22 @@ function normalizeTodayUntilDoneSemantics(params: {
   timezone: string;
   now: Date;
 }): AgentExecution {
-  if ((params.execution.actionPlan?.actions.length ?? 0) > 1) return params.execution;
+  const proposedActions = params.execution.actionPlan?.actions ?? [];
   if (
     params.execution.reminderPolicies.some((policy) =>
-      ["before_event", "recurring", "long_term", "post_event_menu", "after_event"].includes(
-        policy.policyType,
-      ),
+      ["before_event", "post_event_menu", "after_event"].includes(policy.policyType),
     )
   ) {
     return params.execution;
   }
 
-  const proposed = params.execution.actionPlan?.actions[0];
+  const proposed =
+    proposedActions.find((action) => action.kind !== "recurring_task") ?? proposedActions[0];
+  const forceTextTitle =
+    proposedActions.length > 1 ||
+    params.execution.reminderPolicies.some((policy) =>
+      ["recurring", "long_term"].includes(policy.policyType),
+    );
   const policyTitle =
     params.execution.reminderPolicies.find((policy) =>
       ["interval_window", "nag_until_ack"].includes(policy.policyType),
@@ -536,7 +540,7 @@ function normalizeTodayUntilDoneSemantics(params: {
     text: params.text,
     timezone: params.timezone,
     now: params.now,
-    title: proposed?.title ?? policyTitle,
+    title: forceTextTitle ? null : (proposed?.title ?? policyTitle),
   });
   if (!normalized) return params.execution;
 
@@ -607,14 +611,7 @@ function normalizeTodayUntilDoneSemantics(params: {
       clarificationQuestions: [],
     },
     itemUpdates: [],
-    reminderPolicies: [
-      policy,
-      ...params.execution.reminderPolicies.filter(
-        (candidate) =>
-          !["interval_window", "nag_until_ack"].includes(candidate.policyType) &&
-          candidate.itemTitle !== normalized.title,
-      ),
-    ],
+    reminderPolicies: [policy],
     clarificationQuestions: [],
   };
 }
