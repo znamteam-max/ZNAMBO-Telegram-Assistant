@@ -263,6 +263,19 @@ export async function commitStoredActionPlan(params: {
           entityId: item.id,
           details: { actionPlanId: planRecord.id, sequence: index, kind: item.kind },
         });
+        if (item.metadata?.todayTaskDueNormalized === true) {
+          await tx.insert(auditLog).values({
+            userId: params.userId,
+            action: "assistant.today_task_due_normalized",
+            entityType: "planner_item",
+            entityId: item.id,
+            details: {
+              actionPlanId: planRecord.id,
+              dueAt: item.dueAt?.toISOString() ?? null,
+              sourceNormalization: item.metadata.sourceNormalization ?? null,
+            },
+          });
+        }
       }
 
       for (const [policyIndex, proposal] of reminderPolicyProposals.entries()) {

@@ -26,6 +26,18 @@ export function callbackReliabilityMiddleware(): MiddlewareFn<BotContext> {
         entityType: "telegram_callback",
         details: auditBase,
       }).catch(() => undefined);
+      if (usesShortCallbackAlias(callbackData)) {
+        await writeAudit({
+          userId: ownerId,
+          action: "assistant.callback_payload_shortened",
+          entityType: "telegram_callback",
+          details: {
+            ...auditBase,
+            callbackType: callbackData.split(":")[0] ?? callbackData,
+            byteLength: Buffer.byteLength(callbackData, "utf8"),
+          },
+        }).catch(() => undefined);
+      }
     }
 
     let answered = false;
@@ -60,7 +72,7 @@ export function callbackReliabilityMiddleware(): MiddlewareFn<BotContext> {
           details: { ...auditBase, answered },
         }).catch(() => undefined);
         await writeCallbackHandled(ownerId, ctx, callbackData, {
-          status: fallbackExpired ? "expired" : "handled",
+          status: fallbackExpired ? "stale" : "handled",
           userFacingResponse: fallbackExpired ? STALE_CALLBACK_MESSAGE : undefined,
         });
       }
@@ -157,7 +169,7 @@ async function writeCallbackHandled(
   ctx: BotContext,
   callbackData: string,
   details: {
-    status: "handled" | "expired" | "error" | "stale";
+    status: "handled" | "error" | "stale";
     userFacingResponse?: string;
     safeErrorMessage?: string;
     itemId?: string | null;
@@ -185,4 +197,8 @@ function extractUuidLikeIds(value: string) {
 
 function truncateCallbackData(value: string) {
   return value.length > 240 ? `${value.slice(0, 240)}…` : value;
+}
+
+function usesShortCallbackAlias(value: string) {
+  return /^(?:iemm|ipc|ipcab|pca|isi|r:(?:cmt|sto))(?::|$)/.test(value);
 }

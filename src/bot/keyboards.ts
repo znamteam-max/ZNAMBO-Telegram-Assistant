@@ -143,8 +143,8 @@ export function itemEditPreviewKeyboard(actionId: string) {
 
 export function multiReminderConflictKeyboard(actionId: string) {
   return new InlineKeyboard()
-    .text("Добавить ещё", `item_edit:multi_mode:add:${actionId}`)
-    .text("Заменить", `item_edit:multi_mode:replace:${actionId}`)
+    .text("Добавить ещё", `iemm:a:${actionId}`)
+    .text("Заменить", `iemm:r:${actionId}`)
     .row()
     .text("Отмена", `item_edit:cancel:${actionId}`);
 }
@@ -156,12 +156,13 @@ export function conflictKeyboard(firstItemId: string, secondItemId: string) {
     .text("Перенести первое", `manage:reschedule:${firstItemId}`)
     .text("Перенести второе", `manage:reschedule:${secondItemId}`)
     .row()
-    .text("Открыть оба", `conflict:open:${firstItemId}:${secondItemId}`);
+    .text("Открыть первое", `entity:open:planner_item:${firstItemId}`)
+    .text("Открыть второе", `entity:open:planner_item:${secondItemId}`);
 }
 
 export function repeatPolicyDeleteKeyboard(policyId: string, itemId?: string | null) {
   const keyboard = new InlineKeyboard().text("Только правило", `policy:cancel_rule:${policyId}`);
-  if (itemId) keyboard.row().text("Задачу и правило", `policy:cancel_all:${policyId}:${itemId}`);
+  if (itemId) keyboard.row().text("Задачу и правило", `pca:${policyId}`);
   return keyboard.row().text("Отмена", `policy:open:${policyId}`);
 }
 
@@ -190,10 +191,10 @@ export function itemMenuKeyboard(
   for (const [index, policy] of beforeEventPolicies.slice(0, 3).entries()) {
     keyboard
       .row()
-      .text(`Удалить напоминание ${index + 1}`, `item_policy:cancel:${itemId}:${policy.id}`);
+      .text(`Удалить напоминание ${index + 1}`, `ipc:${policy.id}`);
   }
   if (beforeEventPolicies.length > 1) {
-    keyboard.row().text("Удалить все напоминания", `item_policy:cancel_all_before:${itemId}`);
+    keyboard.row().text("Удалить все напоминания", `ipcab:${itemId}`);
   }
   return keyboard
     .row()
@@ -545,12 +546,12 @@ export function reminderPolicyCardKeyboard(policy: ReminderPolicy) {
 export function priorityEditorKeyboard(target: "item" | "policy", id: string) {
   if (target === "item") {
     return new InlineKeyboard()
-      .text("Без значка", `item:set_importance:${id}:none`)
+      .text("Без значка", `isi:n:${id}`)
       .row()
-      .text("⭐ Важно", `item:set_importance:${id}:important`)
-      .text("🔥 Очень важно", `item:set_importance:${id}:very_important`)
+      .text("⭐ Важно", `isi:i:${id}`)
+      .text("🔥 Очень важно", `isi:vi:${id}`)
       .row()
-      .text("Авто", `item:set_importance:${id}:auto`)
+      .text("Авто", `isi:a:${id}`)
       .row()
       .text("Назад", `entity:open:planner_item:${id}`);
   }

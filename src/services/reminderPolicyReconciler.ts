@@ -6,6 +6,7 @@ import {
   updateReminderPolicy,
 } from "@/db/queries/reminderPolicies";
 import { restorePolicyReminder } from "@/db/queries/reminders";
+import { writeAudit } from "@/db/queries/audit";
 import {
   computeNextPolicySlotAfterDelivery,
   resolvePolicyReconcileTarget,
@@ -44,7 +45,13 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
     }
 
     const slot = await getPolicySlotState(policy.id, target.scheduledFor);
-    if (slot?.reminder?.status === "sent") {
+    if (
+      slot?.reminder?.status === "sent" ||
+      slot?.reminder?.status === "acked" ||
+      slot?.occurrence?.status === "sent" ||
+      slot?.occurrence?.status === "acked" ||
+      slot?.occurrence?.status === "skipped"
+    ) {
       const next = computeNextPolicySlotAfterDelivery({
         policy,
         scheduledFor: slot.occurrence.scheduledFor,
@@ -99,7 +106,23 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
         catchUp: target.catchUp,
       },
     );
-    if (reminder) materialized += 1;
+    if (reminder) {
+      materialized += 1;
+      if (/^monthly_days:/i.test(policy.recurrenceRule ?? "")) {
+        await writeAudit({
+          userId: policy.userId,
+          action: "assistant.monthly_policy_materialized",
+          entityType: "reminder_policy",
+          entityId: policy.id,
+          details: {
+            scheduledFor: target.scheduledFor.toISOString(),
+            deliveryAt: target.deliveryAt.toISOString(),
+            catchUp: target.catchUp,
+            reminderId: reminder.id,
+          },
+        }).catch(() => undefined);
+      }
+    }
   }
 
   return {

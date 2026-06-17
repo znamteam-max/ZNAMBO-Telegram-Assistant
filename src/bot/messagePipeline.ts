@@ -535,6 +535,18 @@ async function blockIncompleteRecurringPoliciesWithDraft(
     };
   }
   const intents = buildRecurringPolicyDraftIntents(policies);
+  if (intents.some((intent) => intent.recurrenceKind === "daily")) {
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.daily_recurring_missing_time_draft_created",
+      entityType: "telegram_message",
+      entityId: ctx.dbMessageId,
+      details: {
+        draftActionId: action.id,
+        policyTitles: intents.map((intent) => intent.title),
+      },
+    }).catch(() => undefined);
+  }
   await replyAndRecord(
     ctx,
     [

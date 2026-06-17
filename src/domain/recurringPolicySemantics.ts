@@ -30,7 +30,7 @@ const WEEKDAY_NUMBERS: Record<string, number> = {
 export type RecurringPolicyIntent = {
   title: string;
   recurrenceRule: string;
-  recurrenceKind: "weekly" | "monthly_day_range";
+  recurrenceKind: "daily" | "weekly" | "monthly_day_range";
   weekday: string | null;
   monthDays: number[];
   timeLocal: string | null;
@@ -40,6 +40,10 @@ export type RecurringPolicyIntent = {
 };
 
 export type ParsedCanonicalRecurrence =
+  | {
+      kind: "daily";
+      timeLocal: string | null;
+    }
   | {
       kind: "weekly";
       weekday: string;
@@ -57,8 +61,10 @@ export type ParsedCanonicalRecurrence =
 
 export function parseRecurringPolicyIntents(text: string): RecurringPolicyIntent[] {
   const intents: RecurringPolicyIntent[] = [];
+  const daily = parseDailyIntent(text);
   const weekly = parseWeeklyIntent(text);
   const monthly = parseMonthlyIntent(text);
+  if (daily) intents.push(daily);
   if (weekly) intents.push(weekly);
   if (monthly) intents.push(monthly);
   return intents;
@@ -66,6 +72,13 @@ export function parseRecurringPolicyIntents(text: string): RecurringPolicyIntent
 
 export function parseCanonicalRecurrenceRule(rule: string | null): ParsedCanonicalRecurrence | null {
   if (!rule) return null;
+  const daily = rule.match(/^daily(?:@(\d{2}:\d{2}))?$/i);
+  if (daily) {
+    return {
+      kind: "daily",
+      timeLocal: daily[1] ?? null,
+    };
+  }
   const weekly = rule.match(/^weekly:([A-Z]{2})(?:@(\d{2}:\d{2}))?$/i);
   if (weekly) {
     return {
@@ -88,6 +101,7 @@ export function parseCanonicalRecurrenceRule(rule: string | null): ParsedCanonic
 export function withRecurringPolicyTime(rule: string, timeLocal: string) {
   const parsed = parseCanonicalRecurrenceRule(rule);
   if (!parsed || parsed.kind === "legacy") return rule;
+  if (parsed.kind === "daily") return `daily@${timeLocal}`;
   if (parsed.kind === "weekly") return `weekly:${parsed.weekday}@${timeLocal}`;
   return `monthly_days:${parsed.monthDays.join(",")}@${timeLocal}`;
 }
@@ -112,6 +126,12 @@ export function nextRecurringOccurrence(params: {
   if (!parsed.timeLocal) return null;
   const afterLocal = DateTime.fromJSDate(params.after, { zone: "utc" }).setZone(params.timezone);
   const [hour, minute] = parsed.timeLocal.split(":").map(Number);
+
+  if (parsed.kind === "daily") {
+    let candidate = afterLocal.startOf("day").set({ hour, minute, second: 0, millisecond: 0 });
+    if (candidate <= afterLocal) candidate = candidate.plus({ days: 1 });
+    return candidate.toUTC().toJSDate();
+  }
 
   if (parsed.kind === "weekly") {
     const targetWeekday = WEEKDAY_NUMBERS[parsed.weekday];
@@ -143,6 +163,9 @@ export function nextRecurringOccurrence(params: {
 export function formatRecurringRuleHuman(rule: string | null) {
   const parsed = parseCanonicalRecurrenceRule(rule);
   if (!parsed || parsed.kind === "legacy") return null;
+  if (parsed.kind === "daily") {
+    return parsed.timeLocal ? `каждый день в ${parsed.timeLocal}` : "каждый день";
+  }
   if (parsed.kind === "weekly") {
     const weekday = {
       MO: "по понедельникам",
@@ -181,7 +204,9 @@ export function formatRecurringClarification(intents: RecurringPolicyIntent[]) {
       ? "В какое время напоминать?"
       : intents[0]?.recurrenceKind === "weekly"
         ? "В какое время по этому дню недели напоминать?"
-        : "В какое время напоминать в эти дни?",
+        : intents[0]?.recurrenceKind === "daily"
+          ? "Во сколько каждый день напоминать?"
+          : "В какое время напоминать в эти дни?",
   );
   return lines.join("\n");
 }
@@ -233,6 +258,29 @@ function parseWeeklyIntent(text: string): RecurringPolicyIntent | null {
     recurrenceRule: `weekly:${weekday}${timeLocal ? `@${timeLocal}` : ""}`,
     recurrenceKind: "weekly",
     weekday,
+    monthDays: [],
+    timeLocal,
+    requireAck: Boolean(stop),
+    ackAliases: stop?.ackAliases ?? [],
+    missingFields: [
+      ...(title ? [] : (["title"] as const)),
+      ...(timeLocal ? [] : (["reminderTime"] as const)),
+    ],
+  };
+}
+
+function parseDailyIntent(text: string): RecurringPolicyIntent | null {
+  const match = text.match(/(?:кажд(?:ый|ое)\s+день|ежедневно|каждое\s+утро)/i);
+  if (!match) return null;
+  const source = text.slice(match.index ?? 0);
+  const title = extractActionTitle(source, "mirror");
+  const timeLocal = extractReminderTime(source);
+  const stop = parseStopCondition(source);
+  return {
+    title: title ?? "Повторяющееся напоминание",
+    recurrenceRule: `daily${timeLocal ? `@${timeLocal}` : ""}`,
+    recurrenceKind: "daily",
+    weekday: null,
     monthDays: [],
     timeLocal,
     requireAck: Boolean(stop),

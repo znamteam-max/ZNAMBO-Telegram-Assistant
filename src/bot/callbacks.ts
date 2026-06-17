@@ -48,6 +48,7 @@ import { cancelActivePlanReset, executeActivePlanReset } from "@/services/active
 import { UserFacingError } from "@/lib/errors";
 import {
   createReminderPolicyIfMissing,
+  getReminderPolicyById,
   getPolicyForReminder,
   stopPoliciesForItem,
   updatePoliciesPriorityForItem,
@@ -908,6 +909,10 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await chooseMultiReminderMode(ctx, ctx.match[2], ctx.match[1] as "add" | "replace");
   });
 
+  bot.callbackQuery(/^iemm:([ar]):(.+)$/, async (ctx) => {
+    await chooseMultiReminderMode(ctx, ctx.match[2], ctx.match[1] === "a" ? "add" : "replace");
+  });
+
   bot.callbackQuery(/^item_edit:cancel:(.+)$/, async (ctx) => {
     await cancelItemEditPreview(ctx, ctx.match[1]);
   });
@@ -1010,6 +1015,22 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     if (item) await stopPoliciesForItem(owner.id, item.id);
     await ctx.answerCallbackQuery(policy || item ? "Удалено" : "Не найдено");
     await refreshAfterCallback(ctx, item?.id);
+  });
+
+  bot.callbackQuery(/^pca:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const sourcePolicy = await getReminderPolicyById(ctx.match[1]);
+    const itemId = sourcePolicy?.userId === owner.id ? sourcePolicy.itemId : null;
+    const policy = await editReminderPolicy({
+      userId: owner.id,
+      policyId: ctx.match[1],
+      status: "cancelled",
+    });
+    const item = itemId ? await cancelPlannerItem(owner.id, itemId) : null;
+    if (item) await cancelItemReminders(owner.id, item.id);
+    if (item) await stopPoliciesForItem(owner.id, item.id);
+    await ctx.answerCallbackQuery(policy || item ? "Удалено" : "Не найдено");
+    await refreshAfterCallback(ctx, item?.id ?? itemId);
   });
 
   bot.callbackQuery("tasks:open", async (ctx) => {
@@ -1335,11 +1356,11 @@ export function registerCallbacks(bot: Bot<BotContext>) {
                 [
                   {
                     text: "Перенести задачу",
-                    callback_data: `reminder:confirm_move_tomorrow:${reminderId}`,
+                    callback_data: `r:cmt:${reminderId}`,
                   },
                   {
                     text: "Только напоминание",
-                    callback_data: `reminder:snooze_tomorrow_only:${reminderId}`,
+                    callback_data: `r:sto:${reminderId}`,
                   },
                 ],
                 [{ text: "Отмена", callback_data: "dashboard:refresh" }],
@@ -1439,7 +1460,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await refreshAfterCallback(ctx);
   });
 
-  bot.callbackQuery(/^reminder:confirm_move_tomorrow:(.+)$/, async (ctx) => {
+  bot.callbackQuery(/^(?:reminder:confirm_move_tomorrow|r:cmt):(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const reminderId = ctx.match[1];
     const row = await getPolicyForReminder(reminderId);
@@ -1498,7 +1519,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await refreshAfterCallback(ctx);
   });
 
-  bot.callbackQuery(/^reminder:snooze_tomorrow_only:(.+)$/, async (ctx) => {
+  bot.callbackQuery(/^(?:reminder:snooze_tomorrow_only|r:sto):(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const reminderId = ctx.match[1];
     const row = await getPolicyForReminder(reminderId);
@@ -2139,6 +2160,37 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await refreshAfterCallback(ctx, itemId);
   });
 
+  bot.callbackQuery(/^ipc:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const sourcePolicy = await getReminderPolicyById(ctx.match[1]);
+    const itemId = sourcePolicy?.userId === owner.id ? sourcePolicy.itemId : null;
+    const current =
+      sourcePolicy &&
+      sourcePolicy.userId === owner.id &&
+      sourcePolicy.status === "active" &&
+      sourcePolicy.policyType === "before_event"
+        ? sourcePolicy
+        : null;
+    const policy = current
+      ? await updateReminderPolicy({
+          userId: owner.id,
+          policyId: current.id,
+          status: "cancelled",
+          nextFireAt: null,
+          metadata: {
+            cancelledFromItemCardAt: new Date().toISOString(),
+            cancelReason: "individual_before_event_reminder_removed",
+            callbackAlias: "ipc",
+          },
+        })
+      : null;
+    if (policy) {
+      await cancelPendingRemindersForPolicy({ userId: owner.id, policyId: policy.id });
+    }
+    await ctx.answerCallbackQuery(policy ? "Напоминание удалено" : "Не найдено");
+    await refreshAfterCallback(ctx, itemId);
+  });
+
   bot.callbackQuery(/^item_policy:cancel_all_before:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const itemId = ctx.match[1];
@@ -2155,6 +2207,30 @@ export function registerCallbacks(bot: Bot<BotContext>) {
         metadata: {
           cancelledFromItemCardAt: new Date().toISOString(),
           cancelReason: "all_before_event_reminders_removed",
+        },
+      });
+    }
+    await ctx.answerCallbackQuery(`Удалено: ${policies.length}`);
+    await refreshAfterCallback(ctx, itemId);
+  });
+
+  bot.callbackQuery(/^ipcab:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const itemId = ctx.match[1];
+    const policies = (await listReminderPoliciesForItem(owner.id, itemId, 100)).filter(
+      (policy) => policy.status === "active" && policy.policyType === "before_event",
+    );
+    for (const policy of policies) {
+      await cancelPendingRemindersForPolicy({ userId: owner.id, policyId: policy.id });
+      await updateReminderPolicy({
+        userId: owner.id,
+        policyId: policy.id,
+        status: "cancelled",
+        nextFireAt: null,
+        metadata: {
+          cancelledFromItemCardAt: new Date().toISOString(),
+          cancelReason: "all_before_event_reminders_removed",
+          callbackAlias: "ipcab",
         },
       });
     }
@@ -2255,6 +2331,31 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       await refreshAfterCallback(ctx, updated?.id);
     },
   );
+
+  bot.callbackQuery(/^isi:(n|i|vi|a):(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const modeMap = {
+      n: "none",
+      i: "important",
+      vi: "very_important",
+      a: "auto",
+    } as const;
+    const mode = modeMap[ctx.match[1] as keyof typeof modeMap];
+    const priority = mode === "very_important" ? 5 : mode === "important" ? 4 : 3;
+    const updated = await updatePlannerItemDetails({
+      userId: owner.id,
+      itemId: ctx.match[2],
+      priority,
+      metadata: {
+        basePriority: priority,
+        importanceMode: mode === "important" || mode === "very_important" ? "manual" : mode,
+      },
+    });
+    await ctx.answerCallbackQuery(updated ? "Важность обновлена" : "Запись не найдена");
+    if (updated)
+      await updatePoliciesPriorityForItem({ userId: owner.id, itemId: updated.id, priority });
+    await refreshAfterCallback(ctx, updated?.id);
+  });
 
   bot.callbackQuery(/^item:more:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();

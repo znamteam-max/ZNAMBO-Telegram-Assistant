@@ -254,7 +254,7 @@ export function formatBeforeEventOffset(
       : null;
   if (minutes === 10) return "за 10 минут";
   if (minutes === 30) return "за 30 минут";
-  if (minutes === 60) return "за час";
+  if (minutes === 60) return "за 1 ч";
   if (minutes === 120) return "за 2 часа";
   if (minutes === 1440) return clock === "09:00" ? "за день в 09:00" : "за день";
   if (minutes > 24 * 60 && minutes <= 48 * 60 && clock) return `за день в ${clock}`;
@@ -344,6 +344,9 @@ function formatInterval(minutes: number) {
 function humanRecurrence(value: string | null, omitTime = false) {
   if (omitTime) {
     const parsed = parseCanonicalRecurrenceRule(value);
+    if (parsed?.kind === "daily") {
+      return formatRecurringRuleHuman("daily");
+    }
     if (parsed?.kind === "weekly") {
       return formatRecurringRuleHuman(`weekly:${parsed.weekday}`);
     }

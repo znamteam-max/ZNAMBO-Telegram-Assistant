@@ -27,6 +27,7 @@ import {
 import { shouldShowPersistentMarker } from "@/domain/persistentMarker";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
 import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
+import { writeAudit } from "@/db/queries/audit";
 
 import { getBot } from "@/bot/createBot";
 import { entityListKeyboard } from "@/bot/keyboards";
@@ -167,8 +168,16 @@ export async function renderLiveDashboard(params: {
   ].slice(0, 5);
   const conflicts = detectPlanConflicts(allItems, { now });
   const itemById = new Map(allItems.map((item) => [item.id, item]));
+  const hiddenBackgroundPolicies = timeline.policies.filter((policy) =>
+    isBackgroundPostEventPolicy(policy, itemById.get(policy.itemId ?? ""), now),
+  );
+  const actionablePostEventPolicies = timeline.policies
+    .filter((policy) => isActionablePostEventPolicy(policy, now))
+    .slice(0, 5);
   const displayPolicies = timeline.policies.filter(
-    (policy) => policy.metadata?.hiddenFromDashboard !== true,
+    (policy) =>
+      policy.metadata?.hiddenFromDashboard !== true &&
+      !isBackgroundPostEventPolicy(policy, itemById.get(policy.itemId ?? ""), now),
   );
   const reviewRequiredPolicies = displayPolicies
     .filter((policy) => isReminderPolicyReviewRequired(policy, itemById.get(policy.itemId ?? "")))
@@ -191,7 +200,7 @@ export async function renderLiveDashboard(params: {
   let displayIndex = 1;
   const pushRows = (rows: Array<{ text: string; ref: EntityRef; item?: PlannerItem }>) => {
     for (const row of rows) {
-      lines.push(`${displayIndex}. ${row.text}`);
+      lines.push(formatNumberedDashboardRow(displayIndex, row.text));
       refs.push(row.ref);
       if (row.item) orderedItems.push(row.item);
       displayIndex += 1;
@@ -245,6 +254,14 @@ export async function renderLiveDashboard(params: {
       ),
     );
   }
+  if (actionablePostEventPolicies.length) {
+    lines.push("", "Требует ответа:");
+    pushRows(
+      actionablePostEventPolicies.map((policy) =>
+        postEventActionRow(policy, itemById.get(policy.itemId ?? ""), params.timezone),
+      ),
+    );
+  }
   if (tomorrowItems.length) {
     lines.push("", "Завтра:");
     pushRows(itemRowsFor(tomorrowItems, true));
@@ -295,6 +312,31 @@ export async function renderLiveDashboard(params: {
     items: orderedItems,
     metadata: { source: "live_dashboard", conflictCount: conflicts.length },
   });
+
+  await Promise.resolve(writeAudit({
+    userId: params.userId,
+    action: "assistant.plan_rendered",
+    entityType: "dashboard",
+    details: {
+      sectionCounts: {
+        current: currentItems.length,
+        todayEvents: todayEventItems.length,
+        todayTasks: todayTaskItems.length,
+        unattachedPolicies: unattachedPolicies.length,
+        actionablePostEventPolicies: actionablePostEventPolicies.length,
+        reviewRequiredPolicies: reviewRequiredPolicies.length,
+        tomorrow: tomorrowItems.length,
+        soon: soonItems.length,
+        important: importantItems.length,
+        longTerm: longTermItems.length,
+        overdue: overdueItems.length,
+        pastReview: pastReviewItems.length,
+        unresolved: unresolvedItems.length,
+      },
+      hiddenBackgroundPolicies: hiddenBackgroundPolicies.length,
+      conflictCount: conflicts.length,
+    },
+  })).catch(() => undefined);
 
   return {
     text: lines.join("\n"),
@@ -381,6 +423,7 @@ export async function sendOrRefreshLiveDashboard(params: {
             previous.messageId,
             `Устарело\n\n${previous.payload.text}`,
             {
+              parse_mode: "HTML",
               reply_markup: { inline_keyboard: [] },
             },
           )
@@ -402,6 +445,7 @@ export async function sendOrRefreshLiveDashboard(params: {
 
   const rendered = await renderLiveDashboard(params);
   const sent = await api.sendMessage(params.chatId, rendered.text, {
+    parse_mode: "HTML",
     reply_markup: rendered.keyboard,
   });
   const dashboard = await createActiveDashboard({
@@ -482,14 +526,15 @@ export function formatDashboardItem(
   });
   const itemReminderLines = formatItemReminderPolicyLines(policies, timezone, { item, now });
   const relativeReminderLabels = new Set(beforeEventSummary.split(", ").filter(Boolean));
+  const reminderPrefix = isTodayScopedItem(item, timezone, now) ? "Сегодня" : "Правило";
   const reminderLines = beforeEventSummary
     ? [
-        `   🔔 ${beforeEventSummary}`,
+        `   ${reminderPrefix}: ${beforeEventSummary}`,
         ...itemReminderLines
           .filter((line) => !relativeReminderLabels.has(line))
-          .map((line) => `   🔔 ${line}`),
+          .map((line) => `   ${reminderPrefix}: ${line}`),
       ]
-    : itemReminderLines.map((line) => `   🔔 ${line}`);
+    : itemReminderLines.map((line) => `   ${reminderPrefix}: ${line}`);
   return [
     `${time ? `${time}${end ? `–${end}` : ""} · ` : ""}${important ? `${important} ` : ""}${persistent}${item.title}${calendarStatus}`,
     ...reminderLines,
@@ -528,12 +573,68 @@ function policyReviewRow(
 ): { text: string; ref: EntityRef; item?: PlannerItem } {
   return {
     text: item
-      ? `${item.title}\n   🔔 ${formatHumanReminderPolicy(policy, timezone, {
+      ? `${item.title}\n   Требует проверки: ${formatHumanReminderPolicy(policy, timezone, {
           includeNext: true,
           includeMarker: false,
           item,
         })}`
       : formatPolicy(policy, timezone),
+    ref: item ? { type: "planner_item", id: item.id } : { type: "reminder_policy", id: policy.id },
+    item,
+  };
+}
+
+function formatNumberedDashboardRow(index: number, text: string) {
+  return `<b>${index}</b> \u00b7 ${escapeTelegramHtml(text)}`;
+}
+
+function escapeTelegramHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function isTodayScopedItem(item: PlannerItem, timezone: string, now: Date) {
+  const zone = item.timezone || timezone;
+  const today = DateTime.fromJSDate(now, { zone: "utc" }).setZone(zone);
+  const anchor = item.startAt ?? item.dueAt ?? null;
+  if (!anchor) return false;
+  return DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(zone).hasSame(today, "day");
+}
+
+function isPostEventPolicy(policy: ReminderPolicy) {
+  return ["after_event", "post_event_menu"].includes(policy.policyType);
+}
+
+function isActionablePostEventPolicy(policy: ReminderPolicy, now: Date) {
+  if (!isPostEventPolicy(policy)) return false;
+  const fireAt = policy.nextFireAt ?? policy.startsAt ?? null;
+  return Boolean(fireAt && fireAt <= now && policy.status === "active");
+}
+
+function isBackgroundPostEventPolicy(
+  policy: ReminderPolicy,
+  item: PlannerItem | undefined,
+  now: Date,
+) {
+  if (!isPostEventPolicy(policy)) return false;
+  if (isActionablePostEventPolicy(policy, now)) return false;
+  return Boolean(item || policy.nextFireAt || policy.startsAt);
+}
+
+function postEventActionRow(
+  policy: ReminderPolicy,
+  item: PlannerItem | undefined,
+  timezone: string,
+): { text: string; ref: EntityRef; item?: PlannerItem } {
+  const target = item?.title ?? policy.title;
+  return {
+    text: `${target}\n   ${formatHumanReminderPolicy(policy, timezone, {
+      includeNext: true,
+      includeMarker: false,
+      item,
+    })}`,
     ref: item ? { type: "planner_item", id: item.id } : { type: "reminder_policy", id: policy.id },
     item,
   };

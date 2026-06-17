@@ -179,9 +179,9 @@ describe("V2.12.0 recurring UX cleanup", () => {
       now,
     );
     expect(text).toContain("❗ Решить вопрос с зеркалом для машины");
-    expect(text).toContain("🔔 по понедельникам, каждый час, с 08:00 до 20:00");
+    expect(text).toContain("Правило: по понедельникам, каждый час, с 08:00 до 20:00");
     expect(text).not.toContain("без времени");
-    expect(text).not.toContain("🔔 ❗");
+    expect(text).not.toContain("🔔");
   });
 
   it("lets item metadata hide or force the persistent marker", () => {

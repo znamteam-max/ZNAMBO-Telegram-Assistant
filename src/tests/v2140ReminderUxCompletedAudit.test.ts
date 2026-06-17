@@ -171,7 +171,7 @@ describe("V2.14.0 reminder UX, completed and audit hardening", () => {
       ],
       now,
     );
-    expect(text).toContain("🔔 за день в 09:00, за 2 часа, за 30 минут");
+    expect(text).toContain("Правило: за день в 09:00, за 2 часа, за 30 минут");
     expect(text).not.toContain("до события");
   });
 
@@ -230,9 +230,9 @@ describe("V2.14.0 reminder UX, completed and audit hardening", () => {
     );
     expect(buttons.map((button) => button.callback_data)).toEqual(
       expect.arrayContaining([
-        "item_policy:cancel:item:p1",
-        "item_policy:cancel:item:p2",
-        "item_policy:cancel_all_before:item",
+        "ipc:p1",
+        "ipc:p2",
+        "ipcab:item",
       ]),
     );
   });

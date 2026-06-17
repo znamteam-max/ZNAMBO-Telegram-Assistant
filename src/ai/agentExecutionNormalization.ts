@@ -178,7 +178,14 @@ function normalizeRecurringPolicySemantics(params: {
       risk: "low",
       requiresConfirmation: intents.length > 1,
       recurrence:
-        intent.recurrenceKind === "weekly"
+        intent.recurrenceKind === "daily"
+          ? {
+              frequency: "daily",
+              daysOfWeek: [],
+              timeLocal: intent.timeLocal,
+              repeatUntilAck: intent.requireAck,
+            }
+          : intent.recurrenceKind === "weekly"
           ? {
               frequency: "weekly",
               daysOfWeek: [intent.weekday as "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU"],
@@ -409,11 +416,19 @@ function normalizeClearReminderIntent(params: {
     );
   const clock = extractReminderClock(params.text);
   const relativeHour = /через\s+час/i.test(params.text);
-  if (!nagUntilAck && !clock && !relativeHour && !/сегодня/i.test(params.text)) {
+  const todayWithoutSpecificTime =
+    !nagUntilAck && !clock && !relativeHour && /сегодня/i.test(params.text);
+  if (!nagUntilAck && !clock && !relativeHour && !todayWithoutSpecificTime) {
     return params.execution;
   }
 
   const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
+  const endOfTodayLocal = nowLocal.set({
+    hour: 23,
+    minute: 59,
+    second: 0,
+    millisecond: 0,
+  });
   const fireAt = resolveClearReminderFireAt({
     text: params.text,
     nowLocal,
@@ -432,14 +447,14 @@ function normalizeClearReminderIntent(params: {
     timezone: proposed?.timezone || params.timezone,
     startAtLocal: null,
     endAtLocal: null,
-    dueAtLocal: nagUntilAck
-      ? nowLocal.endOf("day").toFormat("yyyy-MM-dd'T'HH:mm:ss")
+    dueAtLocal: nagUntilAck || todayWithoutSpecificTime
+      ? endOfTodayLocal.toFormat("yyyy-MM-dd'T'HH:mm:ss")
       : fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
     durationMinutes: null,
     confidence: Math.max(proposed?.confidence ?? 0, 0.96),
     risk: "low",
     requiresConfirmation: false,
-    reminders: nagUntilAck
+    reminders: nagUntilAck || todayWithoutSpecificTime
       ? []
       : [
           {
@@ -452,8 +467,11 @@ function normalizeClearReminderIntent(params: {
         ],
     metadata: {
       ...(proposed?.metadata ?? {}),
-      sourceNormalization: "clear_reminder_v270",
+      sourceNormalization: todayWithoutSpecificTime ? "today_task_due_v2200" : "clear_reminder_v270",
       reminderIntentExplicit: true,
+      todayTaskDueNormalized: todayWithoutSpecificTime,
+      timeScope: todayWithoutSpecificTime ? "today" : undefined,
+      endOfDayLocal: todayWithoutSpecificTime ? "23:59" : undefined,
     },
   };
   const policy: AgentReminderPolicy | null = nagUntilAck

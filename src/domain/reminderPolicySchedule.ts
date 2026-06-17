@@ -6,6 +6,16 @@ import {
   parseCanonicalRecurrenceRule,
 } from "@/domain/recurringPolicySemantics";
 
+const WEEKDAY_NUMBERS: Record<string, number> = {
+  MO: 1,
+  TU: 2,
+  WE: 3,
+  TH: 4,
+  FR: 5,
+  SA: 6,
+  SU: 7,
+};
+
 export type ReconcileTarget = {
   scheduledFor: Date;
   deliveryAt: Date;
@@ -67,6 +77,14 @@ export function resolvePolicyReconcileTarget(
   if (isIntervalPolicy(policy)) return resolveIntervalTarget(policy, now);
 
   const configured = policy.nextFireAt;
+  const currentDue = currentCanonicalOccurrenceIfDue(policy, now);
+  if (
+    currentDue &&
+    (!configured || configured.getTime() !== currentDue.getTime()) &&
+    isInsideWindow(policy, currentDue)
+  ) {
+    return { scheduledFor: currentDue, deliveryAt: now, catchUp: currentDue < now };
+  }
   if (configured && configured > now) {
     return { scheduledFor: configured, deliveryAt: configured, catchUp: false };
   }
@@ -75,6 +93,30 @@ export function resolvePolicyReconcileTarget(
   }
   const next = nextRecurringSlot(policy, now, now);
   return next ? { scheduledFor: next, deliveryAt: next, catchUp: false } : null;
+}
+
+export function currentCanonicalOccurrenceIfDue(policy: ReminderPolicy, now: Date) {
+  if (!["recurring", "long_term"].includes(policy.policyType)) return null;
+  const parsed = parseCanonicalRecurrenceRule(policy.recurrenceRule);
+  if (!parsed || parsed.kind === "legacy" || !parsed.timeLocal) return null;
+  const timezone = policy.timezone || "Europe/Moscow";
+  const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
+  const [hour, minute] = parseClock(parsed.timeLocal, 9, 0);
+  const candidateLocal = nowLocal.startOf("day").set({
+    hour,
+    minute,
+    second: 0,
+    millisecond: 0,
+  });
+  if (candidateLocal > nowLocal) return null;
+  if (parsed.kind === "weekly") {
+    const targetWeekday = WEEKDAY_NUMBERS[parsed.weekday];
+    if (!targetWeekday || nowLocal.weekday !== targetWeekday) return null;
+  }
+  if (parsed.kind === "monthly_day_range" && !parsed.monthDays.includes(nowLocal.day)) {
+    return null;
+  }
+  return candidateLocal.toUTC().toJSDate();
 }
 
 export function computeNextPolicySlotAfterDelivery(params: {

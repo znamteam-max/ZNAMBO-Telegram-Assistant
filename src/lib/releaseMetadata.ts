@@ -1,17 +1,18 @@
 export const RELEASE_NOTES = {
-  version: "2.19.0",
-  previousVersion: "2.18.0",
-  title: "Today until-done task due date and policy audit fix",
+  version: "2.20.0",
+  previousVersion: "2.19.0",
+  title: "Plan rendering, daily policy, event follow-up and button safety fix",
   bullets: [
-    "исправил сценарий «сегодня + пока не сделаю»: задача получает дедлайн сегодня 23:59",
-    "исправил окно until-done policy: в интерфейсе показывается 23:59, а не UTC-сдвиг",
-    "закрепил today until-done задачи в разделе «Сегодня — задачи», включая snooze-состояние",
-    "добавил /admin_repair_v2190 preview|apply для аудита policiesMissingNextReminder",
+    "сделал /plan компактнее: жирные номера, короткие строки Сегодня/Правило и без повторяющихся колокольчиков",
+    "скрыл фоновые post-event follow-up policies из обычного плана, оставив их в карточке или отдельном actionable-блоке",
+    "починил daily recurring без времени: бот создаёт draft-уточнение вместо внутренней ошибки",
+    "укоротил опасные Telegram callback payloads и добавил /admin_repair_v2200 preview|apply",
   ],
   testPrompts: [
-    "Напомни мне сегодня проверить билеты на концерт Вадима Постильного. Напоминай до тех пор, пока я это не сделаю сегодня.",
     "/dashboard",
-    "/admin_repair_v2190 preview",
+    "Каждый день напоминай мне решить вопрос с ЭЦП",
+    "/dashboard",
+    "/admin_repair_v2200 preview",
   ],
 } as const;
 

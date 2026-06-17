@@ -7,6 +7,7 @@ import {
 } from "@/bot/keyboards";
 import { executeActionPlanForMessage } from "@/bot/messagePipeline";
 import { replyAndRecord } from "@/bot/reply";
+import { writeAudit } from "@/db/queries/audit";
 import {
   applyTimeToRecurringPolicyDraft,
   applyTimeToExistingRecurringPolicyDraft,
@@ -66,6 +67,18 @@ export async function presentRecurringPolicyClarification(params: {
   });
   if (!action) return false;
   const intents = buildRecurringPolicyDraftIntents(params.execution.reminderPolicies);
+  if (intents.some((intent) => intent.recurrenceKind === "daily")) {
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.daily_recurring_missing_time_draft_created",
+      entityType: "telegram_message",
+      entityId: params.ctx.dbMessageId,
+      details: {
+        draftActionId: action.id,
+        policyTitles: intents.map((intent) => intent.title),
+      },
+    }).catch(() => undefined);
+  }
   await replyAndRecord(params.ctx, [
     "deduped" in action && action.deduped === true
       ? "Уже держу этот черновик. Новую задачу не создаю."

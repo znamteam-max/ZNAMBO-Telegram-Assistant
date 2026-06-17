@@ -36,11 +36,11 @@ describe("current release notification and reminder setup", () => {
       inspection: healthyInspection(),
     });
 
-    expect(text).toContain("исправил сценарий «сегодня + пока не сделаю»");
-    expect(text).toContain("исправил окно until-done policy");
-    expect(text).toContain("закрепил today until-done задачи");
-    expect(text).toContain("добавил /admin_repair_v2190 preview|apply");
-    expect(text).toContain("обновлён до V2.19.0");
+    expect(text).toContain("сделал /plan компактнее");
+    expect(text).toContain("скрыл фоновые post-event follow-up policies");
+    expect(text).toContain("починил daily recurring без времени");
+    expect(text).toContain("укоротил опасные Telegram callback payloads");
+    expect(text).toContain("обновлён до V2.20.0");
     expect(text).not.toContain("????");
     expect(text).not.toContain("пїЅ");
     expect(hasMojibakeSignal(text)).toBe(false);
@@ -60,7 +60,7 @@ describe("current release notification and reminder setup", () => {
     );
 
     const sentText = harness.send.mock.calls[0]?.[0].text ?? "";
-    expect(sentText).toContain("исправил сценарий «сегодня + пока не сделаю»");
+    expect(sentText).toContain("сделал /plan компактнее");
     expect(sentText).not.toContain("????");
   });
 

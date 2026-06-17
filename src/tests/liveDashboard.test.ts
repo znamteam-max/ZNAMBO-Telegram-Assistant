@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   listVisibleExternalCalendarEvents: vi.fn(),
   getCalendarImportState: vi.fn(),
   reconcileActiveReminderPolicies: vi.fn(),
+  writeAudit: vi.fn(),
 }));
 
 vi.mock("@/db/queries/liveDashboards", () => ({
@@ -46,6 +47,9 @@ vi.mock("@/db/queries/externalCalendarEvents", () => ({
 }));
 vi.mock("@/services/reminderPolicyReconciler", () => ({
   reconcileActiveReminderPolicies: mocks.reconcileActiveReminderPolicies,
+}));
+vi.mock("@/db/queries/audit", () => ({
+  writeAudit: mocks.writeAudit,
 }));
 vi.mock("@/bot/createBot", () => ({
   getBot: () => ({ api: {} }),
@@ -349,5 +353,69 @@ describe("live dashboard lifecycle", () => {
     expect(result.text).toContain("Сегодня — события:");
     expect(result.text).toContain("Больше событий сегодня нет.");
     expect(result.text).not.toContain("На сегодня нет событий.");
+  });
+
+  it("hides background post-event follow-up policies from the normal plan", async () => {
+    mocks.listRecentRangeItems.mockResolvedValue([
+      {
+        id: "call-id",
+        status: "active",
+        kind: "event",
+        title: "Созвон с Винлайном по ЧМ",
+        timezone: "Europe/Moscow",
+        startAt: new Date("2026-06-17T12:30:00.000Z"),
+        endAt: new Date("2026-06-17T13:30:00.000Z"),
+        dueAt: null,
+        priority: 3,
+        visibility: "active",
+        metadata: {},
+      },
+    ]);
+    mocks.listActiveReminderPolicies.mockResolvedValue([
+      {
+        id: "before-call",
+        userId: "user-id",
+        itemId: "call-id",
+        title: "Созвон с Винлайном по ЧМ",
+        policyType: "before_event",
+        category: "pre_event",
+        status: "active",
+        timezone: "Europe/Moscow",
+        startsAt: new Date("2026-06-17T10:30:00.000Z"),
+        nextFireAt: new Date("2026-06-17T10:30:00.000Z"),
+        metadata: { minutesBefore: 120 },
+      },
+      {
+        id: "post-call",
+        userId: "user-id",
+        itemId: "call-id",
+        title: "Спросить как прошло",
+        policyType: "after_event",
+        category: "followup",
+        status: "active",
+        timezone: "Europe/Moscow",
+        startsAt: new Date("2026-06-17T13:30:00.000Z"),
+        nextFireAt: new Date("2026-06-17T13:30:00.000Z"),
+        metadata: { followupPrompt: "спросить как прошло" },
+      },
+    ]);
+
+    const result = await renderLiveDashboard({
+      userId: "user-id",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-17T08:00:00.000Z"),
+    });
+
+    expect(result.text).toContain("<b>1</b> ·");
+    expect(result.text).toContain("Сегодня: за 2 часа");
+    expect(result.text).not.toContain("Спросить как прошло");
+    expect(result.text).not.toContain("после события");
+    expect(result.policies.map((policy) => policy.id)).not.toContain("post-call");
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "assistant.plan_rendered",
+        details: expect.objectContaining({ hiddenBackgroundPolicies: 1 }),
+      }),
+    );
   });
 });

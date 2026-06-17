@@ -240,7 +240,9 @@ export function buildRecurringPolicyDraftIntents(policies: AgentReminderPolicy[]
       title: policy.title,
       recurrenceRule: policy.recurrenceRule ?? "",
       recurrenceKind:
-        parsed?.kind === "monthly_day_range"
+        parsed?.kind === "daily"
+          ? ("daily" as const)
+          : parsed?.kind === "monthly_day_range"
           ? ("monthly_day_range" as const)
           : ("weekly" as const),
       weekday: parsed?.kind === "weekly" ? parsed.weekday : null,

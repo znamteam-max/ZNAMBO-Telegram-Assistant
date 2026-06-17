@@ -6,6 +6,72 @@ and remaining limitations. It must never contain secrets.
 
 Last updated: 2026-06-17
 
+## Current Release Candidate - V2.20.0 Plan Rendering, Daily Policy, Event Follow-up and Button Safety
+
+Production commit: pending until this release candidate is pushed and Vercel deploys it.
+
+This release hardens the V2.19 planner without rewriting the planner. It focuses on the daily
+assistant UX that showed up in production: noisy plan rendering, background post-event follow-up
+noise, monthly range reminders skipping a valid current day, event reminder-only follow-ups, long
+Telegram callback payloads, daily recurring requests without time, and today task due consistency.
+
+Implemented:
+
+- `/plan` / `/dashboard` rows now use compact numbered Telegram HTML rows with bold indexes and
+  short `Today` / `Rule` reminder lines instead of repeated large bell markers;
+- background `after_event` / `post_event_menu` follow-up policies are hidden from normal plan rows
+  and only surface in a separate actionable block when due or overdue;
+- before-event reminder copy normalizes `one hour` to `1 h` and de-duplicates multiple reminders
+  into one compact line;
+- monthly day-range recurring policies such as `monthly_days:15,16,17,18,19@12:00` can materialize
+  the current valid day even if `nextFireAt` incorrectly points to a later date in the range;
+- the reminder reconciler now treats sent/acked/skipped occurrences as consumed and advances the
+  policy instead of recreating the same occurrence;
+- event extra reminder actions create reminder-only follow-ups and audit
+  `assistant.event_followup_reminder_created` without moving the event time;
+- daily recurring requests without a time are parsed as typed recurring intents and create a
+  clarification draft instead of failing or creating a bad task;
+- `today` reminder text without a specific time normalizes to a today task due at local `23:59`;
+- callback payloads for multi-reminder mode, item-policy cancel, repeat-policy cancel, tomorrow
+  snooze/confirm, and item importance now have short aliases, with old handlers kept for existing
+  cards;
+- safe audit actions added or extended: `assistant.plan_rendered`,
+  `assistant.monthly_policy_materialized`, `assistant.event_followup_reminder_created`,
+  `assistant.callback_payload_shortened`, `assistant.daily_recurring_missing_time_draft_created`,
+  and `assistant.today_task_due_normalized`;
+- `/admin_repair_v2200 preview|apply` and protected actions `v2200_repair_preview|apply` were added
+  on top of the existing V2.19 repair flow. The repair is calendar-safe and reports Yandex objects
+  to change as `0`.
+
+Local validation before commit:
+
+```text
+npm test: 64 files passed, 347/347 tests passed
+npm run lint: passed
+npm run build: passed
+git diff --check: passed; only CRLF warnings from Git
+Callback payload spot check: deadline/event/policy payloads <= 62 bytes, item importance alias 43 bytes
+Changed-file secret scan: only existing fake redaction fixtures in release-notification tests;
+no real secrets, API keys, bearer tokens, passwords, or connection strings added
+Database migration: not required
+Yandex Calendar objects changed: 0
+```
+
+Production acceptance still required after deploy:
+
+```text
+/api/health must report appVersion 2.20.0 and the deployed commit
+webhook status must be ok with pending updates 0
+AI health must pass
+/admin_repair_v2200 preview and apply must be safe
+post-apply repair preview must be clean or documented
+reminder smoke must be delivered by cron-job.org
+callback smoke must show no BUTTON_DATA_INVALID
+monthly day-range and event follow-up probes must pass or be documented as safe rejection
+plan snapshot must show compact formatting and no background post-event noise
+release notification must be sent once and idempotency verified
+```
+
 ## Latest Deployment - V2.19.0 Today Until-Done Task Due and Policy Audit
 
 Production commit: `2d27fc13a7038b413dd60cd20cad79d088fd2d86`

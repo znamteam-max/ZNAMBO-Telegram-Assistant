@@ -123,6 +123,10 @@ import {
   applyV2190ProductionRepair,
   previewV2190ProductionRepair,
 } from "@/services/v2190ProductionRepair";
+import {
+  applyV2200ProductionRepair,
+  previewV2200ProductionRepair,
+} from "@/services/v2200ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -221,6 +225,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2170 preview|apply — target resolution, reminder offsets и past-review repair",
         "/admin_repair_v2180 preview|apply — encoding/reminder setup/rendering repair",
         "/admin_repair_v2190 preview|apply - today until-done due/policy audit repair",
+        "/admin_repair_v2200 preview|apply - plan rendering, monthly policy and callback safety repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -1422,6 +1427,44 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2190 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2200", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2200ProductionRepair({ userId: owner.id, timezone: owner.timezone })
+        : await previewV2200ProductionRepair({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.20 repair applied:" : "V2.20 repair preview:",
+        `• policies missing next reminder: ${result.policiesMissingNextReminder}`,
+        `• repairable policies: ${result.repairablePolicies}`,
+        `• monthly day-range skipped today: ${result.monthlyDayRangeSkippedTodayPolicies}`,
+        `• event follow-up reminders missing: ${result.missingEventFollowupReminders}`,
+        `• callback payload too long records: ${result.callbackPayloadTooLongRecords}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• materialized policies: ${arrayLength(result, "materializedPolicyIds")}`,
+              `• materialized monthly policies: ${arrayLength(result, "materializedMonthlyPolicyIds")}`,
+              `• repaired today due items: ${arrayLength(result, "repairedTodayDueItemIds")}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2200 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {

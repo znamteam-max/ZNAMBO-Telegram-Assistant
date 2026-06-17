@@ -112,6 +112,10 @@ import {
   applyV2190ProductionRepair,
   previewV2190ProductionRepair,
 } from "@/services/v2190ProductionRepair";
+import {
+  applyV2200ProductionRepair,
+  previewV2200ProductionRepair,
+} from "@/services/v2200ProductionRepair";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { notifyProductionRelease } from "@/services/releaseNotification";
 
@@ -389,6 +393,24 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       result: await applyV2190ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2200_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV2200ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2200_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV2200ProductionRepair({
         userId: owner.id,
         timezone: owner.timezone,
       }),

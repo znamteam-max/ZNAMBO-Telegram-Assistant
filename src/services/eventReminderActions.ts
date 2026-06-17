@@ -1,4 +1,5 @@
 import { getPlannerItemById } from "@/db/queries/items";
+import { writeAudit } from "@/db/queries/audit";
 import {
   createReminderIfMissing,
   getReminderByIdForUser,
@@ -100,6 +101,20 @@ async function scheduleEventReminderOnly(params: {
       scheduledFor: params.scheduledAt.toISOString(),
     },
   });
+  if (reminder) {
+    await writeAudit({
+      userId: params.userId,
+      action: "assistant.event_followup_reminder_created",
+      entityType: "reminder",
+      entityId: reminder.id,
+      details: {
+        plannerItemId: params.item.id,
+        sourceReminderId: params.reminder.id,
+        scheduledAt: reminder.scheduledAt.toISOString(),
+        eventTimeUnchanged: true,
+      },
+    }).catch(() => undefined);
+  }
   return reminder
     ? { status: "scheduled", reminder, scheduledAt: reminder.scheduledAt }
     : { status: "no_safe_slot" };
