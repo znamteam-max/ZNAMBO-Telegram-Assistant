@@ -21,6 +21,7 @@ import { getUserById } from "@/db/queries/users";
 import { formatReminderMessage } from "@/bot/formatters";
 import {
   eventReactionKeyboard,
+  eventReminderMenuKeyboard,
   normalReminderMenuKeyboard,
   reminderActionKeyboard,
   reminderMenuKeyboard,
@@ -47,6 +48,8 @@ import type { LiveDashboardTelegramApi } from "@/telegram/liveDashboard";
 import { ensureDailySnapshot } from "@/services/dailyHistory";
 import { runDueCalendarSyncRetries } from "@/services/calendarSyncRetry";
 import { runDueYandexCalendarImports } from "@/services/yandexCalendarImport";
+import { isEventLikePlannerItem } from "@/domain/eventReminderSemantics";
+import { runDuePendingPromptRenags } from "@/services/pendingPromptRenag";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -147,7 +150,8 @@ export async function runDueReminders(params?: {
             await scheduleNextRecurringOccurrence(reminder, now);
           }
         }
-        if (!params?.sender && !compactDelivery) await refreshReminderDashboardBestEffort(reminder, now);
+        if (!params?.sender && !compactDelivery)
+          await refreshReminderDashboardBestEffort(reminder, now);
         results.sent += 1;
       } catch (error) {
         results.failed += 1;
@@ -163,6 +167,13 @@ export async function runDueReminders(params?: {
     }
 
     await scheduleTomorrowDigests(now);
+    try {
+      await runDuePendingPromptRenags({ now, sender, limit: 10 });
+    } catch (error) {
+      logger.warn("Pending prompt re-nag failed without blocking reminders", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     try {
       await runDueCalendarSyncRetries({ now, limit: 3 });
     } catch (error) {
@@ -272,7 +283,9 @@ async function sendReminder(
         ? `Тренировка «${item.title}» завершилась. Что делаем?`
         : `Событие «${item.title}» завершилось. Что делаем?`
       : formatReminderMessage(reminder, item);
-  const messageOptions = { reply_markup: buildReminderKeyboard(reminder, item) };
+  const messageOptions = {
+    reply_markup: buildReminderKeyboard(reminder, item, options?.now ?? new Date()),
+  };
   if (options?.compact) {
     const synced = await syncCompactChat({
       userId: user.id,
@@ -296,9 +309,13 @@ async function sendReminder(
 function buildReminderKeyboard(
   reminder: ClaimedReminder,
   item: Awaited<ReturnType<typeof getPlannerItemByAnyId>>,
+  now: Date,
 ) {
   if (isPostEventReminder(reminder) && item) {
     return eventReactionKeyboard(item.id, item.kind);
+  }
+  if (item && isEventLikePlannerItem(item)) {
+    return eventReminderMenuKeyboard(reminder.id, item, now);
   }
   if (reminder.policyId) {
     return reminderMenuKeyboard(reminder.id, reminder.plannerItemId);

@@ -9,6 +9,7 @@ import {
   formatRuWeekdayDateRange,
 } from "@/domain/dateTime";
 import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
+import { isEventLikePlannerItem } from "@/domain/eventReminderSemantics";
 import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
 
 const kindLabels: Record<string, string> = {
@@ -206,6 +207,13 @@ export function formatTaskManagementView(params: {
 export function formatReminderMessage(reminder: Reminder, item?: PlannerItem | null): string {
   if (!item) return "Напоминание.";
   const when = formatRuWeekdayDateRange(item.startAt ?? item.dueAt, item.endAt, item.timezone);
+  if (
+    isEventLikePlannerItem(item) &&
+    !["followup", "training_followup", "after_event"].includes(reminder.type)
+  ) {
+    const subject = item.kind === "training" ? "тренировке" : "событии";
+    return `🔔 Напоминание о ${subject}\n${item.title}\n${when}`;
+  }
   if (reminder.repeatUntilAck || item.kind === "recurring_task") {
     return `Повторяющееся напоминание: ${item.title}\n${when}\n\nНажми кнопку, чтобы я понял, что делать дальше.`;
   }

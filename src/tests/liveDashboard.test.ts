@@ -153,7 +153,7 @@ describe("live dashboard lifecycle", () => {
       now: new Date("2026-06-07T10:00:00.000Z"),
     });
 
-    const todayStart = result.text.indexOf("Сегодня:");
+    const todayStart = result.text.indexOf("Сегодня — события:");
     expect(todayStart).toBeGreaterThanOrEqual(0);
     expect(result.text.slice(todayStart)).not.toContain("Красочный забег");
     expect(result.text.slice(todayStart)).toContain("Тренировка Z2");
@@ -259,7 +259,7 @@ describe("live dashboard lifecycle", () => {
       now: new Date("2026-06-09T05:00:00.000Z"),
     });
 
-    expect(result.text).toContain("Неразобранные напоминания:");
+    expect(result.text).toContain("Сегодня — напоминания:");
     expect(result.text).toContain("Записаться к Дрик");
     expect(result.text).not.toContain("Долгосрочные правила:");
     expect(result.text).toContain("Заменить зеркало");
@@ -346,7 +346,7 @@ describe("live dashboard lifecycle", () => {
     });
 
     expect(result.text).toContain("Сейчас / идёт:");
-    expect(result.text).toContain("Сегодня позже:");
+    expect(result.text).toContain("Сегодня — события:");
     expect(result.text).toContain("Больше событий сегодня нет.");
     expect(result.text).not.toContain("На сегодня нет событий.");
   });

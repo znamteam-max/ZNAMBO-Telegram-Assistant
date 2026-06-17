@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 
 import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { entityRefCallback, type EntityRef } from "@/domain/entityRefs";
+import { validEventReminderSnoozeOptions } from "@/domain/eventReminderSemantics";
 
 export function pendingActionKeyboard(pendingActionId: string) {
   return new InlineKeyboard()
@@ -159,10 +160,7 @@ export function conflictKeyboard(firstItemId: string, secondItemId: string) {
 }
 
 export function repeatPolicyDeleteKeyboard(policyId: string, itemId?: string | null) {
-  const keyboard = new InlineKeyboard().text(
-    "Только правило",
-    `policy:cancel_rule:${policyId}`,
-  );
+  const keyboard = new InlineKeyboard().text("Только правило", `policy:cancel_rule:${policyId}`);
   if (itemId) keyboard.row().text("Задачу и правило", `policy:cancel_all:${policyId}:${itemId}`);
   return keyboard.row().text("Отмена", `policy:open:${policyId}`);
 }
@@ -195,9 +193,7 @@ export function itemMenuKeyboard(
       .text(`Удалить напоминание ${index + 1}`, `item_policy:cancel:${itemId}:${policy.id}`);
   }
   if (beforeEventPolicies.length > 1) {
-    keyboard
-      .row()
-      .text("Удалить все напоминания", `item_policy:cancel_all_before:${itemId}`);
+    keyboard.row().text("Удалить все напоминания", `item_policy:cancel_all_before:${itemId}`);
   }
   return keyboard
     .row()
@@ -370,6 +366,36 @@ export function eventReactionKeyboard(itemId: string, kind = "event") {
     .text("🔙 План", "dashboard:refresh");
 }
 
+export function eventReminderMenuKeyboard(reminderId: string, item: PlannerItem, now = new Date()) {
+  const keyboard = new InlineKeyboard()
+    .text("✅ Помню", `event_reminder:ack:${reminderId}`)
+    .text("🔔 Напомни ещё", `event_reminder:again:${reminderId}`);
+  const snoozeOptions = validEventReminderSnoozeOptions({ item, now });
+  if (snoozeOptions.length) {
+    keyboard.row();
+    for (const minutes of snoozeOptions) {
+      keyboard.text(
+        minutes === 60 ? "🕒 Через 1 час" : `🕒 Через ${minutes} мин`,
+        `event_reminder:snooze:${reminderId}:${minutes}`,
+      );
+    }
+  }
+  return keyboard
+    .row()
+    .text("✏️ Изменить событие", `manage:edit:${item.id}`)
+    .text("🔕 Больше не напоминать", `event_reminder:stop:${reminderId}`)
+    .row()
+    .text("К плану", "dashboard:refresh");
+}
+
+export function eventReminderExtraChoiceKeyboard(reminderId: string, optionsMinutes: number[]) {
+  const keyboard = new InlineKeyboard();
+  for (const minutes of optionsMinutes) {
+    keyboard.text(`Через ${minutes} мин`, `event_reminder:extra:${reminderId}:${minutes}`);
+  }
+  return keyboard.row().text("К плану", "dashboard:refresh");
+}
+
 export function reminderMenuKeyboard(reminderId: string, plannerItemId?: string | null) {
   const keyboard = new InlineKeyboard()
     .text("✅ Сделал", `reminder:ack:${reminderId}`)
@@ -508,10 +534,9 @@ export function reminderPolicyCardKeyboard(policy: ReminderPolicy) {
   } else {
     keyboard.text("Возобновить", `policy:resume:${policy.id}`);
   }
-  keyboard
-    .text("Удалить", `policy:cancel:${policy.id}`)
-    .row();
-  if (policy.itemId) keyboard.text("Связанная запись", `entity:open:planner_item:${policy.itemId}`).row();
+  keyboard.text("Удалить", `policy:cancel:${policy.id}`).row();
+  if (policy.itemId)
+    keyboard.text("Связанная запись", `entity:open:planner_item:${policy.itemId}`).row();
   const campaignGroup = String(policy.metadata?.campaignGroup ?? "");
   if (campaignGroup) keyboard.text("Кампания", `entity:open:campaign:${campaignGroup}`).row();
   return keyboard.text("Назад", "policy:list:active").text("План", "dashboard:refresh");
@@ -539,7 +564,10 @@ export function priorityEditorKeyboard(target: "item" | "policy", id: string) {
   ] as const) {
     keyboard.text(label, `${target}:set_priority:${id}:${priority}`).row();
   }
-  return keyboard.text("Назад", target === "policy" ? `policy:open:${id}` : `entity:open:planner_item:${id}`);
+  return keyboard.text(
+    "Назад",
+    target === "policy" ? `policy:open:${id}` : `entity:open:planner_item:${id}`,
+  );
 }
 
 export function campaignCardKeyboard(campaignGroup: string) {
@@ -569,7 +597,10 @@ export function campaignCompletionGuardKeyboard(itemId: string) {
 export function policyFrequencyKeyboard(policyId: string) {
   const keyboard = new InlineKeyboard();
   for (const minutes of [5, 10, 15, 20, 30, 45, 60, 120, 180, 240, 300]) {
-    keyboard.text(minutes < 60 ? `${minutes} мин` : `${minutes / 60} ч`, `policy:set_interval:${policyId}:${minutes}`);
+    keyboard.text(
+      minutes < 60 ? `${minutes} мин` : `${minutes / 60} ч`,
+      `policy:set_interval:${policyId}:${minutes}`,
+    );
     if ([15, 45, 180].includes(minutes)) keyboard.row();
   }
   return keyboard.row().text("Назад", `policy:open:${policyId}`);

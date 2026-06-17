@@ -30,6 +30,7 @@ import {
 import { deleteMemoryForUser } from "@/db/queries/memories";
 import {
   ackReminderForToday,
+  ackReminderOccurrence,
   cancelPendingRemindersForPolicy,
   cancelItemReminders,
   getReminderByIdForUser,
@@ -131,6 +132,7 @@ import {
   repeatPolicyDeleteKeyboard,
   scheduleReminderMenuKeyboard,
   undoActionKeyboard,
+  eventReminderExtraChoiceKeyboard,
 } from "./keyboards";
 import { formatCommittedPlanSummary, formatCreatedItem } from "./formatters";
 import {
@@ -149,6 +151,15 @@ import {
   getRecurringPolicyDuplicateDecisionSession,
 } from "@/services/recurringPolicyDuplicateDetection";
 import { replyStaleCallback } from "./callbackReliability";
+import {
+  scheduleManualEventReminderSnooze,
+  scheduleSmartExtraEventReminder,
+} from "@/services/eventReminderActions";
+import {
+  cancelPendingPromptRenagsForTarget,
+  recordPendingPromptRenag,
+} from "@/services/pendingPromptRenag";
+import { isEventLikePlannerItem } from "@/domain/eventReminderSemantics";
 
 export function registerCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery("noop", async (ctx) => {
@@ -326,9 +337,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       return;
     }
     const candidate = session.candidates[index];
-    const item = candidate
-      ? await itemForCandidate({ userId: owner.id, candidate })
-      : null;
+    const item = candidate ? await itemForCandidate({ userId: owner.id, candidate }) : null;
     if (!item) {
       await finishTargetResolutionAction({
         userId: owner.id,
@@ -429,9 +438,7 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     }
     const index = Number(ctx.match[3] ?? 0);
     const candidate = session.candidates[index];
-    const item = candidate
-      ? await itemForCandidate({ userId: owner.id, candidate })
-      : null;
+    const item = candidate ? await itemForCandidate({ userId: owner.id, candidate }) : null;
     const anchor = item?.startAt ?? item?.dueAt ?? null;
     if (!item || !anchor) {
       await finishTargetResolutionAction({
@@ -476,9 +483,13 @@ export function registerCallbacks(bot: Bot<BotContext>) {
       });
       await ctx.answerCallbackQuery("Готово");
       await ctx.reply(
-        ["Готово:", item.title, "", "Напоминания:", ...reminders.map((reminder) => `• ${reminder.label}`)].join(
-          "\n",
-        ),
+        [
+          "Готово:",
+          item.title,
+          "",
+          "Напоминания:",
+          ...reminders.map((reminder) => `• ${reminder.label}`),
+        ].join("\n"),
         { reply_markup: itemMenuKeyboard(item.id) },
       );
       if (ctx.chat?.id) {
@@ -1087,6 +1098,173 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     );
   });
 
+  bot.callbackQuery(/^event_reminder:ack:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const reminderId = ctx.match[1];
+    const source = await getReminderByIdForUser({ userId: owner.id, reminderId });
+    await ackReminderOccurrence({ userId: owner.id, reminderId });
+    await acknowledgePolicyReminder(reminderId);
+    await cancelPendingPromptRenagsForTarget({
+      userId: owner.id,
+      targetReminderId: reminderId,
+      targetItemId: source?.plannerItemId ?? null,
+      reason: "event_reminder_acknowledged",
+    }).catch(() => undefined);
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.event_reminder_acknowledged",
+      entityType: "reminder",
+      entityId: reminderId,
+      details: {
+        plannerItemId: source?.plannerItemId ?? null,
+        policyId: source?.policyId ?? null,
+        eventCompleted: false,
+      },
+    }).catch(() => undefined);
+    await ctx.answerCallbackQuery("Помню");
+    await refreshAfterCallback(ctx, source?.plannerItemId);
+  });
+
+  bot.callbackQuery(/^event_reminder:again:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const reminderId = ctx.match[1];
+    const source = await getReminderByIdForUser({ userId: owner.id, reminderId });
+    const result = await scheduleSmartExtraEventReminder({
+      userId: owner.id,
+      reminderId,
+      now: new Date(),
+    });
+    if (result.status === "scheduled") {
+      await cancelPendingPromptRenagsForTarget({
+        userId: owner.id,
+        targetReminderId: reminderId,
+        targetItemId: source?.plannerItemId ?? null,
+        reason: "event_extra_scheduled",
+      }).catch(() => undefined);
+      await ctx.answerCallbackQuery("Поставил");
+      await ctx.reply(
+        `Ок, ещё раз напомню ${formatRuWeekdayDateTime(result.scheduledAt, owner.timezone)}.`,
+      );
+    } else if (result.status === "needs_choice") {
+      const text = "Событие уже близко. Выбери, через сколько ещё напомнить.";
+      await ctx.answerCallbackQuery();
+      await ctx.reply(text, {
+        reply_markup: eventReminderExtraChoiceKeyboard(reminderId, result.optionsMinutes),
+      });
+      await recordPendingPromptRenag({
+        userId: owner.id,
+        promptType: "event_extra_reminder_choice",
+        text,
+        targetReminderId: reminderId,
+        targetItemId: source?.plannerItemId ?? null,
+        now: new Date(),
+      }).catch(() => undefined);
+    } else {
+      await ctx.answerCallbackQuery("Событие уже слишком близко");
+      await ctx.reply(
+        "Не ставлю автоматическое дополнительное напоминание: событие уже слишком близко или началось.",
+      );
+    }
+    await refreshAfterCallback(ctx, source?.plannerItemId);
+  });
+
+  bot.callbackQuery(/^event_reminder:extra:([^:]+):(\d+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const reminderId = ctx.match[1];
+    const minutes = Number(ctx.match[2]);
+    const source = await getReminderByIdForUser({ userId: owner.id, reminderId });
+    const result = await scheduleManualEventReminderSnooze({
+      userId: owner.id,
+      reminderId,
+      minutes,
+      now: new Date(),
+    });
+    await cancelPendingPromptRenagsForTarget({
+      userId: owner.id,
+      targetReminderId: reminderId,
+      targetItemId: source?.plannerItemId ?? null,
+      reason: "event_extra_choice_answered",
+    }).catch(() => undefined);
+    if (result.status === "scheduled") {
+      await ctx.answerCallbackQuery("Поставил");
+      await ctx.reply(
+        `Ок, напомню ${formatRuWeekdayDateTime(result.scheduledAt, owner.timezone)}.`,
+      );
+    } else {
+      await ctx.answerCallbackQuery("Уже поздно");
+      await ctx.reply("Не ставлю это напоминание: оно уже не успеет сработать до начала события.");
+    }
+    await refreshAfterCallback(ctx, source?.plannerItemId);
+  });
+
+  bot.callbackQuery(/^event_reminder:snooze:([^:]+):(\d+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const reminderId = ctx.match[1];
+    const minutes = Number(ctx.match[2]);
+    const source = await getReminderByIdForUser({ userId: owner.id, reminderId });
+    const result = await scheduleManualEventReminderSnooze({
+      userId: owner.id,
+      reminderId,
+      minutes,
+      now: new Date(),
+    });
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.event_reminder_snooze_attempt",
+      entityType: "reminder",
+      entityId: reminderId,
+      details: {
+        minutes,
+        plannerItemId: source?.plannerItemId ?? null,
+        policyId: source?.policyId ?? null,
+        status: result.status,
+        scheduledAt: result.status === "scheduled" ? result.scheduledAt.toISOString() : null,
+        eventTimeChanged: false,
+      },
+    }).catch(() => undefined);
+    if (result.status === "scheduled") {
+      await ctx.answerCallbackQuery("Отложил");
+      await ctx.reply(
+        `Ок, напомню ${formatRuWeekdayDateTime(result.scheduledAt, owner.timezone)}. Время события не менял.`,
+      );
+    } else {
+      await ctx.answerCallbackQuery("Уже поздно");
+      await ctx.reply("Не откладываю: новое напоминание попало бы после начала события.");
+    }
+    await refreshAfterCallback(ctx, source?.plannerItemId);
+  });
+
+  bot.callbackQuery(/^event_reminder:stop:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const reminderId = ctx.match[1];
+    const source = await getReminderByIdForUser({ userId: owner.id, reminderId });
+    if (source?.plannerItemId) {
+      await cancelItemReminders(owner.id, source.plannerItemId);
+      await stopPoliciesForItem(owner.id, source.plannerItemId);
+    }
+    await cancelPendingPromptRenagsForTarget({
+      userId: owner.id,
+      targetReminderId: reminderId,
+      targetItemId: source?.plannerItemId ?? null,
+      reason: "event_reminders_stopped",
+    }).catch(() => undefined);
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.event_reminders_stopped",
+      entityType: "reminder",
+      entityId: reminderId,
+      details: {
+        plannerItemId: source?.plannerItemId ?? null,
+        eventCancelled: false,
+      },
+    }).catch(() => undefined);
+    await ctx.answerCallbackQuery("Больше не напомню");
+    await ctx.reply(
+      "Ок, больше не буду напоминать об этом событии. Само событие осталось в плане.",
+    );
+    await refreshAfterCallback(ctx, source?.plannerItemId);
+  });
+
   bot.callbackQuery(/^reminder:ack:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const now = new Date();
@@ -1099,17 +1277,28 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     });
     await acknowledgePolicyReminder(ctx.match[1]);
     if (policyRow?.policy.itemId && policyRow.policy.metadata?.stopOnItemComplete === true) {
-      const item = await markPlannerItemCompleted(owner.id, policyRow.policy.itemId);
-      if (item) {
-        await cancelItemReminders(owner.id, item.id);
-        await stopPoliciesForItem(owner.id, item.id);
+      const existingItem = await getPlannerItemById(owner.id, policyRow.policy.itemId);
+      if (existingItem && isEventLikePlannerItem(existingItem)) {
         await writeAudit({
           userId: owner.id,
-          action: "assistant.planner_mutation",
+          action: "assistant.event_reminder_ack_guarded",
           entityType: "planner_item",
-          entityId: item.id,
-          details: { mutationSource: "policy_completion", operation: "complete" },
-        });
+          entityId: existingItem.id,
+          details: { mutationSource: "policy_completion", operationSkipped: "complete_event" },
+        }).catch(() => undefined);
+      } else {
+        const item = await markPlannerItemCompleted(owner.id, policyRow.policy.itemId);
+        if (item) {
+          await cancelItemReminders(owner.id, item.id);
+          await stopPoliciesForItem(owner.id, item.id);
+          await writeAudit({
+            userId: owner.id,
+            action: "assistant.planner_mutation",
+            entityType: "planner_item",
+            entityId: item.id,
+            details: { mutationSource: "policy_completion", operation: "complete" },
+          });
+        }
       }
     }
     await ctx.answerCallbackQuery("Готово");

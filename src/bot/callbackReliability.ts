@@ -29,10 +29,9 @@ export function callbackReliabilityMiddleware(): MiddlewareFn<BotContext> {
     }
 
     let answered = false;
+    let fallbackExpired = false;
     const originalAnswer = ctx.answerCallbackQuery.bind(ctx) as BotContext["answerCallbackQuery"];
-    ctx.answerCallbackQuery = (async (
-      ...args: Parameters<BotContext["answerCallbackQuery"]>
-    ) => {
+    ctx.answerCallbackQuery = (async (...args: Parameters<BotContext["answerCallbackQuery"]>) => {
       answered = true;
       return originalAnswer(...args);
     }) as BotContext["answerCallbackQuery"];
@@ -42,6 +41,7 @@ export function callbackReliabilityMiddleware(): MiddlewareFn<BotContext> {
       if (!answered) {
         await originalAnswer({ text: "Кнопка устарела", show_alert: false }).catch(() => null);
         answered = true;
+        fallbackExpired = true;
         if (ownerId) {
           await writeAudit({
             userId: ownerId,
@@ -59,6 +59,10 @@ export function callbackReliabilityMiddleware(): MiddlewareFn<BotContext> {
           entityType: "telegram_callback",
           details: { ...auditBase, answered },
         }).catch(() => undefined);
+        await writeCallbackHandled(ownerId, ctx, callbackData, {
+          status: fallbackExpired ? "expired" : "handled",
+          userFacingResponse: fallbackExpired ? STALE_CALLBACK_MESSAGE : undefined,
+        });
       }
     } catch (error) {
       const safeErrorMessage = error instanceof Error ? error.message.slice(0, 240) : String(error);
@@ -75,6 +79,12 @@ export function callbackReliabilityMiddleware(): MiddlewareFn<BotContext> {
           entityType: "telegram_callback",
           details: { ...auditBase, answered, safeErrorMessage },
         }).catch(() => undefined);
+        await writeCallbackHandled(ownerId, ctx, callbackData, {
+          status: "error",
+          safeErrorMessage,
+          userFacingResponse:
+            "Не смог обработать кнопку. Обновил карточку — выбери действие заново.",
+        });
       }
       logger.warn("Telegram callback failed safely", {
         callbackData: truncateCallbackData(callbackData),
@@ -105,6 +115,11 @@ export async function replyStaleCallback(
         itemId: options.itemId ?? null,
       },
     }).catch(() => undefined);
+    await writeCallbackHandled(ownerId, ctx, callbackData, {
+      status: "stale",
+      userFacingResponse: STALE_CALLBACK_MESSAGE,
+      itemId: options.itemId ?? null,
+    });
   }
   await ctx.reply(STALE_CALLBACK_MESSAGE).catch(() => null);
   if (ownerId && options.itemId) {
@@ -135,6 +150,37 @@ function callbackAuditDetails(ctx: BotContext, callbackData: string) {
     chatId: message?.chat.id ? String(message.chat.id) : null,
     messageId: message?.message_id ?? null,
   };
+}
+
+async function writeCallbackHandled(
+  userId: string,
+  ctx: BotContext,
+  callbackData: string,
+  details: {
+    status: "handled" | "expired" | "error" | "stale";
+    userFacingResponse?: string;
+    safeErrorMessage?: string;
+    itemId?: string | null;
+  },
+) {
+  await writeAudit({
+    userId,
+    action: "assistant.callback_handled",
+    entityType: "telegram_callback",
+    details: {
+      ...callbackAuditDetails(ctx, callbackData),
+      callbackType: callbackData.split(":")[0] ?? callbackData,
+      targetIds: extractUuidLikeIds(callbackData),
+      status: details.status,
+      userFacingResponse: details.userFacingResponse ?? null,
+      safeErrorMessage: details.safeErrorMessage ?? null,
+      itemId: details.itemId ?? null,
+    },
+  }).catch(() => undefined);
+}
+
+function extractUuidLikeIds(value: string) {
+  return value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? [];
 }
 
 function truncateCallbackData(value: string) {

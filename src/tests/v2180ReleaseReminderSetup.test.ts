@@ -12,7 +12,10 @@ import { RELEASE_NOTES } from "@/lib/releaseMetadata";
 import { parseBeforeEventReminderSpecsForAnchor } from "@/domain/beforeEventReminderParsing";
 import type { AgentAction, PlannerItem, ReleaseNotification, ReminderPolicy } from "@/db/schema";
 import { formatDashboardItem } from "@/telegram/liveDashboard";
-import { formatItemReminderPolicyLines } from "@/domain/reminderPolicyPresentation";
+import {
+  formatItemReminderPolicyLines,
+  isReminderPolicyReviewRequired,
+} from "@/domain/reminderPolicyPresentation";
 import {
   ambiguousEventCandidateForItem,
   type ProposedEvent,
@@ -88,6 +91,12 @@ describe("V2.18.0 release encoding and reminder setup", () => {
       startAt: new Date("2026-06-17T12:30:00.000Z"),
       endAt: new Date("2026-06-17T13:30:00.000Z"),
     });
+    const brokenPolicy = reminderPolicy({
+      itemId: item.id,
+      policyType: "one_time",
+      startsAt: null,
+      nextFireAt: null,
+    });
     const policies = [
       reminderPolicy({ itemId: item.id, metadata: { minutesBefore: 120 } }),
       reminderPolicy({ itemId: item.id, metadata: { minutesBefore: 120 } }),
@@ -97,12 +106,7 @@ describe("V2.18.0 release encoding and reminder setup", () => {
         startsAt: new Date("2026-06-17T12:00:00.000Z"),
         nextFireAt: new Date("2026-06-17T12:00:00.000Z"),
       }),
-      reminderPolicy({
-        itemId: item.id,
-        policyType: "one_time",
-        startsAt: null,
-        nextFireAt: null,
-      }),
+      brokenPolicy,
     ];
 
     const lines = formatItemReminderPolicyLines(policies, timezone, {
@@ -113,10 +117,11 @@ describe("V2.18.0 release encoding and reminder setup", () => {
 
     expect(lines).toContain("за 2 часа");
     expect(lines).toContain("за 30 минут");
-    expect(lines.join("\n")).toContain("требует проверки");
+    expect(lines.join("\n")).not.toContain("требует проверки");
     expect(lines.join("\n")).not.toContain("один раз");
     expect(dashboard.match(/за 2 часа/g)?.length).toBe(1);
     expect(dashboard).not.toContain("один раз");
+    expect(isReminderPolicyReviewRequired(brokenPolicy, item)).toBe(true);
   });
 
   it("similar_winline_cp_chm_same_time_asks_disambiguation", () => {

@@ -16,6 +16,20 @@ export function isPersistentReminderPolicy(policy: ReminderPolicy) {
   );
 }
 
+export function isReminderPolicyReviewRequired(policy: ReminderPolicy, item?: PlannerItem | null) {
+  if (policy.metadata?.reviewRequired === true || policy.metadata?.needsReview === true) {
+    return true;
+  }
+  if (policy.policyType === "before_event") {
+    return !getBeforeEventPolicyKey(policy, item);
+  }
+  if (!item || policy.itemId !== item.id) return false;
+  if (!["event", "training", "tentative_event"].includes(item.kind)) return false;
+  if (!["one_time", "custom"].includes(policy.policyType)) return false;
+  if (policy.recurrenceRule || policy.intervalMinutes) return false;
+  return !getEventLinkedReminderOffsetMinutes(policy, item);
+}
+
 export function formatHumanReminderPolicy(
   policy: ReminderPolicy,
   timezone: string,
@@ -164,6 +178,7 @@ export function formatItemReminderPolicyLines(
 
   for (const policy of policies) {
     if (handled.has(policy.id)) continue;
+    if (isReminderPolicyReviewRequired(policy, options.item)) continue;
     const formatted = formatHumanReminderPolicy(policy, timezone, {
       now: options.now,
       includeMarker: false,

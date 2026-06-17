@@ -21,6 +21,7 @@ import {
   formatDedupedBeforeEventPolicies,
   formatHumanReminderPolicy,
   formatItemReminderPolicyLines,
+  isReminderPolicyReviewRequired,
   isPersistentReminderPolicy,
 } from "@/domain/reminderPolicyPresentation";
 import { shouldShowPersistentMarker } from "@/domain/persistentMarker";
@@ -101,6 +102,12 @@ export async function renderLiveDashboard(params: {
     .map((row) => row.item!)
     .sort(compareDashboardItems)
     .slice(0, 8);
+  const todayEventItems = todayItems.filter((item) =>
+    ["event", "training", "tentative_event"].includes(item.kind),
+  );
+  const todayTaskItems = todayItems.filter(
+    (item) => !["event", "training", "tentative_event"].includes(item.kind),
+  );
   const tomorrowItems = itemRows
     .filter((row) => row.dateBucket === "tomorrow")
     .map((row) => row.item!)
@@ -159,15 +166,22 @@ export async function renderLiveDashboard(params: {
       .filter((item) => !pastTodayIds.has(item.id)),
   ].slice(0, 5);
   const conflicts = detectPlanConflicts(allItems, { now });
+  const itemById = new Map(allItems.map((item) => [item.id, item]));
   const displayPolicies = timeline.policies.filter(
     (policy) => policy.metadata?.hiddenFromDashboard !== true,
   );
+  const reviewRequiredPolicies = displayPolicies
+    .filter((policy) => isReminderPolicyReviewRequired(policy, itemById.get(policy.itemId ?? "")))
+    .slice(0, 8);
+  const healthyDisplayPolicies = displayPolicies.filter(
+    (policy) => !isReminderPolicyReviewRequired(policy, itemById.get(policy.itemId ?? "")),
+  );
   const policiesByItemId = new Map<string, ReminderPolicy[]>();
-  for (const policy of displayPolicies) {
+  for (const policy of healthyDisplayPolicies) {
     if (!policy.itemId) continue;
     policiesByItemId.set(policy.itemId, [...(policiesByItemId.get(policy.itemId) ?? []), policy]);
   }
-  const unattachedPolicies = displayPolicies
+  const unattachedPolicies = healthyDisplayPolicies
     .filter((policy) => !policy.itemId && policy.metadata?.needsReview !== true)
     .slice(0, 5);
 
@@ -207,11 +221,29 @@ export async function renderLiveDashboard(params: {
     lines.push("", "Сейчас / идёт:");
     pushRows(itemRowsFor(currentItems));
   }
-  lines.push("", currentItems.length ? "Сегодня позже:" : "Сегодня:");
-  if (todayItems.length) {
-    pushRows(itemRowsFor(todayItems));
+  lines.push("", "Сегодня — события:");
+  if (todayEventItems.length) {
+    pushRows(itemRowsFor(todayEventItems));
   } else {
     lines.push(currentItems.length ? "Больше событий сегодня нет." : "На сегодня нет событий.");
+  }
+  lines.push("", "Сегодня — задачи:");
+  if (todayTaskItems.length) {
+    pushRows(itemRowsFor(todayTaskItems));
+  } else {
+    lines.push("На сегодня задач нет.");
+  }
+  if (unattachedPolicies.length) {
+    lines.push("", "Сегодня — напоминания:");
+    pushRows(unattachedPolicies.map((policy) => policyRow(policy, params.timezone)));
+  }
+  if (reviewRequiredPolicies.length) {
+    lines.push("", "Требует решения:");
+    pushRows(
+      reviewRequiredPolicies.map((policy) =>
+        policyReviewRow(policy, itemById.get(policy.itemId ?? ""), params.timezone),
+      ),
+    );
   }
   if (tomorrowItems.length) {
     lines.push("", "Завтра:");
@@ -249,16 +281,12 @@ export async function renderLiveDashboard(params: {
     pushRows(itemRowsFor(unresolvedItems, true));
     lines.push(formatRuItemsRequireDecision(unresolvedItems.length));
   }
-  if (unattachedPolicies.length) {
-    lines.push("", "Неразобранные напоминания:");
-    pushRows(unattachedPolicies.map((policy) => policyRow(policy, params.timezone)));
-  }
-
   if (!orderedItems.length && allItems.length) {
     const fallback = allItems.slice(0, 8);
     lines.push("", "Открытые записи:");
     pushRows(itemRowsFor(fallback, true));
   }
+  if (refs.length) lines.push("", "Нажми номер, чтобы открыть пункт.");
 
   const viewState = await rememberTaskView({
     userId: params.userId,
@@ -490,5 +518,23 @@ function policyRow(policy: ReminderPolicy, timezone: string): { text: string; re
     ref: campaignGroup
       ? { type: "campaign", id: campaignGroup }
       : { type: "reminder_policy", id: policy.id },
+  };
+}
+
+function policyReviewRow(
+  policy: ReminderPolicy,
+  item: PlannerItem | undefined,
+  timezone: string,
+): { text: string; ref: EntityRef; item?: PlannerItem } {
+  return {
+    text: item
+      ? `${item.title}\n   🔔 ${formatHumanReminderPolicy(policy, timezone, {
+          includeNext: true,
+          includeMarker: false,
+          item,
+        })}`
+      : formatPolicy(policy, timezone),
+    ref: item ? { type: "planner_item", id: item.id } : { type: "reminder_policy", id: policy.id },
+    item,
   };
 }

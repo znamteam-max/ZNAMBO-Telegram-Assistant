@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 
 import { planPolicySnooze } from "@/domain/reminderPolicySchedule";
 import { findNextAvailableReminderSlot } from "@/services/reminderCollisionSpacing";
+import { writeAudit } from "@/db/queries/audit";
 
 import { getDb } from "../client";
 import {
@@ -19,6 +20,7 @@ export async function claimDueReminders(params: {
   now: Date;
   limit: number;
 }): Promise<ClaimedReminder[]> {
+  await spreadDueReminderCollisionsBeforeClaim(params.now);
   const nowIso = params.now.toISOString();
   const rows = await getDb().execute(sql`
     with due as (
@@ -77,10 +79,74 @@ export async function claimDueReminders(params: {
   return rows as unknown as ClaimedReminder[];
 }
 
-export async function isReminderStillDeliverable(params: {
-  reminderId: string;
-  now: Date;
-}) {
+async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
+  const nowIso = now.toISOString();
+  const rows = await getDb().execute(sql`
+    with ranked as (
+      select
+        r.id,
+        r.user_id,
+        r.planner_item_id,
+        r.policy_id,
+        r.scheduled_at as old_scheduled_at,
+        row_number() over (
+          partition by r.user_id, date_trunc('minute', r.scheduled_at)
+          order by r.scheduled_at asc, r.created_at asc, r.id asc
+        ) as rn
+      from "assistant"."reminders" r
+      where r.status = 'pending'
+        and r.scheduled_at <= ${nowIso}::timestamptz
+    )
+    update "assistant"."reminders" as r
+    set scheduled_at = ${nowIso}::timestamptz + ((ranked.rn - 1) * interval '5 minutes'),
+        updated_at = now()
+    from ranked
+    where r.id = ranked.id
+      and ranked.rn > 1
+    returning
+      r.id,
+      r.user_id as "userId",
+      r.planner_item_id as "plannerItemId",
+      r.policy_id as "policyId",
+      ranked.old_scheduled_at as "oldScheduledAt",
+      r.scheduled_at as "scheduledAt",
+      ranked.rn
+  `);
+  for (const row of rows as unknown as Array<{
+    id: string;
+    userId: string;
+    plannerItemId: string | null;
+    policyId: string | null;
+    oldScheduledAt: Date | string;
+    scheduledAt: Date | string;
+    rn: number;
+  }>) {
+    const oldScheduledAt = toDate(row.oldScheduledAt);
+    const scheduledAt = toDate(row.scheduledAt);
+    await writeAudit({
+      userId: row.userId,
+      action: "assistant.reminder_spacing_applied",
+      entityType: "reminder",
+      entityId: row.id,
+      details: {
+        phase: "runner_claim",
+        plannerItemId: row.plannerItemId,
+        policyId: row.policyId,
+        originalDesiredAt: oldScheduledAt.toISOString(),
+        scheduledAt: scheduledAt.toISOString(),
+        shifted: true,
+        shiftMinutes: Math.round((scheduledAt.getTime() - oldScheduledAt.getTime()) / 60_000),
+        collisionRank: row.rn,
+      },
+    }).catch(() => undefined);
+  }
+}
+
+function toDate(value: Date | string) {
+  return value instanceof Date ? value : new Date(value);
+}
+
+export async function isReminderStillDeliverable(params: { reminderId: string; now: Date }) {
   const nowIso = params.now.toISOString();
   const rows = await getDb().execute(sql`
     select exists (
@@ -395,6 +461,23 @@ export async function createReminderIfMissing(params: {
     })
     .onConflictDoNothing({ target: reminders.idempotencyKey })
     .returning();
+  if (row && (spacing.shifted || spacing.blockedReason)) {
+    await writeAudit({
+      userId: params.userId,
+      action: "assistant.reminder_spacing_applied",
+      entityType: "reminder",
+      entityId: row.id,
+      details: {
+        plannerItemId: params.plannerItemId ?? null,
+        policyId: params.policyId ?? null,
+        originalDesiredAt: params.scheduledAt.toISOString(),
+        scheduledAt: row.scheduledAt.toISOString(),
+        shifted: spacing.shifted,
+        shiftMinutes: spacing.shiftMinutes,
+        blockedReason: spacing.blockedReason ?? null,
+      },
+    }).catch(() => undefined);
+  }
   return row ?? null;
 }
 
@@ -453,6 +536,16 @@ export async function ackReminderForToday(params: {
   return acked ?? null;
 }
 
+export async function ackReminderOccurrence(params: { userId: string; reminderId: string }) {
+  const now = new Date();
+  const [acked] = await getDb()
+    .update(reminders)
+    .set({ status: "acked", ackedAt: now, updatedAt: now })
+    .where(and(eq(reminders.id, params.reminderId), eq(reminders.userId, params.userId)))
+    .returning();
+  return acked ?? null;
+}
+
 export async function snoozeReminder(params: {
   userId: string;
   reminderId: string;
@@ -495,10 +588,7 @@ async function snoozeItemReminder(
       .update(plannerItems)
       .set({ snoozedUntil, updatedAt: new Date() })
       .where(
-        and(
-          eq(plannerItems.id, source.plannerItemId),
-          eq(plannerItems.userId, params.userId),
-        ),
+        and(eq(plannerItems.id, source.plannerItemId), eq(plannerItems.userId, params.userId)),
       );
     await getDb()
       .update(reminders)
@@ -527,7 +617,9 @@ async function snoozeItemReminder(
     autoDeleteAfterResponse: source.autoDeleteAfterResponse,
     payload: { ...source.payload, snoozedFrom: source.id, snoozeFallbackUsed: fallbackUsed },
   });
-  return reminder ? Object.assign(reminder, { snoozeTarget: "item", snoozeFallbackUsed: fallbackUsed }) : null;
+  return reminder
+    ? Object.assign(reminder, { snoozeTarget: "item", snoozeFallbackUsed: fallbackUsed })
+    : null;
 }
 
 async function snoozePolicyReminder(params: {
@@ -566,10 +658,7 @@ async function snoozePolicyReminder(params: {
       .update(reminders)
       .set({ status: "cancelled", updatedAt: params.now })
       .where(
-        and(
-          eq(reminders.policyId, policy.id),
-          inArray(reminders.status, ["pending", "claimed"]),
-        ),
+        and(eq(reminders.policyId, policy.id), inArray(reminders.status, ["pending", "claimed"])),
       );
 
     await tx

@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { callbackReliabilityMiddleware, STALE_CALLBACK_MESSAGE } from "@/bot/callbackReliability";
+import { formatReminderMessage } from "@/bot/formatters";
+import { eventReminderMenuKeyboard } from "@/bot/keyboards";
 import { formatMultiReminderApplied } from "@/bot/multiReminderSetupFlow";
 import { chooseSpacedReminderSlot } from "@/services/reminderCollisionSpacing";
+import { planSmartExtraEventReminder } from "@/domain/eventReminderSemantics";
 import {
   formatUntilDoneReminderSummary,
   normalizeUntilDoneReminder,
 } from "@/domain/untilDoneReminderText";
 import { collectV2180ProductionRepairCandidates } from "@/services/v2180ProductionRepair";
-import type { AgentAction, PlannerItem, ReminderPolicy } from "@/db/schema";
+import type { AgentAction, PlannerItem, Reminder, ReminderPolicy } from "@/db/schema";
 
 const auditMocks = vi.hoisted(() => ({
   writeAudit: vi.fn(async () => undefined),
@@ -91,6 +94,65 @@ describe("V2.18.0 until-done, callback and spacing fixes", () => {
     expect(result.scheduledAt.toISOString()).toBe("2026-06-17T10:00:00.000Z");
     expect(result.shifted).toBe(false);
     expect(result.blockedReason).toBe("latest_at_exceeded");
+  });
+
+  it("renders event reminder buttons without task completion actions", () => {
+    const item = plannerItem({
+      startAt: new Date("2026-06-17T10:00:00.000Z"),
+      endAt: new Date("2026-06-17T11:00:00.000Z"),
+    });
+    const labels = eventReminderMenuKeyboard(
+      "11111111-1111-4111-8111-111111111112",
+      item,
+      new Date("2026-06-17T09:20:00.000Z"),
+    )
+      .inline_keyboard.flat()
+      .map((button) => button.text);
+
+    expect(labels).toContain("✅ Помню");
+    expect(labels).toContain("🔔 Напомни ещё");
+    expect(labels).toContain("🕒 Через 30 мин");
+    expect(labels).not.toContain("✅ Сделал");
+    expect(labels).not.toContain("🕒 Через 1 час");
+  });
+
+  it("formats event reminders as event-aware cards", () => {
+    const item = plannerItem({ title: "Эфир ВС" });
+    const reminder = { type: "event_before", repeatUntilAck: false } as Reminder;
+
+    const text = formatReminderMessage(reminder, item);
+
+    expect(text).toContain("🔔 Напоминание о событии");
+    expect(text).toContain("Эфир ВС");
+    expect(text).not.toContain("Напоминание: Эфир ВС");
+  });
+
+  it("plans smart extra event reminders before event start", () => {
+    const item = plannerItem({ startAt: new Date("2026-06-17T12:00:00.000Z") });
+
+    expect(
+      planSmartExtraEventReminder({
+        item,
+        now: new Date("2026-06-17T10:00:00.000Z"),
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        kind: "scheduled",
+        minutesFromNow: 60,
+      }),
+    );
+    expect(
+      planSmartExtraEventReminder({
+        item,
+        now: new Date("2026-06-17T11:15:00.000Z"),
+      }),
+    ).toEqual(expect.objectContaining({ kind: "scheduled", minutesFromNow: 20 }));
+    expect(
+      planSmartExtraEventReminder({
+        item,
+        now: new Date("2026-06-17T11:52:00.000Z"),
+      }),
+    ).toEqual(expect.objectContaining({ kind: "needs_choice" }));
   });
 
   it("callback middleware audits and visibly handles unknown callbacks", async () => {
@@ -203,10 +265,7 @@ describe("V2.18.0 until-done, callback and spacing fixes", () => {
       now: new Date("2026-06-16T12:00:00.000Z"),
     });
 
-    expect(candidates.genericBeforeEventPolicyIds).toEqual([
-      "review-required",
-      "one-time-before",
-    ]);
+    expect(candidates.genericBeforeEventPolicyIds).toEqual(["review-required", "one-time-before"]);
   });
 });
 

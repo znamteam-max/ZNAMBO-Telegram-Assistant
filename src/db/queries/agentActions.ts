@@ -141,6 +141,26 @@ export async function listPendingAgentActionsByTypes(params: {
     .limit(params.limit ?? 100);
 }
 
+export async function listDuePendingAgentActionsByType(params: {
+  actionType: string;
+  now: Date;
+  limit?: number;
+}) {
+  return getDb()
+    .select()
+    .from(agentActions)
+    .where(
+      and(
+        eq(agentActions.status, "pending"),
+        eq(agentActions.actionType, params.actionType),
+        sql`${agentActions.output}->>'nextRenagAt' is not null`,
+        sql`(${agentActions.output}->>'nextRenagAt')::timestamptz <= ${params.now.toISOString()}::timestamptz`,
+      ),
+    )
+    .orderBy(sql`(${agentActions.output}->>'nextRenagAt')::timestamptz asc`)
+    .limit(params.limit ?? 25);
+}
+
 export async function listRecentAgentActions(params: {
   userId: string;
   since?: Date | null;
