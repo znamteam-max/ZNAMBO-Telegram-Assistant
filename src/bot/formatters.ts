@@ -153,7 +153,10 @@ export function formatCommittedPlanSummary(params: {
     lines.push("", "Напоминания:");
     for (const policy of params.reminderPolicies) {
       lines.push(
-        `• ${formatHumanReminderPolicy(policy, params.timezone, { includeMarker: false })}`,
+        `• ${formatHumanReminderPolicy(policy, params.timezone, {
+          includeMarker: false,
+          includeNext: policy.metadata?.openEndedUntilDone === true,
+        })}`,
       );
     }
   }
@@ -244,6 +247,16 @@ export function formatReminderMessage(
   const timezone = item.timezone || policy?.timezone || "Europe/Moscow";
   const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
   const parsedRecurrence = parseCanonicalRecurrenceRule(policy?.recurrenceRule ?? null);
+  if (policy?.metadata?.openEndedUntilDone === true) {
+    const interval = formatOpenEndedNagInterval(policy.intervalMinutes);
+    const snoozed =
+      policy.snoozedUntil && policy.snoozedUntil > now
+        ? `Отложено до ${DateTime.fromJSDate(policy.snoozedUntil, { zone: "utc" })
+            .setZone(timezone)
+            .toFormat("HH:mm")}, потом ${interval}, пока не отметишь выполненным.`
+        : `Повторяю ${interval}, пока не отметишь выполненным.`;
+    return `Напоминание: ${item.title}\n${snoozed}`;
+  }
   if (parsedRecurrence?.kind === "monthly_day_range" && parsedRecurrence.timeLocal) {
     const rule = formatRecurringRuleHuman(policy?.recurrenceRule ?? null);
     return `Напоминание: ${item.title}\nСегодня, ${nowLocal.toFormat("dd.LL")}. Правило: ${rule}.`;
@@ -297,6 +310,12 @@ export function formatReminderMessage(
     return `Проверка задачи: ${item.title}\nСрок был: ${when}`;
   }
   return `Напоминание: ${item.title}\n${when}`;
+}
+
+function formatOpenEndedNagInterval(intervalMinutes: number | null) {
+  if (intervalMinutes === 60) return "каждый час";
+  if (intervalMinutes === 30) return "каждые 30 минут";
+  return `каждые ${intervalMinutes ?? 60} минут`;
 }
 
 function getItemLabel(item: PlannerItem): string {

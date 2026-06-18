@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { normalizeAgentExecutionProposal } from "@/ai/agentExecutionNormalization";
+import { agentExecutionSchema } from "@/ai/schemas/agentExecution";
 import { writeAudit, writeAuditOnceByKey } from "@/db/queries/audit";
 import {
   cancelPlannerItemWithMetadata,
@@ -12,6 +14,7 @@ import {
   updateReminderPolicy,
 } from "@/db/queries/reminderPolicies";
 import {
+  cancelItemReminders,
   createReminderIfMissing,
   getReminderByIdForUser,
   snoozeReminder,
@@ -25,6 +28,7 @@ import {
 import {
   repairCarLocationReminderItem,
 } from "@/services/v2240ProductionRepair";
+import { commitStoredActionPlan, createStoredActionPlan } from "@/services/actionPlanCommit";
 import { renderActionableReminderCard } from "@/telegram/reminderCard";
 
 export async function runV2240PinnedRepairSmoke(params: {
@@ -296,6 +300,133 @@ export async function runV2240MonthlyAuditThrottleSmoke(params: { userId: string
     details: { smoke: true },
   });
   return { ok: first === true && second === false, firstWritten: first, secondWritten: second };
+}
+
+export async function runV2240OpenEndedNagSmoke(params: {
+  userId: string;
+  timezone: string;
+}) {
+  const smokeRunId = randomUUID();
+  const now = new Date();
+  const text =
+    "Напоминай мне каждый час, пока не выполню, починить кран в ванной";
+  const execution = normalizeAgentExecutionProposal({
+    execution: agentExecutionSchema.parse({
+      intent: "manage_reminder_policies",
+      reply: null,
+      actionPlan: null,
+      viewScope: null,
+      resetMode: null,
+      itemUpdates: [],
+      reminderPolicies: [
+        {
+          operation: "create_recurring_policy",
+          itemIds: [],
+          itemTitle: "Починить кран в ванной",
+          title: "Починить кран в ванной",
+          category: "nag_until_done",
+          policyType: "recurring",
+          startsAtLocal: null,
+          endsAtLocal: null,
+          nextFireAtLocal: null,
+          recurrenceRule: null,
+          intervalMinutes: 60,
+          requireAck: true,
+          maxOccurrences: null,
+          minutesBefore: null,
+          windowEndInclusive: true,
+          catchUpMode: "one_immediate_then_resume",
+          onWindowEnd: "carry_to_next_day",
+          quietHoursStart: null,
+          quietHoursEnd: null,
+          allowDuringQuietHours: false,
+        },
+      ],
+      memoryFacts: [],
+      clarificationQuestions: [],
+    }),
+    text,
+    timezone: params.timezone,
+    now,
+    activeContext: "none",
+  });
+  if (!execution.actionPlan || execution.reminderPolicies.length !== 1) {
+    throw new Error("v2240_open_nag_normalization_failed");
+  }
+  const stored = await createStoredActionPlan({
+    userId: params.userId,
+    plan: execution.actionPlan,
+    idempotencyKey: `v2240-open-nag-smoke:${smokeRunId}`,
+    commitMode: "auto_all_with_undo",
+    reminderPolicies: execution.reminderPolicies,
+  });
+  const committed = await commitStoredActionPlan({
+    actionPlanId: stored.id,
+    userId: params.userId,
+    timezone: params.timezone,
+    now,
+    reminderPolicies: execution.reminderPolicies,
+  });
+  if (committed.status !== "committed") {
+    throw new Error(`v2240_open_nag_commit_${committed.status}`);
+  }
+  const item = committed.items[0];
+  const policy = committed.policies[0];
+  const reminderId = committed.policyReminderIds[0] ?? null;
+  const ok = Boolean(
+    item &&
+      policy &&
+      committed.items.length === 1 &&
+      committed.policies.length === 1 &&
+      committed.policyReminderIds.length === 1 &&
+      item.title === "Починить кран в ванной" &&
+      item.dueAt === null &&
+      policy.policyType === "nag_until_ack" &&
+      policy.intervalMinutes === 60 &&
+      policy.requireAck === true &&
+      policy.startsAt &&
+      policy.startsAt > now &&
+      policy.endsAt === null &&
+      policy.metadata?.openEndedUntilDone === true,
+  );
+
+  if (item) await cancelItemReminders(params.userId, item.id);
+  if (policy) {
+    await updateReminderPolicy({
+      userId: params.userId,
+      policyId: policy.id,
+      status: "cancelled",
+      nextFireAt: null,
+    });
+  }
+  if (item) {
+    await cancelPlannerItemWithMetadata({
+      userId: params.userId,
+      itemId: item.id,
+      metadata: { archivedBy: "v2240_open_nag_smoke", smokeRunId },
+    });
+  }
+  const result = {
+    ok,
+    smokeRunId,
+    itemCount: committed.items.length,
+    policyCount: committed.policies.length,
+    reminderCount: committed.policyReminderIds.length,
+    itemId: item?.id ?? null,
+    policyId: policy?.id ?? null,
+    reminderId,
+    policyType: policy?.policyType ?? null,
+    intervalMinutes: policy?.intervalMinutes ?? null,
+    hasFutureFirstReminder: Boolean(policy?.startsAt && policy.startsAt > now),
+    hasFiniteEnd: Boolean(policy?.endsAt),
+  };
+  await writeSmokeAudit(
+    params.userId,
+    "assistant.v2240_open_ended_nag_smoke",
+    policy?.id ?? item?.id ?? smokeRunId,
+    result,
+  );
+  return result;
 }
 
 async function writeSmokeAudit(

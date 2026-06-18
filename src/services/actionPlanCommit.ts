@@ -301,7 +301,17 @@ export async function commitStoredActionPlan(params: {
             now,
           });
           if (!nextFireAt || (endsAt && nextFireAt > endsAt)) {
-            throw new UserFacingError(`Не удалось безопасно определить запуск: ${proposal.title}`);
+            const rejectedGuard = !nextFireAt
+              ? "missing_initial_fire"
+              : "initial_fire_after_window_end";
+            throw new UserFacingError(
+              `Не удалось безопасно определить запуск: ${proposal.title}. ` +
+                `Guard: ${rejectedGuard}; policyType=${proposal.policyType}; ` +
+                `startsAt=${proposal.startsAtLocal ?? "null"}; ` +
+                `nextFireAt=${proposal.nextFireAtLocal ?? "null"}; ` +
+                `endsAt=${proposal.endsAtLocal ?? "null"}.`,
+              "policy_initial_fire_rejected",
+            );
           }
           const [policy] = await tx
             .insert(reminderPolicies)
@@ -398,6 +408,22 @@ export async function commitStoredActionPlan(params: {
               deliveryAt: spacing.scheduledAt.toISOString(),
             },
           });
+          if (policy.metadata?.openEndedUntilDone === true) {
+            await tx.insert(auditLog).values({
+              userId: params.userId,
+              action: "assistant.nag_until_ack_open_started",
+              entityType: "reminder_policy",
+              entityId: policy.id,
+              details: {
+                plannerItemId: target?.id ?? null,
+                reminderId: reminder.id,
+                intervalMinutes: proposal.intervalMinutes,
+                firstReminderAt: spacing.scheduledAt.toISOString(),
+                stopCondition: "until_done",
+                timezone,
+              },
+            });
+          }
           if (spacing.shifted || spacing.blockedReason) {
             await tx.insert(auditLog).values({
               userId: params.userId,
@@ -561,6 +587,18 @@ function inferPolicyProposalMetadata(
     metadata.policyWindowEndLocal = policyWindowEndLocal;
     metadata.intervalMinutes = proposal.intervalMinutes;
     metadata.onWindowEndSemantic = "move_to_overdue_or_review";
+  }
+  if (
+    proposal.policyType === "nag_until_ack" &&
+    proposal.requireAck === true &&
+    target?.metadata?.openEndedUntilDone === true
+  ) {
+    metadata.sourceNormalization = "open_nag_until_ack_v2240";
+    metadata.openEndedUntilDone = true;
+    metadata.timeScope = "persistent";
+    metadata.intervalMinutes = proposal.intervalMinutes;
+    metadata.stopCondition = "until_done";
+    metadata.firstReminderAtLocal = proposal.nextFireAtLocal ?? proposal.startsAtLocal;
   }
   return metadata;
 }

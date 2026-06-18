@@ -9,6 +9,7 @@ export const RELEASE_NOTES = {
     "закрепленные заметки о машине создаются и обновляются раньше date parsing, без reminder policy и календарной синхронизации",
     "carryover until-done задачи получают сегодняшнее активное окно, а monthly day-range карточки показывают occurrence и правило без текста «без времени»",
     "monthly audit получил durable throttling, /actionlog сворачивает исторические дубли",
+    "open-ended каждый час до выполнения стартует из ближайшего безопасного слота без ложного missing-time draft",
     "добавлены calendar-safe /admin_repair_v2240 preview|apply и protected V2.24 production smokes",
   ],
   testPrompts: [

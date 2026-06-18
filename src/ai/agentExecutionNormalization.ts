@@ -31,9 +31,13 @@ export function normalizeAgentExecutionProposal(params: {
     ...params,
     execution: complexReminder,
   });
-  const multiEventTemplate = normalizeMultiEventReminderTemplate({
+  const openEndedNag = normalizeOpenEndedNagUntilAck({
     ...params,
     execution: recurringIntent,
+  });
+  const multiEventTemplate = normalizeMultiEventReminderTemplate({
+    ...params,
+    execution: openEndedNag,
   });
   const cadenceOnly = normalizeCadenceOnlyWithoutContext({
     ...params,
@@ -553,6 +557,13 @@ function normalizeClearReminderIntent(params: {
   now: Date;
 }): AgentExecution {
   if (
+    params.execution.actionPlan?.actions.some(
+      (action) => action.metadata?.sourceNormalization === "open_nag_until_ack_v2240",
+    )
+  ) {
+    return params.execution;
+  }
+  if (
     params.execution.reminderPolicies.some((policy) =>
       ["before_event", "recurring", "long_term"].includes(policy.policyType),
     )
@@ -689,6 +700,126 @@ function normalizeClearReminderIntent(params: {
     reminderPolicies: policy ? [policy] : [],
     clarificationQuestions: [],
   };
+}
+
+function normalizeOpenEndedNagUntilAck(params: {
+  execution: AgentExecution;
+  text: string;
+  timezone: string;
+  now: Date;
+}): AgentExecution {
+  const intervalMinutes = extractIntervalMinutes(params.text);
+  const hasReminderIntent = /(?:напомни|напоминай|напоминать|напомняй)/i.test(params.text);
+  const hasUntilDoneStop =
+    /пока\s+(?:я\s+)?не\s+(?:выполн[а-яё]*|сдел[а-яё]*|отмеч[а-яё]*|подтверд[а-яё]*|законч[а-яё]*|закро[а-яё]*)|до\s+выполнения/i.test(
+      params.text,
+    );
+  const hasExplicitStart =
+    Boolean(extractReminderClock(params.text)) ||
+    /начиная\s+с\s+\d{1,2}|(?:^|\s)с\s+\d{1,2}(?:[.:]\d{2})?/i.test(params.text);
+  if (!intervalMinutes || !hasReminderIntent || !hasUntilDoneStop || hasExplicitStart) {
+    return params.execution;
+  }
+
+  const title = extractOpenEndedNagTitle(params.text);
+  if (!title) return params.execution;
+
+  const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
+  const firstReminder = nowLocal.plus({ minutes: 5 }).startOf("minute");
+  const todayOnly = /(?:сегодня|до\s+конца\s+дня)/i.test(params.text);
+  const windowEnd = todayOnly
+    ? nowLocal.set({ hour: 23, minute: 59, second: 0, millisecond: 0 })
+    : null;
+  if (windowEnd && firstReminder > windowEnd) return params.execution;
+
+  const proposed = params.execution.actionPlan?.actions.find(
+    (action) => action.kind !== "recurring_task",
+  );
+  const action: ActionPlanItem = {
+    ...(proposed ?? buildSyntheticReminderAction(title, params.timezone)),
+    actionType: "task",
+    kind: "task",
+    title,
+    timezone: proposed?.timezone || params.timezone,
+    startAtLocal: null,
+    endAtLocal: null,
+    dueAtLocal: windowEnd?.toFormat("yyyy-MM-dd'T'HH:mm:ss") ?? null,
+    durationMinutes: null,
+    reminders: [],
+    priority: Math.max(proposed?.priority ?? 3, 4),
+    confidence: Math.max(proposed?.confidence ?? 0, 0.99),
+    risk: "low",
+    requiresConfirmation: false,
+    recurrence: null,
+    metadata: {
+      ...(proposed?.metadata ?? {}),
+      sourceNormalization: "open_nag_until_ack_v2240",
+      reminderIntentExplicit: true,
+      openEndedUntilDone: !todayOnly,
+      timeScope: todayOnly ? "today" : "persistent",
+      intervalMinutes,
+      stopCondition: "until_done",
+      firstReminderAtLocal: firstReminder.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    },
+  };
+  const policy: AgentReminderPolicy = {
+    operation: "create_interval_window_policy",
+    itemIds: [],
+    itemTitle: title,
+    title,
+    category: "nag_until_done",
+    policyType: "nag_until_ack",
+    startsAtLocal: firstReminder.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    endsAtLocal: windowEnd?.toFormat("yyyy-MM-dd'T'HH:mm:ss") ?? null,
+    nextFireAtLocal: firstReminder.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    recurrenceRule: null,
+    intervalMinutes,
+    requireAck: true,
+    maxOccurrences: null,
+    minutesBefore: null,
+    windowEndInclusive: true,
+    catchUpMode: "one_immediate_then_resume",
+    onWindowEnd: todayOnly ? "move_to_overdue_or_review" : "carry_to_next_day",
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    allowDuringQuietHours: false,
+  };
+
+  return {
+    ...params.execution,
+    intent: "create_plan",
+    reply: null,
+    actionPlan: {
+      intent: "plan",
+      summary: title,
+      reply: null,
+      confidence: 0.99,
+      requiresConfirmation: false,
+      actions: [action],
+      memoryCandidates: params.execution.actionPlan?.memoryCandidates ?? [],
+      clarificationQuestions: [],
+    },
+    itemUpdates: [],
+    reminderPolicies: [policy],
+    clarificationQuestions: [],
+  };
+}
+
+function extractOpenEndedNagTitle(text: string) {
+  const afterStop = text.match(
+    /пока\s+(?:я\s+)?не\s+(?:выполн[а-яё]*|сдел[а-яё]*|отмеч[а-яё]*|подтверд[а-яё]*|законч[а-яё]*|закро[а-яё]*)\s*[,;:\-]\s*(.+)$/i,
+  )?.[1];
+  const candidate = afterStop
+    ? afterStop
+    : text
+        .replace(/^(?:напомни|напоминай|напоминать|напомняй)(?:\s+мне)?\s+/i, "")
+        .replace(/^кажд(?:ый|ые)\s+(?:час|\d{1,3}\s*мин(?:ут[уы]?)?|полчаса)\s*[,;:\-]?\s*/i, "")
+        .replace(/[,;:\-]?\s*(?:до\s+тех\s+пор,?\s*)?пока\s+(?:я\s+)?не\s+.*$/i, "");
+  const cleaned = candidate
+    .replace(/^(?:задачу\s+)?/i, "")
+    .replace(/[.!?\s]+$/u, "")
+    .trim();
+  return cleaned ? `${cleaned[0].toLocaleUpperCase("ru")}${cleaned.slice(1)}` : null;
 }
 
 function normalizeTodayUntilDoneSemantics(params: {
@@ -1695,9 +1826,9 @@ function recurringCategory(title: string): AgentReminderPolicy["category"] {
 }
 
 function extractIntervalMinutes(text: string) {
-  if (/каждые?\s+полчаса|каждые?\s+пол\s*часа/i.test(text)) return 30;
-  if (/каждые?\s+час/i.test(text)) return 60;
-  const match = text.match(/каждые?\s+(\d{1,3})\s*мин/i);
+  if (/кажд(?:ый|ые)\s+полчаса|кажд(?:ый|ые)\s+пол\s*часа/i.test(text)) return 30;
+  if (/кажд(?:ый|ые)\s+час/i.test(text)) return 60;
+  const match = text.match(/кажд(?:ый|ые)\s+(\d{1,3})\s*мин/i);
   return match ? Number(match[1]) : null;
 }
 

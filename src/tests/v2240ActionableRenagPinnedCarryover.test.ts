@@ -121,6 +121,34 @@ describe("V2.24 actionable reminder cards", () => {
     expect(card.text).not.toContain("без времени");
   });
 
+  it("renders an open-ended until-done occurrence without a fake deadline", () => {
+    const item = plannerItem({
+      title: "Починить кран в ванной",
+      metadata: { openEndedUntilDone: true, timeScope: "persistent" },
+    });
+    const policy = reminderPolicy({
+      itemId: item.id,
+      endsAt: null,
+      metadata: {
+        openEndedUntilDone: true,
+        timeScope: "persistent",
+        stopCondition: "until_done",
+      },
+    });
+    const card = renderActionableReminderCard({
+      reminder: reminder({ plannerItemId: item.id, policyId: policy.id }),
+      item,
+      policy,
+      now: new Date("2026-06-18T09:00:00.000Z"),
+    });
+
+    expect(card.renderMode).toBe("task_until_done");
+    expect(card.text).toContain("Повторяю каждый час, пока не отметишь выполненным.");
+    expect(card.text).not.toContain("без времени");
+    expect(card.text).not.toContain("23:59");
+    expect(card.buttonsAttached).toBe(true);
+  });
+
   it("routes the car-location codeword before date parsing", () => {
     const intent = parsePinnedContextIntent({
       text: "Запомни где машина: за ВкусВиллом, завтра у клиники Рошаля.",

@@ -226,6 +226,60 @@ describe("V2.4 post-AI reminder policy normalization", () => {
       }),
     ]);
   });
+
+  it("starts an open-ended hourly until-done task without an explicit start", () => {
+    const execution = normalizeAgentExecutionProposal({
+      execution: agentExecutionSchema.parse({
+        ...emptyExecution(),
+        intent: "manage_reminder_policies",
+        reminderPolicies: [
+          policy({
+            operation: "create_recurring_policy",
+            policyType: "recurring",
+            itemTitle: "Починить кран в ванной",
+            title: "Починить кран в ванной",
+            recurrenceRule: null,
+            startsAtLocal: null,
+            nextFireAtLocal: null,
+            intervalMinutes: 60,
+            requireAck: true,
+          }),
+        ],
+      }),
+      text: "Напоминай мне каждый час, пока не выполню, починить кран в ванной",
+      timezone: "Europe/Moscow",
+      now: new Date("2026-06-18T12:00:00.000Z"),
+      activeContext: "none",
+    });
+
+    expect(execution.intent).toBe("create_plan");
+    expect(execution.actionPlan?.actions).toEqual([
+      expect.objectContaining({
+        kind: "task",
+        title: "Починить кран в ванной",
+        startAtLocal: null,
+        dueAtLocal: null,
+        metadata: expect.objectContaining({
+          sourceNormalization: "open_nag_until_ack_v2240",
+          openEndedUntilDone: true,
+          timeScope: "persistent",
+        }),
+      }),
+    ]);
+    expect(execution.reminderPolicies).toEqual([
+      expect.objectContaining({
+        operation: "create_interval_window_policy",
+        policyType: "nag_until_ack",
+        startsAtLocal: "2026-06-18T15:05:00",
+        nextFireAtLocal: "2026-06-18T15:05:00",
+        endsAtLocal: null,
+        intervalMinutes: 60,
+        requireAck: true,
+        onWindowEnd: "carry_to_next_day",
+      }),
+    ]);
+    expect(execution.clarificationQuestions).toEqual([]);
+  });
 });
 
 function emptyExecution() {

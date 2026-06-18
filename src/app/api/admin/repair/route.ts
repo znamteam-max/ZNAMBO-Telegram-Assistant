@@ -139,6 +139,7 @@ import {
   runV2240CarryoverCardSmoke,
   runV2240MonthlyAuditThrottleSmoke,
   runV2240MonthlyCardSmoke,
+  runV2240OpenEndedNagSmoke,
   runV2240PinnedRepairSmoke,
 } from "@/services/v2240ProductionSmoke";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
@@ -563,6 +564,13 @@ export async function POST(request: Request) {
   }
   if (body.action === "v2240_monthly_audit_throttle_smoke" && body.confirm === true) {
     const result = await runV2240MonthlyAuditThrottleSmoke({ userId: owner.id });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2240_open_ended_nag_smoke" && body.confirm === true) {
+    const result = await runV2240OpenEndedNagSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
     return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
   }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {
