@@ -49,7 +49,10 @@ import { ensureDailySnapshot } from "@/services/dailyHistory";
 import { runDueCalendarSyncRetries } from "@/services/calendarSyncRetry";
 import { runDueYandexCalendarImports } from "@/services/yandexCalendarImport";
 import { isEventLikePlannerItem } from "@/domain/eventReminderSemantics";
-import { runDuePendingPromptRenags } from "@/services/pendingPromptRenag";
+import {
+  recordPendingPromptRenag,
+  runDuePendingPromptRenags,
+} from "@/services/pendingPromptRenag";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -127,6 +130,23 @@ export async function runDueReminders(params?: {
           status: "sent",
           telegramMessageId: sentMessage.message_id,
         });
+        if (sentMessage.actionRequired && sentMessage.text) {
+          await recordPendingPromptRenag({
+            userId: reminder.userId,
+            promptType:
+              reminder.purpose ?? (isPostEventReminder(reminder) ? "post_event_menu" : reminder.type),
+            text: sentMessage.text,
+            targetReminderId: reminder.id,
+            targetItemId: sentMessage.targetItemId ?? reminder.plannerItemId,
+            targetPolicyId: sentMessage.targetPolicyId ?? reminder.policyId,
+            now,
+          }).catch((error) => {
+            logger.warn("Pending action prompt registration failed", {
+              reminderId: reminder.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
         if (!params?.sender && sentMessage.message_id && !compactDelivery) {
           const user = await getUserById(reminder.userId);
           if (user) {
@@ -248,7 +268,14 @@ async function sendReminder(
       emptyText: "Сегодня пока пусто. Можешь надиктовать дела, а я соберу план.",
       metadata: { source: "morning_digest" },
     });
-    return sender.sendMessage(user.telegramUserId.toString(), rendered.reply);
+    const sent = await sender.sendMessage(user.telegramUserId.toString(), rendered.reply);
+    return {
+      ...sent,
+      actionRequired: false,
+      text: rendered.reply,
+      targetItemId: null,
+      targetPolicyId: null,
+    };
   }
 
   if (reminder.type === "evening_checkin") {
@@ -273,7 +300,14 @@ async function sendReminder(
       footer: "Что делаем? Можно написать: 1 выполнено, 2 на завтра, всё закрыть.",
       metadata: { source: "evening_checkin" },
     });
-    return sender.sendMessage(user.telegramUserId.toString(), rendered.reply);
+    const sent = await sender.sendMessage(user.telegramUserId.toString(), rendered.reply);
+    return {
+      ...sent,
+      actionRequired: false,
+      text: rendered.reply,
+      targetItemId: null,
+      targetPolicyId: null,
+    };
   }
 
   const item = reminder.plannerItemId ? await getPlannerItemByAnyId(reminder.plannerItemId) : null;
@@ -286,6 +320,7 @@ async function sendReminder(
   const messageOptions = {
     reply_markup: buildReminderKeyboard(reminder, item, options?.now ?? new Date()),
   };
+  const actionRequired = isActionRequiredReminder(reminder, item);
   if (options?.compact) {
     const synced = await syncCompactChat({
       userId: user.id,
@@ -301,9 +336,22 @@ async function sendReminder(
       now: options.now,
       api: sender as LiveDashboardTelegramApi,
     });
-    return { message_id: synced.reminderMessageId ?? undefined };
+    return {
+      message_id: synced.reminderMessageId ?? undefined,
+      actionRequired,
+      text,
+      targetItemId: item?.id ?? reminder.plannerItemId ?? null,
+      targetPolicyId: reminder.policyId ?? null,
+    };
   }
-  return sender.sendMessage(user.telegramUserId.toString(), text, messageOptions);
+  const sent = await sender.sendMessage(user.telegramUserId.toString(), text, messageOptions);
+  return {
+    ...sent,
+    actionRequired,
+    text,
+    targetItemId: item?.id ?? reminder.plannerItemId ?? null,
+    targetPolicyId: reminder.policyId ?? null,
+  };
 }
 
 function buildReminderKeyboard(
@@ -338,6 +386,37 @@ function isPostEventReminder(reminder: ClaimedReminder) {
     reminder.purpose === "post_event_menu" ||
     reminder.menuType === "event_reaction" ||
     ["followup", "training_followup", "after_event"].includes(reminder.type)
+  );
+}
+
+function isActionRequiredReminder(
+  reminder: ClaimedReminder,
+  item: Awaited<ReturnType<typeof getPlannerItemByAnyId>>,
+) {
+  if (isTestItem(item, reminder)) return false;
+  return (
+    (isPostEventReminder(reminder) && Boolean(item)) ||
+    Boolean(reminder.policyId) ||
+    reminder.repeatUntilAck === true ||
+    item?.kind === "recurring_task" ||
+    (reminder.type === "followup" && item?.kind === "tentative_event") ||
+    item?.metadata?.managementButtonsRequested === true ||
+    Boolean(item && isEventLikePlannerItem(item))
+  );
+}
+
+function isTestItem(
+  item: Awaited<ReturnType<typeof getPlannerItemByAnyId>>,
+  reminder: ClaimedReminder,
+) {
+  const payload = (reminder.payload ?? {}) as Record<string, unknown>;
+  return (
+    item?.metadata?.isTest === true ||
+    item?.metadata?.debug === true ||
+    item?.metadata?.source === "remindertest" ||
+    payload.isTest === true ||
+    payload.debug === true ||
+    payload.source === "remindertest"
   );
 }
 

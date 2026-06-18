@@ -2,6 +2,7 @@ import type { ActionPlan } from "./schemas";
 import type { AgentReminderPolicy } from "./schemas/agentExecution";
 import type { AssistantDecision } from "./schemas/assistantDecision";
 import { isHardManagementText } from "@/agent/hardManagementIntent";
+import { hasNegativeReminderIntent } from "@/domain/reminderIntent";
 
 export type PlannerValidationResult = {
   ok: boolean;
@@ -183,6 +184,7 @@ export function validateReminderPoliciesBeforeSave(params: {
 }
 
 function containsReminderIntent(text: string) {
+  if (hasNegativeReminderIntent(text)) return false;
   return /(напомн|напоминан|кажд(?:ый|ые|ую)\s+(?:час|день|недел|полчас)|пока\s+не\s+сдел)/i.test(text);
 }
 

@@ -8,6 +8,7 @@ import type {
 import type { ActionPlanItem } from "@/ai/schemas";
 import { parseRussianWeekdayAppointment } from "@/domain/russianWeekday";
 import { normalizeKnownProjectNames, parseDeadlineSemantics } from "@/domain/deadlineSemantics";
+import { sanitizePlannerTitle } from "@/domain/titleSanitizer";
 import {
   normalizeRecurringReminderTitle,
   nextRecurringOccurrence,
@@ -414,15 +415,28 @@ function parseJulyEventStarts(text: string, timezone: string, now: Date) {
 
 function normalizeProjectNamesInExecution(execution: AgentExecution): AgentExecution {
   if (!execution.actionPlan) return execution;
+  const titleMap = new Map<string, string>();
+  const actions = execution.actionPlan.actions.map((action) => {
+    const normalizedTitle = sanitizePlannerTitle(normalizeKnownProjectNames(action.title));
+    titleMap.set(action.title, normalizedTitle);
+    return {
+      ...action,
+      title: normalizedTitle,
+    };
+  });
   return {
     ...execution,
     actionPlan: {
       ...execution.actionPlan,
-      actions: execution.actionPlan.actions.map((action) => ({
-        ...action,
-        title: normalizeKnownProjectNames(action.title),
-      })),
+      actions,
     },
+    reminderPolicies: execution.reminderPolicies.map((policy) => ({
+      ...policy,
+      title: titleMap.get(policy.title) ?? sanitizePlannerTitle(normalizeKnownProjectNames(policy.title)),
+      itemTitle: policy.itemTitle
+        ? titleMap.get(policy.itemTitle) ?? sanitizePlannerTitle(normalizeKnownProjectNames(policy.itemTitle))
+        : policy.itemTitle,
+    })),
   };
 }
 

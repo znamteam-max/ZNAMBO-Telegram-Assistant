@@ -25,6 +25,7 @@ import { handleExternalCalendarEditTurn } from "@/bot/externalCalendarEditFlow";
 import { handleMultiReminderSetupTurn } from "@/bot/multiReminderSetupFlow";
 import { handleRecentEventReminderTurn } from "@/bot/recentEventReminderFlow";
 import { handleReminderPolicyEditTurn } from "@/bot/reminderPolicyEditFlow";
+import { handlePinnedContextNoteTurn } from "@/bot/pinnedContextNoteFlow";
 import {
   campaignCompletionGuardKeyboard,
   conflictKeyboard,
@@ -70,6 +71,11 @@ import {
 } from "./jarvisTools";
 import type { JarvisToolResult } from "./types";
 import { normalizeUntilDoneReminder } from "@/domain/untilDoneReminderText";
+import { parseScheduledCreationIntent } from "@/domain/scheduledCreationIntent";
+import {
+  createScheduledItemFromIntent,
+  formatScheduledCreationReply,
+} from "@/services/scheduledCreationIntentService";
 
 const AI_SAFE_FAILURE_REPLY =
   "Не могу безопасно обработать это сообщение без OpenAI. Ничего не создал и не изменил. Попробуй ещё раз чуть позже или проверь /aihealth.";
@@ -141,6 +147,54 @@ export async function handleJarvisTurn(ctx: BotContext, text: string, timezone: 
           ? "Ок, отменил текущую настройку или редактирование. Ничего не изменил."
           : "Активной настройки не было. Ничего не изменил.",
       );
+      return;
+    }
+
+    const pinnedContextHandled = await handlePinnedContextNoteTurn(ctx, text, timezone, now);
+    if (pinnedContextHandled) {
+      trace.aiRequired = false;
+      trace.preRouterIntent = "pinned_context_note";
+      trace.toolCallsExecuted = ["pinned_context_note"];
+      trace.finalAction = "pinned_context_note_handled";
+      trace.naturalLanguagePlanResult = "pinned_context_note_handled";
+      return;
+    }
+
+    const scheduledCreationIntent = parseScheduledCreationIntent({ text, timezone, now });
+    if (scheduledCreationIntent) {
+      const cleared = await clearActiveInteractionSessionsWithDetails({
+        userId: owner.id,
+        reason: "scheduled_creation_intent_escape",
+      });
+      const created = await createScheduledItemFromIntent({
+        userId: owner.id,
+        sourceMessageId: ctx.dbMessageId,
+        intent: scheduledCreationIntent,
+        now,
+      });
+      trace.aiRequired = false;
+      trace.preRouterIntent = scheduledCreationIntent.intent;
+      trace.toolCallsProposed = [scheduledCreationIntent.intent];
+      trace.toolCallsExecuted = ["create_scheduled_item_from_intent"];
+      trace.createdItemIds = [created.item.id];
+      trace.createdPolicyIds = created.policyIds;
+      trace.createdReminderIds = created.reminderIds;
+      trace.transactionStarted = true;
+      trace.transactionCommitted = true;
+      trace.proposedMutationCount = 1 + scheduledCreationIntent.reminders.length;
+      trace.committedMutationCount = 1 + created.policyIds.length + created.reminderIds.length;
+      trace.finalAction = "created_scheduled_item_intent";
+      trace.naturalLanguagePlanResult = "created_scheduled_item_intent";
+      trace.sessionRouting = {
+        escaped: cleared.length > 0,
+        cleared,
+        newIntent: scheduledCreationIntent.intent,
+      };
+      await replyAndRecord(
+        ctx,
+        formatScheduledCreationReply({ result: created, intent: scheduledCreationIntent }),
+      );
+      await refreshDashboardBestEffort(ctx, timezone);
       return;
     }
 

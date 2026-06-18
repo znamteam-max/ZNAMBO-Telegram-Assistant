@@ -5,6 +5,7 @@ import {
   detectBeforeEventReminderMode,
   parseBeforeEventReminderSpecsForAnchor,
 } from "@/domain/beforeEventReminderParsing";
+import { looksLikeExplicitNewScheduledCreationText } from "@/domain/scheduledCreationIntent";
 import { applyItemEditMutation, type ItemEditMutation } from "@/services/itemEditMutations";
 import {
   candidateFromItem,
@@ -139,6 +140,7 @@ export async function handleRecentEventReminderTurn(
 }
 
 export function isReminderOnlyFollowup(text: string) {
+  if (looksLikeExplicitNewScheduledCreationText(text)) return false;
   const normalized = text.toLocaleLowerCase("ru").replace(/ё/g, "е");
   const hasOffset =
     /за\s+(?:день|пол\s*часа|полчаса|полтора(?:\s+часа)?|час|(?:один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)\s*(?:час(?:а|ов)?|ч\.?|мин(?:ут(?:у|ы)?)?|м\.?)?|\d+\s*(?:час|ч\.?|мин))/i.test(
@@ -146,7 +148,9 @@ export function isReminderOnlyFollowup(text: string) {
     );
   const hasReminderVerb = /(напомн|напоминан)/i.test(normalized);
   const hasEventCreation =
-    /(создай|добавь|запиши|встреч|созвон|эфир|тренировк|мероприят|событи)/i.test(normalized);
+    /(создай|добавь|запиши|встреч|созвон|эфир|тренировк|мероприят|событи|массаж|визит|при[её]м|запись)/i.test(
+      normalized,
+    );
   return (
     hasOffset &&
     (hasReminderVerb || looksLikeBareOffsetList(normalized)) &&

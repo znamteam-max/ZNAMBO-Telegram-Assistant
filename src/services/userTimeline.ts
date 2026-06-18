@@ -19,6 +19,7 @@ import {
   shouldShowExternalCalendarEvent,
 } from "@/services/externalCalendarHygiene";
 import {
+  isTodayUntilDonePlannerItem,
   isTodayUntilDoneReminderPolicy,
   todayUntilDoneMetadataFromPolicy,
 } from "@/domain/todayUntilDoneTask";
@@ -137,14 +138,17 @@ function buildItemRow(
   entityRef?: EntityRef,
 ): UserTimelineRow {
   const anchor = getTimelineAnchor({ item }, now, timezone);
+  const carryover = item.metadata?.untilDoneCarryover === true;
   const overdue =
     item.status === "active" &&
     item.metadata?.needsReview !== true &&
     !item.metadata?.importConflict &&
+    !carryover &&
     Boolean(anchor && anchor < now) &&
     item.kind !== "event" &&
     item.kind !== "tentative_event";
   const unresolvedPast =
+    carryover ||
     (item.metadata?.isExternalCalendarEvent === true &&
       item.metadata?.showPastExternal === true &&
       Boolean((item.endAt ?? item.startAt) && (item.endAt ?? item.startAt)! <= now)) ||
@@ -228,8 +232,36 @@ function withTodayUntilDoneDerivedDue(
   now: Date,
   timezone: string,
 ): PlannerItem {
-  if (item.startAt || item.dueAt) return item;
   const zone = item.timezone || timezone;
+  const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(zone);
+  const anchor = item.dueAt ?? item.startAt ?? null;
+  const activeTodayUntilDonePolicy = policies.find(
+    (candidate) => candidate.status === "active" && isTodayUntilDoneReminderPolicy(candidate),
+  );
+  if (
+    item.status === "active" &&
+    anchor &&
+    anchor < now &&
+    (isTodayUntilDonePlannerItem(item) || Boolean(activeTodayUntilDonePolicy))
+  ) {
+    const anchorLocal = DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(zone);
+    if (anchorLocal < nowLocal.startOf("day")) {
+      return {
+        ...item,
+        metadata: {
+          ...item.metadata,
+          ...(activeTodayUntilDonePolicy
+            ? todayUntilDoneMetadataFromPolicy(activeTodayUntilDonePolicy)
+            : {}),
+          untilDoneCarryover: true,
+          originalDueAt: anchor.toISOString(),
+          carryoverLocalDate: anchorLocal.toISODate(),
+          carryoverMarkedAt: now.toISOString(),
+        },
+      };
+    }
+  }
+  if (item.startAt || item.dueAt) return item;
   const policy = policies.find((candidate) => {
     if (candidate.status !== "active") return false;
     if (!isTodayUntilDoneReminderPolicy(candidate) || !candidate.endsAt) return false;

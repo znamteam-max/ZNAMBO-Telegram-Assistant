@@ -4,9 +4,206 @@ This is the single canonical file to attach to a new Codex chat after every depl
 It contains the current production state, cumulative implementation history, validation results,
 and remaining limitations. It must never contain secrets.
 
-Last updated: 2026-06-17
+Last updated: 2026-06-18
 
-## Latest Deployment - V2.21.0 Plan Visual Semantics, Owner Timezone and Multi-Event Reminder Template
+## Latest Deployment - V2.23.0 Creation Intent Priority, Pinned Context Notes, Re-nag and Human Labels
+
+Production application code commit: `pending deploy`
+
+This deployment is a targeted V2.23 corrective release on top of V2.22.0. It keeps the Jarvis
+planner, mandatory OpenAI path, ActionPlan execution, Yandex Calendar integration, and cron-job.org
+runner architecture intact.
+
+Implemented:
+
+- added deterministic scheduled-creation routing before reminder target resolution, so messages
+  like `Массаж в 15.30, напомни за час и за полчаса до` create a new event with attached
+  before-event reminders instead of binding to unrelated old events;
+- added negative reminder intent handling for `без напоминаний`, `напоминания не нужны`,
+  `не напоминай`, and `без уведомлений`, creating the item without reminder policies or
+  clarification sessions;
+- added a planner title sanitizer that strips leading reminder commands and removes reminder-policy
+  text from item titles before and after AI normalization;
+- added first-class pinned context notes using planner items with `kind=note` and metadata
+  `pinnedContext`, including deterministic codewords such as `отдельное напоминание:`,
+  `закрепи:`, `где машина:`, and `машину оставил:`;
+- pinned notes now render in separate `Закреплено` / `Закреплённые заметки` blocks, have dedicated
+  item-card buttons, answer natural questions such as `Где машина?`, and are excluded from
+  snooze/done/recurring-policy flows;
+- yesterday unfinished until-done tasks render as `Не закрыто со вчера` instead of passive ordinary
+  overdue clutter;
+- action-required reminder cards register DB-backed pending action prompts and re-nag every
+  5 minutes until answered, cancelled, expired, completed, or stopped;
+- reminder labels now humanize large offsets and one-hour offsets: `за неделю`, `за 3 дня`,
+  `за 2 дня`, `за час`, and same-day morning sets such as
+  `утром в день события: 08:00, 09:00, 10:00`;
+- multi-event same-title reminder templates are applied symmetrically across created sibling events;
+- future dated events/tasks now render under `Позже`, while `Долгосрочные правила` is reserved for
+  actual long-term recurring rules;
+- monthly day-range check audits are throttled per policy/local occurrence date instead of writing
+  duplicate per-minute `assistant.monthly_day_range_occurrence_checked` rows;
+- added calendar-safe `/admin_repair_v2230 preview|apply` and protected
+  `v2230_pinned_context_note_smoke`.
+
+Validation:
+
+```text
+Local validation:
+npx vitest run src/tests/v2230CreationPinnedRenagLabels.test.ts src/tests/runDueReminders.test.ts src/tests/releaseIntegrityV242.test.ts: passed, 14/14 tests passed
+npm test: 67 files passed, 366/366 tests passed
+npm run lint: passed
+npx tsc --noEmit: passed
+npm run build: passed
+git diff --check: passed; only CRLF warnings from Git
+Changed-file secret scan: passed; only intentional fake redaction fixtures in release-notification tests matched
+Database migration: not required
+
+Production health:
+pending deploy
+
+Telegram webhook:
+pending deploy
+
+AI health:
+pending deploy
+
+V2.23 repair preview/apply/post-preview:
+pending deploy
+
+V2.23 pinned context smoke:
+pending deploy
+
+Reminder smoke:
+pending deploy
+```
+
+Release notification:
+
+```text
+Pending until production health, protected gates, reminder smoke, and handoff update are complete.
+```
+
+Remaining notes:
+
+```text
+Yandex Calendar remains best-effort and is not touched by V2.23 repair.
+Pinned context notes are not synced to Yandex Calendar by design.
+Owner Telegram live probes for massage creation, negative reminders, and pinned car notes still need
+production verification after deployment.
+```
+
+## Latest Deployment - V2.22.0 Session Escape, Interval-Window Reminders and Recurring Card UX
+
+Production application code commit: `f409aa85a7c3dd27390348f7f043ca6f5bb4e9d4`
+
+This deployment is a targeted V2.22 corrective release on top of V2.21.0. It keeps the Jarvis
+planner, mandatory OpenAI path, ActionPlan execution, Yandex Calendar integration, and cron-job.org
+runner architecture intact.
+
+Implemented:
+
+- added a deterministic pre-router for standalone finite interval-window reminder intents before
+  active item-card, recurring-card, reminder-edit, policy-edit, and multi-reminder setup sessions;
+- fixed the production case `Завтра с 6 до 7.30 напоминай мне каждые 10 минут взять с собой спицы`
+  so it creates a new reminder instead of being hijacked by an unrelated active recurring card;
+- added `assistant.session_escape_to_new_intent` audit rows with escaped session type/action/item,
+  new intent, reason, text hash, and timezone;
+- added one-item plus one-policy creation for finite `interval_window` reminders with local
+  `startAt`/`dueAt`, first reminder at window start, and `quietHours.allowDuringQuietHours=true`
+  for explicit early morning windows;
+- fixed creation idempotency scope so a source message gets its own interval policy key instead of
+  accidentally reusing an older policy for the same text hash;
+- hardened due-reminder collision spacing so finite `interval_window` / `nag_until_ack` policies are
+  not shifted beyond their `endsAt`;
+- updated recurring reminder card buttons to explicit labels: `Выполнено сейчас`, `Через 30 мин`,
+  `Через 1 час`, `Через 2 часа`, `Завтра`, `Изменить правило`, `Остановить правило`, `К плану`;
+- kept persistent `nag_until_ack` rules rendered as long-term/persistent while finite
+  `interval_window` reminders render under today/tomorrow dated sections instead of long-term;
+- added `/admin_repair_v2220 preview|apply` and protected `v2220_repair_preview|apply`;
+- added protected `v2220_interval_window_smoke` to create a temporary unrelated active session,
+  prove session escape, create the exact interval-window reminder, and clean up only the temporary
+  old-session target.
+
+Validation:
+
+```text
+Local validation:
+npm test: 66 files passed, 359/359 tests passed
+npm run lint: passed
+npx tsc --noEmit: passed
+npm run build: passed
+git diff --check: passed; only CRLF warnings from Git
+Changed-file secret scan: passed
+Database migration: not required
+
+Production health:
+/api/health ok, appVersion 2.22.0
+deploymentCommit f409aa85a7c3dd27390348f7f043ca6f5bb4e9d4
+ownerTimezone Europe/Moscow
+
+Telegram webhook:
+ok true, expected URL configured, pending updates 0
+
+AI health:
+ok true, model gpt-4o-mini-2024-07-18
+response id resp_0f182e1b0e6bc930006a32d54150d081a28ea2fd37ed6f9471
+structured output valid, test tool accepted
+
+V2.22 repair preview/apply/post-preview:
+safeToApply true
+staleSessions 0
+intervalPoliciesAttachedToWrongItem 0
+intervalWindowItemsMissingWindowFields 0
+finiteWindowPoliciesNextOutsideWindow 0
+duplicateDenseReminderWindows 0
+calendarObjectsToChange 0
+calendarObjectsChanged 0
+
+V2.22 owner-path smoke:
+protected action v2220_interval_window_smoke ok true
+created interval item 74d50f77-4dac-4290-a8c3-f629c1a05e11
+created interval policy 6408e6af-590f-4fb3-b1b4-3ef7ddccbff1
+created first reminder 3424d782-19cb-4012-89f8-edd75ea84384
+old unrelated session target unchanged before cleanup true
+escaped sessions 1
+window 06:00-07:30 Europe/Moscow
+
+Dashboard snapshot:
+contains "Взять с собой спицы"
+renders "Чт, 18.06 06:00 · Взять с собой спицы"
+renders "каждые 10 мин, с 06:00 до 07:30"
+technical noise absent: standalone_interval, smokeRunId, idempotencyKey were not rendered
+
+Reminder smoke:
+smoke item cc7caee3-5642-4c4d-bf77-8e8cc1d00b2c
+scheduledAt 2026-06-17T17:15:11.722Z
+deliveredAt 2026-06-17T17:15:23.757Z
+reminderStatus sent, deliveryStatus sent
+delivery was observed in production; no code fallback was needed
+```
+
+Release notification:
+
+```text
+Sent: yes
+Telegram message id: 1142
+Sent at: 2026-06-17T17:17:54.987Z
+Idempotency: second call returned already_sent with the same Telegram message id 1142
+Safe warning recorded by release gate: historical_webhook_error
+```
+
+Remaining notes:
+
+```text
+No schema migration was required for V2.22.0.
+Yandex Calendar remains best-effort and was not changed by V2.22 repair.
+Vercel MCP deployment listing returned a scope 403 in this Codex session, so deployment was verified
+through production /api/health and the deployed Git commit instead.
+The protected V2.22 smoke leaves the newly created exact interval-window reminder visible for
+dashboard acceptance; the temporary unrelated old-session target is archived immediately.
+```
+
+## Previous Deployment - V2.21.0 Plan Visual Semantics, Owner Timezone and Multi-Event Reminder Template
 
 Production application code commit: `9d8b5ccb2abe56277778e7e59f3e47fed306d0ad`
 
@@ -1446,6 +1643,8 @@ V2.18.0 - Event reminder semantics, today plan buttons and spacing fixes
 V2.19.0 - Today until-done task due semantics and policy audit repair
 V2.20.0 - Plan rendering, daily policy, event follow-up and button safety
 V2.21.0 - Plan visual semantics, owner timezone and multi-event reminder templates
+V2.22.0 - Session escape, interval-window reminders and recurring card UX
+V2.23.0 - Creation intent priority, pinned context notes, re-nag and human labels
 ```
 
 ## Remaining Limitations

@@ -6,9 +6,11 @@ import {
   externalCalendarEventKeyboard,
   itemMenuKeyboard,
   pastReviewItemKeyboard,
+  pinnedContextNoteKeyboard,
   reminderPolicyCardKeyboard,
 } from "@/bot/keyboards";
 import { getPlannerItemById, listCampaignItems } from "@/db/queries/items";
+import { writeAudit } from "@/db/queries/audit";
 import { getExternalCalendarEventById } from "@/db/queries/externalCalendarEvents";
 import {
   getReminderPolicyById,
@@ -34,6 +36,7 @@ import {
   formatItemReminderPolicyLines,
 } from "@/domain/reminderPolicyPresentation";
 import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
+import { isPinnedContextNote } from "@/domain/pinnedContextNotes";
 
 const itemKindLabels: Record<string, string> = {
   event: "встреча",
@@ -65,6 +68,31 @@ async function renderItemCard(params: {
 }) {
   const item = await getPlannerItemById(params.userId, params.ref.id);
   if (!item) return null;
+  if (isPinnedContextNote(item)) {
+    await writeAudit({
+      userId: params.userId,
+      action: "assistant.pinned_context_note_opened",
+      entityType: "planner_item",
+      entityId: item.id,
+      details: {
+        category: item.metadata?.pinnedCategory ?? null,
+        source: "entity_card",
+      },
+    }).catch(() => undefined);
+    return {
+      text: [
+        "Закреплённая заметка",
+        `${item.metadata?.pinnedCategory === "car_location" ? "🚗" : "📌"} ${item.title}`,
+        item.description ? "" : null,
+        item.description ? item.description : null,
+        "",
+        "Это не задача и не событие. Я не буду переносить или откладывать это автоматически.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      keyboard: pinnedContextNoteKeyboard(item.id),
+    };
+  }
   const now = params.now ?? new Date();
   const calendarProvider = getCalendarProvider();
   const [policies, activeReminders, calendar] = await Promise.all([

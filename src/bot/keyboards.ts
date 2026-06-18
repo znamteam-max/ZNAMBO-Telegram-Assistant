@@ -202,6 +202,17 @@ export function itemMenuKeyboard(
     .text("⚙️ Ещё", `item:more:${itemId}`);
 }
 
+export function pinnedContextNoteKeyboard(itemId: string) {
+  return new InlineKeyboard()
+    .text("✏️ Изменить", `manage:edit:${itemId}`)
+    .text("📌 Показать в плане", "dashboard:refresh")
+    .row()
+    .text("🧹 Убрать из закреплённых", `pinned:unpin:${itemId}`)
+    .text("🗑 Удалить", `pinned:delete:${itemId}`)
+    .row()
+    .text("↩️ К плану", "dashboard:refresh");
+}
+
 export function pastReviewItemKeyboard(itemId: string) {
   return new InlineKeyboard()
     .text("✅ Завершить", `done:${itemId}`)

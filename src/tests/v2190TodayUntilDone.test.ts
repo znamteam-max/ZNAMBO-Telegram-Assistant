@@ -165,7 +165,7 @@ describe("V2.19.0 today until-done semantics", () => {
     expect(execution.actionPlan?.actions).toHaveLength(1);
     expect(execution.actionPlan?.actions[0]).toEqual(
       expect.objectContaining({
-        title: "proverit bilety",
+        title: "Proverit bilety",
         kind: "task",
         dueAtLocal: "2026-06-17T23:59:00",
         metadata: expect.objectContaining({

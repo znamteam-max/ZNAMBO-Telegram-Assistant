@@ -7,6 +7,7 @@ import {
   parseCanonicalRecurrenceRule,
 } from "@/domain/recurringPolicySemantics";
 import { isTodayUntilDoneReminderPolicy } from "@/domain/todayUntilDoneTask";
+import { isTechnicalBeforeEventLabel } from "@/domain/reminderIntent";
 
 export function isPersistentReminderPolicy(policy: ReminderPolicy) {
   return (
@@ -169,9 +170,14 @@ export function formatDedupedBeforeEventPolicies(
 ) {
   const seen = new Set<string>();
   const offsets: Array<{ minutes: number; label: string }> = [];
+  const morningPolicies: ReminderPolicy[] = [];
   for (const policy of policies) {
     const minutes = getEventLinkedReminderOffsetMinutes(policy, options?.item);
     if (!minutes) continue;
+    if (policy.metadata?.eventMorningSet === true) {
+      morningPolicies.push(policy);
+      continue;
+    }
     const key = beforeEventDisplayKey(policy, minutes);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -181,7 +187,8 @@ export function formatDedupedBeforeEventPolicies(
     });
   }
   offsets.sort((left, right) => right.minutes - left.minutes);
-  return offsets.map((entry) => entry.label).join(", ");
+  const morning = formatMorningEventSetLabel(morningPolicies, timezone, options?.item);
+  return [...offsets.map((entry) => entry.label), morning].filter(Boolean).join(", ");
 }
 
 export function formatItemReminderPolicyLines(
@@ -191,9 +198,15 @@ export function formatItemReminderPolicyLines(
 ) {
   const handled = new Set<string>();
   const offsets: Array<{ minutes: number; label: string; deliveryAt?: Date | null }> = [];
+  const morningPolicies: ReminderPolicy[] = [];
   for (const policy of policies) {
     const minutes = getEventLinkedReminderOffsetMinutes(policy, options.item);
     if (!minutes) continue;
+    if (policy.metadata?.eventMorningSet === true) {
+      morningPolicies.push(policy);
+      handled.add(policy.id);
+      continue;
+    }
     const key = beforeEventDisplayKey(policy, minutes);
     if (handled.has(key)) {
       handled.add(policy.id);
@@ -218,6 +231,8 @@ export function formatItemReminderPolicyLines(
       ? `${entry.label}, следующее: ${fire.toFormat("dd.LL HH:mm")}`
       : entry.label;
   });
+  const morning = formatMorningEventSetLabel(morningPolicies, timezone, options.item);
+  if (morning) lines.push(morning);
 
   for (const policy of policies) {
     if (handled.has(policy.id)) continue;
@@ -240,6 +255,26 @@ function beforeEventDisplayKey(policy: ReminderPolicy, minutes: number) {
   return `relative:${minutes}`;
 }
 
+function formatMorningEventSetLabel(
+  policies: ReminderPolicy[],
+  timezone: string,
+  item?: PlannerItem | null,
+) {
+  if (!policies.length) return null;
+  const zone = item?.timezone || policies[0]?.timezone || timezone;
+  const times = [
+    ...new Set(
+      policies
+        .map((policy) => policy.nextFireAt ?? policy.startsAt)
+        .filter((value): value is Date => Boolean(value))
+        .sort((left, right) => left.getTime() - right.getTime())
+        .map((value) => DateTime.fromJSDate(value, { zone: "utc" }).setZone(zone).toFormat("HH:mm")),
+    ),
+  ];
+  if (!times.length) return "утром в день события";
+  return `утром в день события: ${times.join(", ")}`;
+}
+
 function formatBeforeEventDisplayLabel(
   policy: ReminderPolicy,
   minutes: number,
@@ -247,7 +282,9 @@ function formatBeforeEventDisplayLabel(
   item?: PlannerItem | null,
 ) {
   const label = policy.metadata?.relativeLabel;
-  if (typeof label === "string" && label.trim()) return label.trim();
+  if (typeof label === "string" && label.trim() && !isTechnicalBeforeEventLabel(label)) {
+    return label.trim();
+  }
   return formatBeforeEventOffset(
     minutes,
     policy.nextFireAt ?? policy.startsAt,
@@ -301,7 +338,7 @@ export function formatBeforeEventOffset(
       : null;
   if (minutes === 10) return "за 10 минут";
   if (minutes === 30) return "за 30 минут";
-  if (minutes === 60) return "за 1 ч";
+  if (minutes === 60) return "за час";
   if (minutes === 120) return "за 2 часа";
   if (minutes === 2880) return "за 2 дня";
   if (minutes === 4320) return "за 3 дня";
@@ -326,7 +363,7 @@ function dayWord(days: number) {
 
 function formatBeforeEventPolicy(policy: ReminderPolicy, timezone: string, item?: PlannerItem) {
   const label = policy.metadata?.relativeLabel;
-  if (typeof label === "string" && label.trim()) return label;
+  if (typeof label === "string" && label.trim() && !isTechnicalBeforeEventLabel(label)) return label;
   const metadataMinutes = Number(policy.metadata?.minutesBefore);
   if (Number.isFinite(metadataMinutes) && metadataMinutes > 0) {
     return formatBeforeEventOffset(

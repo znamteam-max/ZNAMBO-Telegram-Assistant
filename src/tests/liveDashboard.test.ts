@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   listActiveReminderPolicies: vi.fn(),
   listLongTermReminderPolicies: vi.fn(),
   listLegacyReminderLikeItems: vi.fn(),
+  listPinnedContextNotes: vi.fn(),
   registerBotMessage: vi.fn(),
   deleteMessageSafe: vi.fn(),
   removeKeyboardSafe: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("@/db/queries/items", () => ({
   listRecentRangeItems: mocks.listRecentRangeItems,
   listVisibleActivePlanItems: (...args: unknown[]) => mocks.listRecentRangeItems(...args),
   listLegacyReminderLikeItems: mocks.listLegacyReminderLikeItems,
+  listPinnedContextNotes: mocks.listPinnedContextNotes,
 }));
 vi.mock("@/db/queries/reminderPolicies", () => ({
   listActiveReminderPolicies: mocks.listActiveReminderPolicies,
@@ -88,6 +90,7 @@ describe("live dashboard lifecycle", () => {
     mocks.listActiveReminderPolicies.mockResolvedValue([]);
     mocks.listLongTermReminderPolicies.mockResolvedValue([]);
     mocks.listLegacyReminderLikeItems.mockResolvedValue([]);
+    mocks.listPinnedContextNotes.mockResolvedValue([]);
     mocks.listCalendarSyncStatesForUser.mockResolvedValue([]);
     mocks.listVisibleExternalCalendarEvents.mockResolvedValue([]);
     mocks.getCalendarImportState.mockResolvedValue(null);

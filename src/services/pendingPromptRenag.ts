@@ -44,7 +44,7 @@ export async function recordPendingPromptRenag(params: {
   });
   await writeAudit({
     userId: params.userId,
-    action: "assistant.pending_prompt_created",
+    action: "assistant.pending_action_prompt_created",
     entityType: "agent_action",
     entityId: action?.id ?? undefined,
     details: {
@@ -88,6 +88,22 @@ export async function cancelPendingPromptRenagsForTarget(params: {
         cancelledReason: params.reason ?? "target_answered",
       },
     });
+    await writeAudit({
+      userId: params.userId,
+      action:
+        params.reason === "target_answered" || params.reason?.includes("acknowledged")
+          ? "assistant.pending_action_prompt_answered"
+          : "assistant.pending_action_prompt_cancelled",
+      entityType: "agent_action",
+      entityId: action.id,
+      details: {
+        reason: params.reason ?? "target_answered",
+        promptType: action.input?.promptType ?? null,
+        targetItemId: action.input?.targetItemId ?? null,
+        targetReminderId: action.input?.targetReminderId ?? null,
+        targetPolicyId: action.input?.targetPolicyId ?? null,
+      },
+    }).catch(() => undefined);
   }
   return matched.length;
 }
@@ -142,7 +158,7 @@ export async function runDuePendingPromptRenags(params: {
     });
     await writeAudit({
       userId: user.id,
-      action: "assistant.pending_prompt_renag_sent",
+      action: "assistant.pending_action_prompt_renag_sent",
       entityType: "agent_action",
       entityId: action.id,
       details: { renagCount, messageId: message.message_id ?? null },
@@ -172,6 +188,22 @@ async function cancelAction(action: AgentAction, reason: string) {
       cancelledReason: reason,
     },
   });
+  await writeAudit({
+    userId: action.userId,
+    action:
+      reason === "expired"
+        ? "assistant.pending_action_prompt_expired"
+        : "assistant.pending_action_prompt_cancelled",
+    entityType: "agent_action",
+    entityId: action.id,
+    details: {
+      reason,
+      promptType: action.input?.promptType ?? null,
+      targetItemId: action.input?.targetItemId ?? null,
+      targetReminderId: action.input?.targetReminderId ?? null,
+      targetPolicyId: action.input?.targetPolicyId ?? null,
+    },
+  }).catch(() => undefined);
 }
 
 function parseDate(value: unknown) {

@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   recordRunnerFinished: vi.fn(),
   acquireRuntimeLease: vi.fn(),
   releaseRuntimeLease: vi.fn(),
+  recordPendingPromptRenag: vi.fn(),
+  runDuePendingPromptRenags: vi.fn(),
 }));
 
 vi.mock("@/db/queries/reminders", () => ({
@@ -58,6 +60,10 @@ vi.mock("@/db/queries/schedulerHealth", () => ({
 vi.mock("@/db/queries/runtimeLocks", () => ({
   acquireRuntimeLease: mocks.acquireRuntimeLease,
   releaseRuntimeLease: mocks.releaseRuntimeLease,
+}));
+vi.mock("@/services/pendingPromptRenag", () => ({
+  recordPendingPromptRenag: mocks.recordPendingPromptRenag,
+  runDuePendingPromptRenags: mocks.runDuePendingPromptRenags,
 }));
 
 vi.mock("@/agent/state/taskViewState", () => ({
@@ -103,6 +109,8 @@ describe("runDueReminders", () => {
       lockedUntil: new Date("2026-06-01T08:46:00.000Z"),
     });
     mocks.releaseRuntimeLease.mockResolvedValue({ key: "reminder_runner" });
+    mocks.recordPendingPromptRenag.mockResolvedValue({ id: "pending-prompt-id" });
+    mocks.runDuePendingPromptRenags.mockResolvedValue({ checked: 0, sent: 0, cancelled: 0 });
   });
 
   it("continues an until-ack reminder chain until the daily cutoff", async () => {
@@ -282,6 +290,15 @@ describe("runDueReminders", () => {
       inline_keyboard: Array<Array<{ text: string }>>;
     };
     expect(keyboard.inline_keyboard.flat().map((button) => button.text)).toContain("📝 Итоги");
+    expect(mocks.recordPendingPromptRenag).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-id",
+        promptType: "post_event_menu",
+        targetReminderId: "followup-id",
+        targetItemId: "item-id",
+        text: expect.stringContaining("Красочный забег"),
+      }),
+    );
   });
 
   it("does not send a reminder that was snoozed after the runner claimed it", async () => {

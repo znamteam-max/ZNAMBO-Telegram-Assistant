@@ -42,11 +42,23 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
       ? currentCanonicalOccurrenceIfDue(policy, now)
       : null;
     if (monthlyCurrentDue) {
-      await writeMonthlyDayRangeAudit(policy, "assistant.monthly_day_range_occurrence_checked", {
-        scheduledFor: monthlyCurrentDue.toISOString(),
-        hasNextFireAt: Boolean(policy.nextFireAt),
-        nextFireAt: policy.nextFireAt?.toISOString() ?? null,
-      });
+      const auditKey = monthlyDayRangeAuditKey(policy.id, monthlyCurrentDue);
+      if (policy.metadata?.lastMonthlyDayRangeCheckedAuditKey !== auditKey) {
+        await writeMonthlyDayRangeAudit(policy, "assistant.monthly_day_range_occurrence_checked", {
+          scheduledFor: monthlyCurrentDue.toISOString(),
+          hasNextFireAt: Boolean(policy.nextFireAt),
+          nextFireAt: policy.nextFireAt?.toISOString() ?? null,
+          auditKey,
+        });
+        await updateReminderPolicy({
+          policyId: policy.id,
+          userId: policy.userId,
+          metadata: {
+            lastMonthlyDayRangeCheckedAuditKey: auditKey,
+            lastMonthlyDayRangeCheckedAt: now.toISOString(),
+          },
+        });
+      }
     }
     const existingPending = await getPendingReminderForPolicy(policy.id);
     if (existingPending) continue;
@@ -167,6 +179,10 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
 
 function isMonthlyDayRangePolicy(policy: { recurrenceRule: string | null }) {
   return /^monthly_days:/i.test(policy.recurrenceRule ?? "");
+}
+
+export function monthlyDayRangeAuditKey(policyId: string, scheduledFor: Date) {
+  return `${policyId}:${scheduledFor.toISOString().slice(0, 10)}`;
 }
 
 async function writeMonthlyDayRangeAudit(

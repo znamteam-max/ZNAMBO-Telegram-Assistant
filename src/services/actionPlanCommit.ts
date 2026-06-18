@@ -23,6 +23,7 @@ import {
 } from "@/domain/recurringPolicySemantics";
 import { formatBeforeEventOffset } from "@/domain/reminderPolicyPresentation";
 import { findNextAvailableReminderSlot } from "@/services/reminderCollisionSpacing";
+import { sanitizePlannerTitle } from "@/domain/titleSanitizer";
 
 import { storePlanMemoryFacts } from "./memory";
 
@@ -465,6 +466,14 @@ async function resolvePolicyTargetsInTransaction(params: {
     (item) => normalizeTitle(item.title) === normalizeTitle(params.proposal.itemTitle!),
   );
   if (candidates.length <= 1) return candidates;
+  if (
+    params.proposal.policyType === "before_event" &&
+    params.proposal.minutesBefore &&
+    !params.proposal.nextFireAtLocal &&
+    !params.proposal.startsAtLocal
+  ) {
+    return candidates;
+  }
   const end = localDate(params.proposal.endsAtLocal, params.timezone);
   if (!end) return [candidates[0]];
   return [
@@ -680,9 +689,10 @@ function materializeAction(params: {
     ? localIsoToUtcDate(params.action.dueAtLocal, timezone)
     : null;
   const endAt = buildEndAt(params.action, timezone, startAt);
+  const sanitizedTitle = sanitizePlannerTitle(params.action.title);
   const item: MaterializedItem = {
     kind: params.action.kind,
-    title: params.action.title.trim(),
+    title: sanitizedTitle,
     description: params.action.description,
     location: params.action.location,
     timezone,
@@ -717,7 +727,7 @@ function materializeAction(params: {
         : null,
       payload: {
         ...reminder.payload,
-        title: params.action.title,
+        title: sanitizedTitle,
         kind: params.action.kind,
         actionType: params.action.actionType,
         recurrence: params.action.recurrence,

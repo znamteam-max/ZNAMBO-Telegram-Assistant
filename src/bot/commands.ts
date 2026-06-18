@@ -135,6 +135,10 @@ import {
   applyV2220ProductionRepair,
   previewV2220ProductionRepair,
 } from "@/services/v2220ProductionRepair";
+import {
+  applyV2230ProductionRepair,
+  previewV2230ProductionRepair,
+} from "@/services/v2230ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -238,6 +242,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2200 preview|apply - plan rendering, monthly policy and callback safety repair",
         "/admin_repair_v2210 preview|apply - owner timezone, monthly audit and follow-up visibility repair",
         "/admin_repair_v2220 preview|apply - session escape, interval-window and recurring-card repair",
+        "/admin_repair_v2230 preview|apply - creation intent, pinned notes, re-nag and labels repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -1557,6 +1562,45 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2220 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2230", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2230ProductionRepair({ userId: owner.id, timezone: owner.timezone })
+        : await previewV2230ProductionRepair({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.23 repair applied:" : "V2.23 repair preview:",
+        `• technical before-event labels: ${result.technicalBeforeEventLabels}`,
+        `• stale target-resolution sessions: ${result.staleTargetResolutionSessions}`,
+        `• carryover candidates: ${result.carryoverCandidates}`,
+        `• monthly audit throttle initializations: ${result.monthlyAuditThrottleInitializations}`,
+        `• pinned context notes: ${result.pinnedContextNotes}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• relabeled policies: ${arrayLength(result, "relabeledPolicyIds")}`,
+              `• cleared sessions: ${arrayLength(result, "clearedSessionActionIds")}`,
+              `• carryover marked items: ${arrayLength(result, "carryoverMarkedItemIds")}`,
+              `• monthly throttle initialized: ${arrayLength(result, "initializedMonthlyThrottlePolicyIds")}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2230 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {

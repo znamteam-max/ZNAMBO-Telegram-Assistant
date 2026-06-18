@@ -113,12 +113,15 @@ export async function createManualPlannerItem(params: {
   userId: string;
   kind: string;
   title: string;
+  description?: string | null;
+  location?: string | null;
   timezone: string;
   startAt?: Date | null;
   endAt?: Date | null;
   dueAt?: Date | null;
   category?: string | null;
   visibility?: string | null;
+  priority?: number;
   metadata?: Record<string, unknown>;
 }) {
   const [item] = await getDb()
@@ -127,12 +130,15 @@ export async function createManualPlannerItem(params: {
       userId: params.userId,
       kind: params.kind,
       title: params.title,
+      description: params.description,
+      location: params.location,
       timezone: params.timezone,
       startAt: params.startAt,
       endAt: params.endAt,
       dueAt: params.dueAt,
       category: params.category,
       visibility: params.visibility ?? "active",
+      priority: params.priority,
       metadata: params.metadata ?? {},
     })
     .returning();
@@ -150,6 +156,49 @@ export async function listVisibleActivePlanItems(userId: string, limit = 200): P
       desc(plannerItems.createdAt),
     )
     .limit(limit);
+}
+
+export async function listPinnedContextNotes(userId: string, limit = 30): Promise<PlannerItem[]> {
+  return getDb()
+    .select()
+    .from(plannerItems)
+    .where(
+      and(
+        eq(plannerItems.userId, userId),
+        eq(plannerItems.status, "active"),
+        eq(plannerItems.kind, "note"),
+        sql`coalesce(${plannerItems.metadata}->>'pinnedContext', 'false') = 'true'`,
+        visibleItemSql(),
+        currentItemSql(),
+      ),
+    )
+    .orderBy(desc(plannerItems.updatedAt), desc(plannerItems.createdAt))
+    .limit(limit);
+}
+
+export async function findPinnedContextNotes(params: {
+  userId: string;
+  query: string;
+  limit?: number;
+}): Promise<PlannerItem[]> {
+  const normalized = params.query.trim();
+  if (!normalized) return listPinnedContextNotes(params.userId, params.limit ?? 10);
+  return getDb()
+    .select()
+    .from(plannerItems)
+    .where(
+      and(
+        eq(plannerItems.userId, params.userId),
+        eq(plannerItems.status, "active"),
+        eq(plannerItems.kind, "note"),
+        sql`coalesce(${plannerItems.metadata}->>'pinnedContext', 'false') = 'true'`,
+        visibleItemSql(),
+        currentItemSql(),
+        sql`(${plannerItems.title} ilike ${`%${normalized}%`} or coalesce(${plannerItems.description}, '') ilike ${`%${normalized}%`})`,
+      ),
+    )
+    .orderBy(desc(plannerItems.updatedAt), desc(plannerItems.createdAt))
+    .limit(params.limit ?? 10);
 }
 
 export async function listAllActiveItems(userId: string, limit = 500): Promise<PlannerItem[]> {

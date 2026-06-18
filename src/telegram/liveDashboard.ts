@@ -5,7 +5,7 @@ import {
   getActiveDashboard,
   markDashboardStatus,
 } from "@/db/queries/liveDashboards";
-import { listLegacyReminderLikeItems } from "@/db/queries/items";
+import { listLegacyReminderLikeItems, listPinnedContextNotes } from "@/db/queries/items";
 import { listActiveRemindersForItems } from "@/db/queries/reminders";
 import type { PlannerItem, Reminder, ReminderPolicy } from "@/db/schema";
 import { logger } from "@/lib/logger";
@@ -30,6 +30,7 @@ import { shouldShowPersistentMarker } from "@/domain/persistentMarker";
 import { formatRuWeekdayDateTime } from "@/domain/dateTime";
 import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
 import { writeAudit } from "@/db/queries/audit";
+import { formatPinnedContextNoteLine, isPinnedContextNote } from "@/domain/pinnedContextNotes";
 
 import { getBot } from "@/bot/createBot";
 import { entityListKeyboard } from "@/bot/keyboards";
@@ -85,8 +86,12 @@ export async function renderLiveDashboard(params: {
     if (!calendarByItemId.has(sync.plannerItemId)) calendarByItemId.set(sync.plannerItemId, sync);
   }
   const itemRows = timeline.rows.filter(
-    (row) => row.item && !["history", "hidden"].includes(row.dateBucket),
+    (row) => row.item && !isPinnedContextNote(row.item) && !["history", "hidden"].includes(row.dateBucket),
   );
+  const pinnedItems = timeline.rows
+    .filter((row) => row.item && isPinnedContextNote(row.item) && row.item.status === "active")
+    .map((row) => row.item!)
+    .slice(0, 8);
   const allItems = itemRows.map((row) => row.item!);
   const activeItemReminders = await listActiveRemindersForItems(
     params.userId,
@@ -142,8 +147,17 @@ export async function renderLiveDashboard(params: {
     .map((row) => row.item!)
     .sort(compareDashboardItems)
     .slice(0, 10);
+  const laterItems = itemRows
+    .filter((row) => {
+      if (row.dateBucket !== "soon") return false;
+      const anchor = row.item?.startAt ?? row.item?.dueAt;
+      return Boolean(anchor && anchor > weekEnd);
+    })
+    .map((row) => row.item!)
+    .sort(compareDashboardItems)
+    .slice(0, 10);
   const scheduledIds = new Set(
-    [...currentItems, ...todayItems, ...tomorrowItems, ...soonItems].map((item) => item.id),
+    [...currentItems, ...todayItems, ...tomorrowItems, ...soonItems, ...laterItems].map((item) => item.id),
   );
   const overdueItems = timeline.byBucket.overdue
     .filter((row) => row.item)
@@ -168,11 +182,7 @@ export async function renderLiveDashboard(params: {
   const longTermItems = itemRows
     .filter(
       (row) =>
-        (row.dateBucket === "long_term" ||
-          Boolean(
-            (row.item?.startAt ?? row.item?.dueAt) &&
-            (row.item?.startAt ?? row.item?.dueAt)! > weekEnd,
-          )) &&
+        row.dateBucket === "long_term" &&
         row.item &&
         !importantItems.some((item) => item.id === row.item!.id),
     )
@@ -185,6 +195,10 @@ export async function renderLiveDashboard(params: {
       .map((row) => row.item!)
       .filter((item) => !pastTodayIds.has(item.id)),
   ].slice(0, 5);
+  const carryoverItems = unresolvedItems.filter((item) => item.metadata?.untilDoneCarryover === true);
+  const unresolvedNonCarryoverItems = unresolvedItems.filter(
+    (item) => item.metadata?.untilDoneCarryover !== true,
+  );
   const conflicts = detectPlanConflicts(allItems, { now });
   const itemById = new Map(allItems.map((item) => [item.id, item]));
   const hiddenBackgroundPolicies = timeline.policies.filter((policy) =>
@@ -229,11 +243,14 @@ export async function renderLiveDashboard(params: {
     requiresAnswer: actionablePostEventPolicies.length,
     tomorrow: tomorrowItems.length,
     soon: soonItems.length,
+    later: laterItems.length,
+    pinned: pinnedItems.length,
     important: importantItems.length,
     longTermRules: longTermItems.length,
     overdue: overdueItems.length,
     pastReview: pastReviewItems.length,
-    unresolved: unresolvedItems.length,
+    carryover: carryoverItems.length,
+    unresolved: unresolvedNonCarryoverItems.length,
   });
 
   const lines = ["JARVIS · План"];
@@ -268,7 +285,17 @@ export async function renderLiveDashboard(params: {
       },
       item,
     }));
+  const pinnedRowsFor = (items: PlannerItem[]) =>
+    items.map((item) => ({
+      text: formatPinnedContextNoteLine(item),
+      ref: { type: "planner_item" as const, id: item.id },
+      item,
+    }));
 
+  if (pinnedItems.length) {
+    lines.push("", "Закреплено:");
+    pushRows(pinnedRowsFor(pinnedItems));
+  }
   if (currentItems.length) {
     lines.push("", "Сейчас / идёт:");
     pushRows(itemRowsFor(currentItems));
@@ -313,6 +340,10 @@ export async function renderLiveDashboard(params: {
     lines.push("", "Скоро:");
     pushRows(itemRowsFor(soonItems, true));
   }
+  if (laterItems.length) {
+    lines.push("", "Позже:");
+    pushRows(itemRowsFor(laterItems, true));
+  }
   if (conflicts.length) {
     lines.push("", "Конфликты:");
     lines.push(
@@ -336,10 +367,14 @@ export async function renderLiveDashboard(params: {
     pushRows(itemRowsFor(pastReviewItems, true));
     lines.push(formatRuItemsRequireDecision(pastReviewItems.length));
   }
-  if (unresolvedItems.length) {
+  if (carryoverItems.length) {
+    lines.push("", "Не закрыто со вчера:");
+    pushRows(itemRowsFor(carryoverItems, false));
+  }
+  if (unresolvedNonCarryoverItems.length) {
     lines.push("", "Неразобранное:");
-    pushRows(itemRowsFor(unresolvedItems, true));
-    lines.push(formatRuItemsRequireDecision(unresolvedItems.length));
+    pushRows(itemRowsFor(unresolvedNonCarryoverItems, true));
+    lines.push(formatRuItemsRequireDecision(unresolvedNonCarryoverItems.length));
   }
   if (!orderedItems.length && allItems.length) {
     const fallback = allItems.slice(0, 8);
@@ -370,11 +405,14 @@ export async function renderLiveDashboard(params: {
         reviewRequiredPolicies: reviewRequiredPolicies.length,
         tomorrow: tomorrowItems.length,
         soon: soonItems.length,
+        later: laterItems.length,
+        pinned: pinnedItems.length,
         important: importantItems.length,
         longTerm: longTermItems.length,
         overdue: overdueItems.length,
         pastReview: pastReviewItems.length,
-        unresolved: unresolvedItems.length,
+        carryover: carryoverItems.length,
+        unresolved: unresolvedNonCarryoverItems.length,
       },
       hiddenBackgroundPolicies: hiddenBackgroundPolicies.length,
       conflictCount: conflicts.length,
@@ -394,6 +432,7 @@ export async function renderLiveDashboard(params: {
 
 function buildPlanRenderModel(counts: {
   current: number;
+  pinned: number;
   todayEvents: number;
   todayTasks: number;
   standaloneReminders: number;
@@ -401,15 +440,18 @@ function buildPlanRenderModel(counts: {
   requiresAnswer: number;
   tomorrow: number;
   soon: number;
+  later: number;
   important: number;
   longTermRules: number;
   overdue: number;
   pastReview: number;
+  carryover: number;
   unresolved: number;
 }): PlanRenderModel {
   return {
     sections: [
       { id: "current", title: "Сейчас / идёт", rowCount: counts.current },
+      { id: "pinned", title: "Закреплено", rowCount: counts.pinned },
       { id: "today_events", title: "Сегодня — события", rowCount: counts.todayEvents },
       { id: "today_tasks", title: "Сегодня — задачи", rowCount: counts.todayTasks },
       {
@@ -425,6 +467,7 @@ function buildPlanRenderModel(counts: {
       { id: "requires_answer", title: "Требует ответа", rowCount: counts.requiresAnswer },
       { id: "tomorrow", title: "Завтра", rowCount: counts.tomorrow },
       { id: "soon", title: "Скоро", rowCount: counts.soon },
+      { id: "later", title: "Позже", rowCount: counts.later },
       { id: "important", title: "Важное", rowCount: counts.important },
       {
         id: "long_term_rules",
@@ -433,6 +476,7 @@ function buildPlanRenderModel(counts: {
       },
       { id: "overdue", title: "Просрочено", rowCount: counts.overdue },
       { id: "past_review", title: "Прошло — решить", rowCount: counts.pastReview },
+      { id: "carryover", title: "Не закрыто со вчера", rowCount: counts.carryover },
       { id: "unresolved", title: "Неразобранное", rowCount: counts.unresolved },
     ].filter((section) => section.rowCount > 0),
   };
@@ -448,9 +492,10 @@ export async function renderReminderPolicyList(params: {
       error: error instanceof Error ? error.message : String(error),
     });
   });
-  const [timeline, legacyAll] = await Promise.all([
+  const [timeline, legacyAll, pinnedNotes] = await Promise.all([
     buildUserTimelineView({ userId: params.userId, timezone: params.timezone }),
     listLegacyReminderLikeItems(params.userId, 50),
+    listPinnedContextNotes(params.userId, 30),
   ]);
   const policies = timeline.policies.filter((policy) => {
     if (params.category) {
@@ -485,6 +530,9 @@ export async function renderReminderPolicyList(params: {
           "",
           "Они не считаются работающими регулярными напоминаниями до конвертации.",
         ]
+      : []),
+    ...(pinnedNotes.length
+      ? ["", "Закреплённые заметки:", ...pinnedNotes.map((item) => formatPinnedContextNoteLine(item))]
       : []),
   ].join("\n");
 }

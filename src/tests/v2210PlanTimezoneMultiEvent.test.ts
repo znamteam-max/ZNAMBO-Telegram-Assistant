@@ -56,7 +56,7 @@ describe("V2.21.0 owner timezone, visual plan and multi-event reminders", () => 
       now,
     );
 
-    expect(text).toContain("⏰ за 1 ч; доп. напоминание 13:50");
+    expect(text).toContain("⏰ за час; доп. напоминание 13:50");
     expect(text.match(/⏰/g)).toHaveLength(1);
     expect(formatEventFollowupReminderLines([reminder()], timezone, { item, now })).toContain(
       "доп. напоминание 13:50",

@@ -36,10 +36,10 @@ describe("current release notification and reminder setup", () => {
       inspection: healthyInspection(),
     });
 
-    expect(text).toContain("session escape");
-    expect(text).toContain("interval-window reminder");
-    expect(text).toContain("recurring reminder card UX");
-    expect(text).toContain("V2.22.0");
+    expect(text).toContain("scheduled creation intents");
+    expect(text).toContain("закреплённые контекстные заметки");
+    expect(text).toContain("re-nag prompt");
+    expect(text).toContain("V2.23.0");
     expect(text).not.toContain("????");
     expect(text).not.toContain("пїЅ");
     expect(hasMojibakeSignal(text)).toBe(false);
@@ -59,7 +59,8 @@ describe("current release notification and reminder setup", () => {
     );
 
     const sentText = harness.send.mock.calls[0]?.[0].text ?? "";
-    expect(sentText).toContain("interval-window reminder");
+    expect(sentText).toContain("scheduled creation intents");
+    expect(sentText).toContain("закреплённые контекстные заметки");
     expect(sentText).not.toContain("????");
   });
 

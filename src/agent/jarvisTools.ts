@@ -37,6 +37,7 @@ import {
   undoActionKeyboard,
 } from "@/bot/keyboards";
 import { isGarbageOrTestItem } from "@/domain/itemVisibility";
+import { isPinnedContextNote } from "@/domain/pinnedContextNotes";
 import { undoLastReminderPolicyEdit } from "@/services/reminderPolicyEditor";
 import { buildUserTimelineView } from "@/services/userTimeline";
 
@@ -102,6 +103,7 @@ export async function renderTaskViewTool(params: ToolParams): Promise<JarvisTool
     .filter(
       (row) =>
         row.item &&
+        !isPinnedContextNote(row.item) &&
         !["history", "hidden"].includes(row.dateBucket),
     )
     .map((row) => row.item!);
@@ -550,6 +552,7 @@ export async function cleanupGarbageTool(params: ToolParams): Promise<JarvisTool
   const now = params.now ?? new Date();
   const duplicates = duplicateItemIds(items);
   const garbage = items.filter((item) => {
+    if (isPinnedContextNote(item)) return false;
     const anchor = item.startAt ?? item.dueAt;
     return (
       isGarbageOrTestItem(item) ||
@@ -903,10 +906,12 @@ function buildDisplaySections(items: PlannerItem[], now: Date): TaskViewSection[
   const training: PlannerItem[] = [];
   const recurring: PlannerItem[] = [];
   const floating: PlannerItem[] = [];
+  const pinned: PlannerItem[] = [];
   const notes: PlannerItem[] = [];
   for (const item of sortJarvisItemsForDisplay(items)) {
     const when = item.startAt ?? item.dueAt;
-    if (item.kind === "recurring_task") recurring.push(item);
+    if (isPinnedContextNote(item)) pinned.push(item);
+    else if (item.kind === "recurring_task") recurring.push(item);
     else if (item.kind === "training") training.push(item);
     else if (item.kind === "note") notes.push(item);
     else if (when && when < now) overdue.push(item);
@@ -914,6 +919,7 @@ function buildDisplaySections(items: PlannerItem[], now: Date): TaskViewSection[
     else scheduled.push(item);
   }
   return [
+    { title: "Закреплено", items: pinned },
     { title: "Просрочено", items: overdue },
     { title: "Расписание", items: scheduled },
     { title: "Тренировки", items: training },
