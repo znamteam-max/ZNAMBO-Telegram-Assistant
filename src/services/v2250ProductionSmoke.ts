@@ -159,7 +159,7 @@ export async function runV2250PinnedCarNoteRepairSmoke(params: {
     description: `парковка за ВкусВиллом ${smokeRunId.slice(0, 8)}`,
     timezone: params.timezone,
     category: "pinned_context",
-    metadata: { isTest: true, smokeRunId, pinnedContext: true, pinnedCategory: "car_location" },
+    metadata: { smokeRunId, pinnedContext: true, pinnedCategory: "car_location" },
   });
   const policy = await createReminderPolicyIfMissing({
     userId: params.userId,
