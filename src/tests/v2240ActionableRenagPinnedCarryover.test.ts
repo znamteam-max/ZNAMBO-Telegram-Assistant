@@ -7,6 +7,7 @@ import {
 } from "@/bot/keyboards";
 import { collapseMonthlyAuditSpam } from "@/services/actionLog";
 import { parsePinnedContextIntent } from "@/domain/pinnedContextNotes";
+import { formatBeforeEventOffset } from "@/domain/reminderPolicyPresentation";
 import { renderActionableReminderCard } from "@/telegram/reminderCard";
 import { isWrongCarLocationReminder } from "@/services/v2240ProductionRepair";
 import type { AgentAction, PlannerItem, Reminder, ReminderPolicy } from "@/db/schema";
@@ -52,11 +53,22 @@ describe("V2.24 actionable reminder cards", () => {
       "😴 1 час",
       "😴 2 часа",
       "😴 4 часа",
-      "🌙 До конца дня",
+      "🌙 До завтра",
       "✏️ Изменить",
       "🔕 Остановить",
       "⬅️ К плану",
     ]);
+  });
+
+  it("renders technical before-event offsets as human time labels", () => {
+    const labels = [
+      formatBeforeEventOffset(645, new Date("2026-06-18T05:15:00.000Z"), "Europe/Moscow"),
+      formatBeforeEventOffset(165, new Date("2026-06-18T13:15:00.000Z"), "Europe/Moscow"),
+      formatBeforeEventOffset(168 * 60, new Date("2026-06-11T16:00:00.000Z"), "Europe/Moscow"),
+    ];
+
+    expect(labels).toEqual(["в день визита в 08:15", "в день визита в 16:15", "за неделю"]);
+    expect(labels.join(", ")).not.toMatch(/\b\d+\s*(минут|мин|ч)\b/iu);
   });
 
   it("hides four-hour snooze when it exceeds a finite policy window", () => {
@@ -209,7 +221,10 @@ describe("V2.24 pending prompt re-nag", () => {
 
     expect(result.sent).toBe(1);
     expect(sendMessage.mock.calls[0]?.[2]).toEqual(
-      expect.objectContaining({ reply_markup: expect.any(InlineKeyboard) }),
+      expect.objectContaining({
+        reply_markup: expect.any(InlineKeyboard),
+        disable_notification: false,
+      }),
     );
     expect(renagMocks.writeAudit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -240,8 +255,50 @@ describe("V2.24 pending prompt re-nag", () => {
       sender: { sendMessage },
     });
 
-    expect(result).toEqual({ checked: 1, sent: 0, cancelled: 1 });
+    expect(result).toEqual(expect.objectContaining({ checked: 1, sent: 0, cancelled: 1 }));
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("edits the active re-nag card instead of sending a duplicate", async () => {
+    const { runDuePendingPromptRenags } = await import("@/services/pendingPromptRenag");
+    renagMocks.listDue.mockResolvedValueOnce([
+      pendingAction({ output: { lastTelegramMessageId: 77, renagCount: 1 } }),
+    ]);
+    renagMocks.getUser.mockResolvedValueOnce({
+      id: "22222222-2222-4222-8222-222222222222",
+      telegramUserId: 52203584n,
+    });
+    renagMocks.resolve.mockResolvedValueOnce({
+      status: "ready",
+      card: {
+        text: "Напоминание: тест",
+        keyboard: new InlineKeyboard().text("✅ Сделал", "reminder:ack:test"),
+        renderMode: "task_until_done",
+        allowedActions: ["ack"],
+        buttonsAttached: true,
+      },
+    });
+    const sendMessage = vi.fn();
+    const editMessageText = vi.fn(async () => true);
+
+    const result = await runDuePendingPromptRenags({
+      now: new Date("2026-06-18T10:11:00.000Z"),
+      sender: { sendMessage, editMessageText },
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ sent: 0, edited: 1, duplicateActiveSessions: 0 }),
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(editMessageText).toHaveBeenCalledWith(
+      "52203584",
+      77,
+      "Напоминание: тест",
+      expect.objectContaining({ disable_notification: false }),
+    );
+    expect(renagMocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "assistant.renag_card_edited" }),
+    );
   });
 });
 
@@ -336,8 +393,8 @@ function reminder(overrides: Partial<Reminder> = {}): Reminder {
   };
 }
 
-function pendingAction(): AgentAction {
-  return {
+function pendingAction(overrides: Partial<AgentAction> = {}): AgentAction {
+  const base: AgentAction = {
     id: "55555555-5555-4555-8555-555555555555",
     userId: "22222222-2222-4222-8222-222222222222",
     sourceMessageId: null,
@@ -355,6 +412,18 @@ function pendingAction(): AgentAction {
     },
     undoPayload: {},
     createdAt: new Date("2026-06-18T10:00:00.000Z"),
+  };
+  return {
+    ...base,
+    ...overrides,
+    input: {
+      ...base.input,
+      ...(overrides.input ?? {}),
+    },
+    output: {
+      ...base.output,
+      ...(overrides.output ?? {}),
+    },
   };
 }
 

@@ -88,10 +88,11 @@ export async function renderLiveDashboard(params: {
   const itemRows = timeline.rows.filter(
     (row) => row.item && !isPinnedContextNote(row.item) && !["history", "hidden"].includes(row.dateBucket),
   );
-  const pinnedItems = timeline.rows
+  const allPinnedItems = timeline.rows
     .filter((row) => row.item && isPinnedContextNote(row.item) && row.item.status === "active")
-    .map((row) => row.item!)
-    .slice(0, 8);
+    .map((row) => row.item!);
+  const pinnedItems = allPinnedItems.slice(0, 8);
+  const pinnedItemIds = new Set(allPinnedItems.map((item) => item.id));
   const allItems = itemRows.map((row) => row.item!);
   const activeItemReminders = await listActiveRemindersForItems(
     params.userId,
@@ -210,6 +211,7 @@ export async function renderLiveDashboard(params: {
   const displayPolicies = timeline.policies.filter(
     (policy) =>
       policy.metadata?.hiddenFromDashboard !== true &&
+      !pinnedItemIds.has(policy.itemId ?? "") &&
       !isBackgroundPostEventPolicy(policy, itemById.get(policy.itemId ?? ""), now),
   );
   const reviewRequiredPolicies = displayPolicies

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { InlineKeyboard } from "grammy";
 
 import {
@@ -133,8 +135,22 @@ export async function runDuePendingPromptRenags(params: {
     : dueActions;
   let sent = 0;
   let cancelled = 0;
+  let edited = 0;
+  let replaced = 0;
+  let duplicateActiveSessions = 0;
+  const seenTargets = new Set<string>();
   for (const action of actions) {
     if (!action.userId) continue;
+    const activeTargetKey = targetKey(action);
+    if (activeTargetKey && seenTargets.has(activeTargetKey)) {
+      await cancelAction(action, "duplicate_active_renag_session", {
+        duplicateActiveSession: true,
+      });
+      duplicateActiveSessions += 1;
+      cancelled += 1;
+      continue;
+    }
+    if (activeTargetKey) seenTargets.add(activeTargetKey);
     const expiresAt = parseDate(action.output?.expiresAt);
     if (expiresAt && expiresAt <= params.now) {
       await cancelAction(action, "expired");
@@ -170,7 +186,10 @@ export async function runDuePendingPromptRenags(params: {
       const message = await params.sender.sendMessage(
         user.telegramUserId.toString(),
         resolution.text,
-        { reply_markup: new InlineKeyboard().text("К плану", "dashboard:refresh") },
+        {
+          reply_markup: new InlineKeyboard().text("К плану", "dashboard:refresh"),
+          disable_notification: false,
+        },
       );
       await cancelAction(action, resolution.reason, {
         messageId: message.message_id ?? null,
@@ -181,10 +200,106 @@ export async function runDuePendingPromptRenags(params: {
       continue;
     }
     const card = resolution.card;
-    const message = await params.sender.sendMessage(user.telegramUserId.toString(), card.text, {
+    const messageOptions = {
       reply_markup: card.keyboard,
-    });
+      disable_notification: false,
+    };
+    const renderedHash = hashRenderedCard(card.text, messageOptions.reply_markup);
+    const previousMessageId = numericOutput(action.output?.lastTelegramMessageId);
     const renagCount = Number(action.output?.renagCount ?? 0) + 1;
+    if (previousMessageId) {
+      if (typeof params.sender.editMessageText === "function") {
+        try {
+          await params.sender.editMessageText(
+            user.telegramUserId.toString(),
+            previousMessageId,
+            card.text,
+            messageOptions,
+          );
+          await updateAgentAction({
+            userId: user.id,
+            actionId: action.id,
+            status: "pending",
+            output: {
+              ...(action.output ?? {}),
+              lastEditedAt: params.now.toISOString(),
+              nextRenagAt: new Date(params.now.getTime() + 5 * 60_000).toISOString(),
+              renagCount,
+              lastRenderedHash: renderedHash,
+              lastRenderMode: card.renderMode,
+              lastButtonsAttached: card.buttonsAttached,
+              activeCardStatus: "active",
+            },
+          });
+          await writeAudit({
+            userId: user.id,
+            action: "assistant.renag_card_edited",
+            entityType: "agent_action",
+            entityId: action.id,
+            details: renagAuditDetails(action, {
+              renagCount,
+              messageId: previousMessageId,
+              renderMode: card.renderMode,
+              buttonsAttached: card.buttonsAttached,
+              allowedActions: card.allowedActions,
+              renderedHash,
+            }),
+          }).catch(() => undefined);
+          edited += 1;
+          continue;
+        } catch (error) {
+          const editFailureReason = classifyTelegramEditFailure(error);
+          await writeAudit({
+            userId: user.id,
+            action: "assistant.renag_card_edit_failed",
+            entityType: "agent_action",
+            entityId: action.id,
+            details: renagAuditDetails(action, {
+              messageId: previousMessageId,
+              editFailureReason,
+            }),
+          }).catch(() => undefined);
+        }
+      } else {
+        await updateAgentAction({
+          userId: user.id,
+          actionId: action.id,
+          status: "pending",
+          output: {
+            ...(action.output ?? {}),
+            lastEditSkippedAt: params.now.toISOString(),
+            nextRenagAt: new Date(params.now.getTime() + 5 * 60_000).toISOString(),
+            renagCount,
+            lastRenderedHash: renderedHash,
+            lastRenderMode: card.renderMode,
+            lastButtonsAttached: card.buttonsAttached,
+            activeCardStatus: "active",
+            editUnavailable: true,
+          },
+        });
+        await writeAudit({
+          userId: user.id,
+          action: "assistant.renag_card_edit_unavailable",
+          entityType: "agent_action",
+          entityId: action.id,
+          details: renagAuditDetails(action, {
+            renagCount,
+            messageId: previousMessageId,
+            renderMode: card.renderMode,
+            buttonsAttached: card.buttonsAttached,
+            renderedHash,
+          }),
+        }).catch(() => undefined);
+        edited += 1;
+        continue;
+      }
+    }
+
+    const message = await params.sender.sendMessage(
+      user.telegramUserId.toString(),
+      card.text,
+      messageOptions,
+    );
     await updateAgentAction({
       userId: user.id,
       actionId: action.id,
@@ -195,30 +310,45 @@ export async function runDuePendingPromptRenags(params: {
         nextRenagAt: new Date(params.now.getTime() + 5 * 60_000).toISOString(),
         renagCount,
         lastTelegramMessageId: message.message_id ?? null,
+        lastRenderedHash: renderedHash,
         lastRenderMode: card.renderMode,
         lastButtonsAttached: card.buttonsAttached,
+        activeCardStatus: "active",
+        supersededAt: null,
+        supersededOldCards: Boolean(previousMessageId),
+        supersededMessageIds: previousMessageId
+          ? [...arrayOutput(action.output?.supersededMessageIds), previousMessageId]
+          : arrayOutput(action.output?.supersededMessageIds),
       },
+    });
+    await auditTelegramSendMode({
+      userId: user.id,
+      targetItemId: action.input?.targetItemId,
+      targetPolicyId: action.input?.targetPolicyId,
+      targetReminderId: action.input?.targetReminderId,
     });
     await writeAudit({
       userId: user.id,
-      action: "assistant.pending_action_prompt_renag_sent",
+      action: previousMessageId
+        ? "assistant.renag_card_replaced"
+        : "assistant.pending_action_prompt_renag_sent",
       entityType: "agent_action",
       entityId: action.id,
-      details: {
+      details: renagAuditDetails(action, {
         renagCount,
         messageId: message.message_id ?? null,
-        promptType: action.input?.promptType ?? null,
-        targetItemId: action.input?.targetItemId ?? null,
-        targetPolicyId: action.input?.targetPolicyId ?? null,
-        targetReminderId: action.input?.targetReminderId ?? null,
+        supersededMessageId: previousMessageId ?? null,
+        editFailureReason: previousMessageId ? "edit_failed_or_unavailable" : null,
         renderMode: card.renderMode,
         buttonsAttached: card.buttonsAttached,
         allowedActions: card.allowedActions,
-      },
+        renderedHash,
+      }),
     }).catch(() => undefined);
     sent += 1;
+    if (previousMessageId) replaced += 1;
   }
-  return { checked: actions.length, sent, cancelled };
+  return { checked: actions.length, sent, cancelled, edited, replaced, duplicateActiveSessions };
 }
 
 async function cancelAction(
@@ -263,4 +393,79 @@ function parseDate(value: unknown) {
   if (typeof value !== "string") return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function targetKey(
+  action: Awaited<ReturnType<typeof listDuePendingAgentActionsByType>>[number],
+) {
+  const targetParts = [
+    action.input?.targetReminderId,
+    action.input?.targetPolicyId,
+    action.input?.targetItemId,
+  ].filter(Boolean);
+  if (!targetParts.length) return null;
+  return [
+    action.userId ?? "",
+    ...targetParts,
+  ].join(":");
+}
+
+function numericOutput(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function arrayOutput(value: unknown) {
+  return Array.isArray(value) ? value.filter((entry): entry is number => Number.isFinite(Number(entry))).map(Number) : [];
+}
+
+function hashRenderedCard(text: string, replyMarkup: unknown) {
+  return createHash("sha256")
+    .update(JSON.stringify({ text, replyMarkup }))
+    .digest("hex")
+    .slice(0, 24);
+}
+
+function classifyTelegramEditFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/message is not modified/i.test(message)) return "message_not_modified";
+  if (/message to edit not found|message can't be edited|too old|inaccessible/i.test(message)) {
+    return "message_not_editable";
+  }
+  return "edit_failed";
+}
+
+function renagAuditDetails(
+  action: Awaited<ReturnType<typeof listDuePendingAgentActionsByType>>[number],
+  details: Record<string, unknown>,
+) {
+  return {
+    promptType: action.input?.promptType ?? null,
+    targetItemId: action.input?.targetItemId ?? null,
+    targetPolicyId: action.input?.targetPolicyId ?? null,
+    targetReminderId: action.input?.targetReminderId ?? null,
+    ...details,
+  };
+}
+
+async function auditTelegramSendMode(params: {
+  userId: string;
+  targetItemId?: unknown;
+  targetPolicyId?: unknown;
+  targetReminderId?: unknown;
+}) {
+  await writeAudit({
+    userId: params.userId,
+    action: "assistant.telegram_send_mode",
+    entityType: "reminder",
+    entityId: typeof params.targetReminderId === "string" ? params.targetReminderId : null,
+    details: {
+      messageKind: "renag",
+      deliverySoundMode: "loud_reminder",
+      disableNotification: false,
+      targetItemId: typeof params.targetItemId === "string" ? params.targetItemId : null,
+      targetPolicyId: typeof params.targetPolicyId === "string" ? params.targetPolicyId : null,
+      targetReminderId: typeof params.targetReminderId === "string" ? params.targetReminderId : null,
+    },
+  }).catch(() => undefined);
 }

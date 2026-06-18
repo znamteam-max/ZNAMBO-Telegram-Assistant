@@ -336,8 +336,8 @@ export function formatBeforeEventOffset(
     deliveryAt && timezone
       ? DateTime.fromJSDate(deliveryAt, { zone: "utc" }).setZone(timezone).toFormat("HH:mm")
       : null;
-  if (minutes === 10) return "за 10 минут";
-  if (minutes === 30) return "за 30 минут";
+  if (minutes === 10) return "за десять минут";
+  if (minutes === 30) return "за полчаса";
   if (minutes === 60) return "за час";
   if (minutes === 120) return "за 2 часа";
   if (minutes === 2880) return "за 2 дня";
@@ -349,8 +349,8 @@ export function formatBeforeEventOffset(
     return `за ${days} ${dayWord(days)}`;
   }
   if (minutes > 24 * 60 && minutes <= 48 * 60 && clock) return `за день в ${clock}`;
-  if (minutes % 60 === 0) return `за ${minutes / 60} ч`;
-  return `за ${minutes} минут`;
+  if (clock) return `в день визита в ${clock}`;
+  return "заранее";
 }
 
 function dayWord(days: number) {

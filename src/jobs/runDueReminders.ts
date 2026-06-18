@@ -33,6 +33,7 @@ import {
   recordRunnerFinished,
   recordRunnerStarted,
 } from "@/db/queries/schedulerHealth";
+import { writeAudit } from "@/db/queries/audit";
 import { acquireRuntimeLease, releaseRuntimeLease } from "@/db/queries/runtimeLocks";
 import { syncCompactChat } from "@/telegram/compactChatOrchestrator";
 import type { LiveDashboardTelegramApi } from "@/telegram/liveDashboard";
@@ -52,6 +53,12 @@ export type ReminderTelegramSender = {
     text: string,
     options?: Record<string, unknown>,
   ): Promise<{ message_id?: number }>;
+  editMessageText?(
+    chatId: string,
+    messageId: number,
+    text: string,
+    options?: Record<string, unknown>,
+  ): Promise<unknown>;
 };
 
 export async function runDueReminders(params?: {
@@ -324,6 +331,7 @@ async function sendReminder(
   const text = card.text;
   const messageOptions = {
     reply_markup: card.keyboard,
+    disable_notification: false,
   };
   const actionRequired = isActionRequiredReminder(reminder, item);
   if (options?.compact) {
@@ -341,6 +349,7 @@ async function sendReminder(
       now: options.now,
       api: sender as LiveDashboardTelegramApi,
     });
+    await auditReminderSendMode({ user, reminder, messageKind: "reminder", compact: true });
     return {
       message_id: synced.reminderMessageId ?? undefined,
       actionRequired,
@@ -353,6 +362,7 @@ async function sendReminder(
     };
   }
   const sent = await sender.sendMessage(user.telegramUserId.toString(), text, messageOptions);
+  await auditReminderSendMode({ user, reminder, messageKind: "reminder", compact: false });
   return {
     ...sent,
     actionRequired,
@@ -363,6 +373,30 @@ async function sendReminder(
     allowedActions: card.allowedActions,
     buttonsAttached: card.buttonsAttached,
   };
+}
+
+async function auditReminderSendMode(params: {
+  user: Awaited<ReturnType<typeof getUserById>>;
+  reminder: ClaimedReminder;
+  messageKind: "reminder" | "renag" | "plan" | "status";
+  compact: boolean;
+}) {
+  if (!params.user) return;
+  await writeAudit({
+    userId: params.user.id,
+    action: "assistant.telegram_send_mode",
+    entityType: "reminder",
+    entityId: params.reminder.id,
+    details: {
+      messageKind: params.messageKind,
+      deliverySoundMode: "loud_reminder",
+      disableNotification: false,
+      compact: params.compact,
+      targetReminderId: params.reminder.id,
+      targetPolicyId: params.reminder.policyId ?? null,
+      targetItemId: params.reminder.plannerItemId ?? null,
+    },
+  }).catch(() => undefined);
 }
 
 function isPostEventReminder(reminder: ClaimedReminder) {

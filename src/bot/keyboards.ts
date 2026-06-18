@@ -698,6 +698,13 @@ export function actionableReminderKeyboard(params: {
   const actions = actionableReminderActions(params);
   const includes = (action: ActionableReminderAction) => actions.includes(action);
   const recurringRule = Boolean(params.policy?.recurrenceRule);
+  const untilDone = Boolean(
+    params.policy?.policyType === "nag_until_ack" ||
+      params.policy?.metadata?.stopCondition === "until_done" ||
+      params.policy?.metadata?.untilDone === true ||
+      params.policy?.metadata?.untilDoneCarryover === true ||
+      params.policy?.metadata?.openEndedUntilDone === true,
+  );
   const keyboard = new InlineKeyboard()
     .text("✅ Сделал", `reminder:ack:${params.reminderId}`)
     .text("😴 30 мин", `reminder:snooze:${params.reminderId}:30`)
@@ -711,7 +718,7 @@ export function actionableReminderKeyboard(params: {
       keyboard.text("😴 4 часа", `reminder:snooze:${params.reminderId}:240`);
     }
     if (includes("snooze_end_of_day")) {
-      keyboard.text("🌙 До конца дня", `reminder:snooze_eod:${params.reminderId}`);
+      keyboard.text(untilDone ? "🌙 До завтра" : "🌙 До конца дня", `reminder:snooze_eod:${params.reminderId}`);
     }
   }
 

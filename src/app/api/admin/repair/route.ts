@@ -142,6 +142,17 @@ import {
   runV2240OpenEndedNagSmoke,
   runV2240PinnedRepairSmoke,
 } from "@/services/v2240ProductionSmoke";
+import {
+  applyV2250ProductionRepair,
+  previewV2250ProductionRepair,
+} from "@/services/v2250ProductionRepair";
+import {
+  runV2250EndOfDayUntilTomorrowSmoke,
+  runV2250HumanOffsetRenderSmoke,
+  runV2250InPlaceRenagSmoke,
+  runV2250LoudReminderDeliverySmoke,
+  runV2250PinnedCarNoteRepairSmoke,
+} from "@/services/v2250ProductionSmoke";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { notifyProductionRelease } from "@/services/releaseNotification";
 import { getOwnerTimeDebug } from "@/services/timeDiagnostics";
@@ -571,6 +582,56 @@ export async function POST(request: Request) {
       userId: owner.id,
       timezone: owner.timezone,
     });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2250_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV2250ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2250_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV2250ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2250_in_place_renag_smoke" && body.confirm === true) {
+    const result = await runV2250InPlaceRenagSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2250_loud_reminder_delivery_smoke" && body.confirm === true) {
+    const result = await runV2250LoudReminderDeliverySmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2250_end_of_day_until_tomorrow_smoke" && body.confirm === true) {
+    const result = await runV2250EndOfDayUntilTomorrowSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2250_pinned_car_note_repair_smoke" && body.confirm === true) {
+    const result = await runV2250PinnedCarNoteRepairSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2250_human_offset_render_smoke" && body.confirm === true) {
+    const result = await runV2250HumanOffsetRenderSmoke({ userId: owner.id });
     return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
   }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {

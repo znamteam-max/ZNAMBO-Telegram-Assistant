@@ -143,6 +143,10 @@ import {
   applyV2240ProductionRepair,
   previewV2240ProductionRepair,
 } from "@/services/v2240ProductionRepair";
+import {
+  applyV2250ProductionRepair,
+  previewV2250ProductionRepair,
+} from "@/services/v2250ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -248,6 +252,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2220 preview|apply - session escape, interval-window and recurring-card repair",
         "/admin_repair_v2230 preview|apply - creation intent, pinned notes, re-nag and labels repair",
         "/admin_repair_v2240 preview|apply - actionable re-nag, car pinned notes and carryover repair",
+        "/admin_repair_v2250 preview|apply - in-place re-nag, loud delivery and EOD semantics repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -1651,6 +1656,42 @@ export function registerCommands(bot: Bot<BotContext>) {
       });
     }
   });
+  bot.command("admin_repair_v2250", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2250ProductionRepair({ userId: owner.id, timezone: owner.timezone })
+        : await previewV2250ProductionRepair({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.25 repair applied:" : "V2.25 repair preview:",
+        `• duplicate active re-nag sessions: ${numberValue(result, "duplicateActiveRenagSessions")}`,
+        `• car reminder policies to convert: ${numberValue(result, "carReminderPoliciesToConvert")}`,
+        `• wrong end-of-day snoozes: ${numberValue(result, "carryoverEndOfDayWrongSnoozes")}`,
+        `• technical before-event labels: ${numberValue(result, "technicalBeforeEventLabels")}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• superseded duplicate re-nag sessions: ${numberValue(result, "supersededDuplicateRenagSessions")}`,
+              `• converted pinned car notes: ${numberValue(result, "convertedPinnedCarNotes")}`,
+              `• cancelled car policies: ${numberValue(result, "cancelledCarReminderPolicies")}`,
+              `• moved EOD snoozes: ${numberValue(result, "movedEndOfDaySnoozesToTomorrow")}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2250 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
   bot.command("admin_state_v252", async (ctx) => {
     const owner = requireOwner(ctx);
     const state = await getProductionStateV252({
@@ -1866,6 +1907,12 @@ function arrayLength(value: unknown, key: string) {
   if (!value || typeof value !== "object") return 0;
   const nested = (value as Record<string, unknown>)[key];
   return Array.isArray(nested) ? nested.length : 0;
+}
+
+function numberValue(value: unknown, key: string) {
+  if (!value || typeof value !== "object") return 0;
+  const nested = (value as Record<string, unknown>)[key];
+  return typeof nested === "number" ? nested : 0;
 }
 
 async function renderCommandSchedule(ctx: BotContext, scope: "today" | "tomorrow" | "week") {

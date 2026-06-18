@@ -36,10 +36,10 @@ describe("current release notification and reminder setup", () => {
       inspection: healthyInspection(),
     });
 
-    expect(text).toContain("actionable re-nag cards");
-    expect(text).toContain("закрепленные заметки о машине");
-    expect(text).toContain("policy snooze");
-    expect(text).toContain("V2.24.0");
+    expect(text).toContain("re-nag карточки сначала редактируют");
+    expect(text).toContain("До завтра");
+    expect(text).toContain("loud delivery");
+    expect(text).toContain("V2.25.0");
     expect(text).not.toContain("????");
     expect(text).not.toContain("пїЅ");
     expect(hasMojibakeSignal(text)).toBe(false);
@@ -61,8 +61,8 @@ describe("current release notification and reminder setup", () => {
     );
 
     const sentText = harness.send.mock.calls[0]?.[0].text ?? "";
-    expect(sentText).toContain("actionable re-nag cards");
-    expect(sentText).toContain("закрепленные заметки о машине");
+    expect(sentText).toContain("re-nag карточки сначала редактируют");
+    expect(sentText).toContain("До завтра");
     expect(sentText).not.toContain("????");
   });
 
@@ -118,7 +118,7 @@ describe("current release notification and reminder setup", () => {
     const dashboard = formatDashboardItem(item, timezone, null, true, policies);
 
     expect(lines).toContain("за 2 часа");
-    expect(lines).toContain("за 30 минут");
+    expect(lines).toContain("за полчаса");
     expect(lines.join("\n")).not.toContain("требует проверки");
     expect(lines.join("\n")).not.toContain("один раз");
     expect(dashboard.match(/за 2 часа/g)?.length).toBe(1);

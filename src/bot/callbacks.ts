@@ -35,6 +35,7 @@ import {
   cancelItemReminders,
   getReminderByIdForUser,
   snoozeReminder,
+  snoozeReminderUntil,
   stopRecurringReminders,
 } from "@/db/queries/reminders";
 import { endOfLocalDay, formatRuWeekdayDateTime, startOfLocalDay } from "@/domain/dateTime";
@@ -1583,6 +1584,52 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     ]);
     const now = new Date();
     const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(owner.timezone);
+    const untilDone = isUntilDoneSnoozeTarget(row?.policy ?? null, source ?? null);
+    if (untilDone) {
+      const tomorrowMorning = nowLocal
+        .plus({ days: 1 })
+        .set({ hour: 8, minute: 0, second: 0, millisecond: 0 })
+        .toUTC()
+        .toJSDate();
+      const previousNextReminderAt = row?.policy.nextFireAt?.toISOString() ?? null;
+      const snoozed = await snoozeReminderUntil({
+        userId: owner.id,
+        reminderId,
+        snoozedUntil: tomorrowMorning,
+        now,
+        reason: "button_end_of_day",
+      });
+      await cancelPendingPromptRenagsForTarget({
+        userId: owner.id,
+        targetReminderId: reminderId,
+        targetItemId: source?.plannerItemId ?? row?.policy.itemId ?? null,
+        targetPolicyId: source?.policyId ?? row?.policy.id ?? null,
+        reason: "reminder_snoozed_until_tomorrow",
+      }).catch(() => undefined);
+      await writeAudit({
+        userId: owner.id,
+        action: "assistant.until_done_snoozed_until_tomorrow",
+        entityType: "reminder",
+        entityId: reminderId,
+        details: {
+          targetItemId: source?.plannerItemId ?? row?.policy.itemId ?? null,
+          targetPolicyId: source?.policyId ?? row?.policy.id ?? null,
+          source: "button_end_of_day",
+          previousNextReminderAt,
+          nextReminderAt: tomorrowMorning.toISOString(),
+          timezone: owner.timezone,
+          succeeded: Boolean(snoozed),
+        },
+      }).catch(() => undefined);
+      await ctx.answerCallbackQuery(snoozed ? "До завтра" : "Не удалось отложить");
+      await ctx.reply(
+        row?.policy.metadata?.openEndedUntilDone === true
+          ? "Ок, больше не трогаю сегодня.\nПродолжу завтра в 08:00."
+          : "Ок, больше не трогаю сегодня.\nВернусь завтра в 08:00.",
+      );
+      await refreshAfterCallback(ctx, source?.plannerItemId ?? row?.policy.itemId);
+      return;
+    }
     const endOfDay = nowLocal
       .set({ hour: 23, minute: 59, second: 0, millisecond: 0 })
       .toUTC()
@@ -2823,6 +2870,21 @@ async function refreshAfterCallback(ctx: BotContext, relatedItemId?: string | nu
   });
 }
 
+function isUntilDoneSnoozeTarget(
+  policy: { policyType?: string | null; requireAck?: boolean; metadata?: Record<string, unknown> } | null,
+  reminder: { repeatUntilAck?: boolean; type?: string | null; payload?: Record<string, unknown> } | null,
+) {
+  return Boolean(
+    policy?.policyType === "nag_until_ack" ||
+      policy?.metadata?.stopCondition === "until_done" ||
+      policy?.metadata?.untilDone === true ||
+      policy?.metadata?.untilDoneCarryover === true ||
+      policy?.metadata?.openEndedUntilDone === true ||
+      (policy?.requireAck === true && reminder?.repeatUntilAck === true) ||
+      reminder?.payload?.endOfDaySnoozeSemantic === "resume_tomorrow_morning",
+  );
+}
+
 async function createQuickPolicy(params: {
   userId: string;
   itemId: string;
@@ -2856,11 +2918,10 @@ async function createQuickPolicy(params: {
 }
 
 function formatBeforeEventOffset(minutes: number) {
-  if (minutes === 10) return "за 10 минут";
-  if (minutes === 30) return "за 30 минут";
+  if (minutes === 10) return "за десять минут";
+  if (minutes === 30) return "за полчаса";
   if (minutes === 60) return "за час";
   if (minutes === 120) return "за 2 часа";
   if (minutes === 1440) return "за день";
-  if (minutes % 60 === 0) return `за ${minutes / 60} ч`;
-  return `за ${minutes} минут`;
+  return "заранее";
 }

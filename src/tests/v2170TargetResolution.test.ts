@@ -93,7 +93,7 @@ describe("V2.17.0 target resolution and reminder hygiene", () => {
     ]);
 
     expect(text.match(/за 2 часа/g)?.length).toBe(1);
-    expect(text).toContain("за 30 минут");
+    expect(text).toContain("за полчаса");
     expect(text).not.toContain("один раз");
   });
 

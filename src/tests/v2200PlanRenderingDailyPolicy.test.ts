@@ -68,7 +68,7 @@ describe("V2.20.0 plan rendering, daily policy and callback safety", () => {
       now,
     );
 
-    expect(text).toContain("⏰ за 3 ч, за 2 часа, за час");
+    expect(text).toContain("⏰ в день визита в 11:20, за 2 часа, за час");
     expect(text).not.toContain("🔔");
     expect(text.match(/⏰/g)).toHaveLength(1);
   });

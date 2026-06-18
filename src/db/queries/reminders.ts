@@ -581,6 +581,148 @@ export async function snoozeReminder(params: {
   return snoozeItemReminder(source, params, false);
 }
 
+export async function snoozeReminderUntil(params: {
+  userId: string;
+  reminderId: string;
+  snoozedUntil: Date;
+  now?: Date;
+  reason?: string;
+}) {
+  const now = params.now ?? new Date();
+  const [source] = await getDb()
+    .select()
+    .from(reminders)
+    .where(and(eq(reminders.id, params.reminderId), eq(reminders.userId, params.userId)))
+    .limit(1);
+  if (!source) return null;
+
+  if (source.policyId) {
+    return getDb().transaction(async (tx) => {
+      const [policy] = await tx
+        .select()
+        .from(reminderPolicies)
+        .where(
+          and(
+            eq(reminderPolicies.id, source.policyId!),
+            eq(reminderPolicies.userId, params.userId),
+            eq(reminderPolicies.status, "active"),
+          ),
+        )
+        .limit(1);
+      if (!policy) return null;
+
+      await tx
+        .update(reminders)
+        .set({ status: "cancelled", updatedAt: now })
+        .where(
+          and(eq(reminders.policyId, policy.id), inArray(reminders.status, ["pending", "claimed"])),
+        );
+
+      await tx
+        .update(reminderPolicies)
+        .set({
+          nextFireAt: params.snoozedUntil,
+          snoozedUntil: params.snoozedUntil,
+          snoozeScope: "policy",
+          status: "active",
+          metadata: sql`${reminderPolicies.metadata} || ${JSON.stringify({
+            lastSnoozedAt: now.toISOString(),
+            snoozedUntil: params.snoozedUntil.toISOString(),
+            todayWindowSuppressed: true,
+            endOfDaySnoozeSemantic: "resume_tomorrow_morning",
+            snoozeReason: params.reason ?? "button_end_of_day",
+          })}::jsonb`,
+          updatedAt: now,
+        })
+        .where(eq(reminderPolicies.id, policy.id));
+
+      const [snoozedReminder] = await tx
+        .insert(reminders)
+        .values({
+          userId: policy.userId,
+          plannerItemId: policy.itemId,
+          type: source.type,
+          idempotencyKey: `${source.id}:snooze_until:${params.snoozedUntil.toISOString()}`,
+          scheduledAt: params.snoozedUntil,
+          repeatUntilAck: policy.requireAck || source.repeatUntilAck,
+          parentReminderId: source.parentReminderId ?? source.id,
+          recurrenceKey: source.recurrenceKey ?? policy.recurrenceRule,
+          policyId: policy.id,
+          purpose: "snooze",
+          menuType: source.menuType ?? "reminder",
+          autoDeleteAfterResponse: source.autoDeleteAfterResponse,
+          payload: {
+            ...(source.payload ?? {}),
+            title: policy.title,
+            policyType: policy.policyType,
+            category: policy.category,
+            snoozedFrom: source.id,
+            snoozedUntil: params.snoozedUntil.toISOString(),
+            endOfDaySnoozeSemantic: "resume_tomorrow_morning",
+          },
+        })
+        .onConflictDoNothing({ target: reminders.idempotencyKey })
+        .returning();
+
+      const [occurrence] = await tx
+        .insert(reminderPolicyOccurrences)
+        .values({
+          policyId: policy.id,
+          reminderId: snoozedReminder?.id,
+          scheduledFor: params.snoozedUntil,
+          metadata: { resumedAfterEndOfDaySnooze: true },
+        })
+        .onConflictDoNothing({
+          target: [reminderPolicyOccurrences.policyId, reminderPolicyOccurrences.scheduledFor],
+        })
+        .returning();
+      if (snoozedReminder && occurrence && !occurrence.reminderId) {
+        await tx
+          .update(reminderPolicyOccurrences)
+          .set({ reminderId: snoozedReminder.id })
+          .where(eq(reminderPolicyOccurrences.id, occurrence.id));
+      }
+
+      return Object.assign(snoozedReminder ?? { ...source, scheduledAt: params.snoozedUntil }, {
+        snoozeTarget: "policy_until",
+      });
+    });
+  }
+
+  if (source.plannerItemId) {
+    await getDb()
+      .update(plannerItems)
+      .set({ snoozedUntil: params.snoozedUntil, updatedAt: now })
+      .where(and(eq(plannerItems.id, source.plannerItemId), eq(plannerItems.userId, params.userId)));
+    await getDb()
+      .update(reminders)
+      .set({ status: "cancelled", updatedAt: now })
+      .where(
+        and(
+          eq(reminders.userId, params.userId),
+          eq(reminders.plannerItemId, source.plannerItemId),
+          inArray(reminders.status, ["pending", "claimed"]),
+        ),
+      );
+  }
+  const reminder = await createReminderIfMissing({
+    userId: params.userId,
+    plannerItemId: source.plannerItemId,
+    type: source.type,
+    idempotencyKey: `${source.id}:item_snooze_until:${params.snoozedUntil.toISOString()}`,
+    scheduledAt: params.snoozedUntil,
+    repeatUntilAck: source.repeatUntilAck,
+    parentReminderId: source.parentReminderId ?? source.id,
+    recurrenceKey: source.recurrenceKey,
+    policyId: source.policyId,
+    purpose: "snooze",
+    menuType: source.menuType,
+    autoDeleteAfterResponse: source.autoDeleteAfterResponse,
+    payload: { ...source.payload, snoozedFrom: source.id, snoozedUntil: params.snoozedUntil.toISOString() },
+  });
+  return reminder ? Object.assign(reminder, { snoozeTarget: "item_until" }) : null;
+}
+
 async function snoozeItemReminder(
   source: Reminder,
   params: {

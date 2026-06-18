@@ -172,7 +172,7 @@ describe("V2.14.0 reminder UX, completed and audit hardening", () => {
       [],
       now,
     );
-    expect(text).toContain("🗓 за день в 09:00, за 2 часа, за 30 минут");
+    expect(text).toContain("🗓 за день в 09:00, за 2 часа, за полчаса");
     expect(text).not.toContain("до события");
   });
 
