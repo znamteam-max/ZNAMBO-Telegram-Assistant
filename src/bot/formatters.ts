@@ -14,6 +14,14 @@ import {
   formatHumanReminderPolicy,
   formatItemReminderPolicyLines,
 } from "@/domain/reminderPolicyPresentation";
+import {
+  formatRecurringRuleHuman,
+  parseCanonicalRecurrenceRule,
+} from "@/domain/recurringPolicySemantics";
+import {
+  isTodayUntilDonePlannerItem,
+  isTodayUntilDoneReminderPolicy,
+} from "@/domain/todayUntilDoneTask";
 
 const kindLabels: Record<string, string> = {
   event: "Встреча",
@@ -225,8 +233,40 @@ export function formatTaskManagementView(params: {
   return lines.join("\n");
 }
 
-export function formatReminderMessage(reminder: Reminder, item?: PlannerItem | null): string {
+export function formatReminderMessage(
+  reminder: Reminder,
+  item?: PlannerItem | null,
+  options?: { policy?: ReminderPolicy | null; now?: Date },
+): string {
   if (!item) return "Напоминание.";
+  const policy = options?.policy ?? null;
+  const now = options?.now ?? new Date();
+  const timezone = item.timezone || policy?.timezone || "Europe/Moscow";
+  const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
+  const parsedRecurrence = parseCanonicalRecurrenceRule(policy?.recurrenceRule ?? null);
+  if (parsedRecurrence?.kind === "monthly_day_range" && parsedRecurrence.timeLocal) {
+    const rule = formatRecurringRuleHuman(policy?.recurrenceRule ?? null);
+    return `Напоминание: ${item.title}\nСегодня, ${nowLocal.toFormat("dd.LL")}. Правило: ${rule}.`;
+  }
+  if (
+    isTodayUntilDoneReminderPolicy(policy) ||
+    isTodayUntilDonePlannerItem(item)
+  ) {
+    const itemDate = item.dueAt ?? item.startAt;
+    const itemLocal = itemDate
+      ? DateTime.fromJSDate(itemDate, { zone: "utc" }).setZone(timezone)
+      : null;
+    const carried =
+      policy?.metadata?.untilDoneCarryover === true ||
+      item.metadata?.untilDoneCarryover === true ||
+      Boolean(itemLocal && itemLocal.startOf("day") < nowLocal.startOf("day"));
+    const effectiveEnd = policy?.endsAt
+      ? DateTime.fromJSDate(policy.endsAt, { zone: "utc" }).setZone(timezone)
+      : nowLocal.set({ hour: 23, minute: 59 });
+    return carried
+      ? `Напоминание: ${item.title}\nНе закрыто со вчера. Продолжаю сегодня до ${effectiveEnd.toFormat("HH:mm")}.`
+      : `Напоминание: ${item.title}\nСегодня до ${effectiveEnd.toFormat("HH:mm")}.`;
+  }
   const when = formatRuWeekdayDateRange(item.startAt ?? item.dueAt, item.endAt, item.timezone);
   if (
     isEventLikePlannerItem(item) &&
@@ -236,7 +276,13 @@ export function formatReminderMessage(reminder: Reminder, item?: PlannerItem | n
     return `🔔 Напоминание о ${subject}\n${item.title}\n${when}`;
   }
   if (reminder.repeatUntilAck || item.kind === "recurring_task") {
-    return `Повторяющееся напоминание: ${item.title}\n${when}\n\nНажми кнопку, чтобы я понял, что делать дальше.`;
+    const rule = formatRecurringRuleHuman(policy?.recurrenceRule ?? null);
+    const occurrence = DateTime.fromJSDate(reminder.scheduledAt, { zone: "utc" })
+      .setZone(timezone)
+      .toFormat("ccc, dd.LL HH:mm");
+    return rule
+      ? `Напоминание: ${item.title}\n${occurrence}. Правило: ${rule}.`
+      : `Повторяющееся напоминание: ${item.title}\n${when}\n\nНажми кнопку, чтобы я понял, что делать дальше.`;
   }
   if (reminder.type === "followup") {
     if (item.kind === "tentative_event" || isTentative(item)) {

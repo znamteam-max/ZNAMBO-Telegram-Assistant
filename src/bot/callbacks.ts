@@ -1,4 +1,4 @@
-import type { Bot, InlineKeyboard } from "grammy";
+import { InlineKeyboard, type Bot } from "grammy";
 import { DateTime } from "luxon";
 
 import {
@@ -1574,6 +1574,56 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await refreshAfterCallback(ctx);
   });
 
+  bot.callbackQuery(/^reminder:snooze_eod:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const reminderId = ctx.match[1];
+    const [source, row] = await Promise.all([
+      getReminderByIdForUser({ userId: owner.id, reminderId }),
+      getPolicyForReminder(reminderId),
+    ]);
+    const now = new Date();
+    const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(owner.timezone);
+    const endOfDay = nowLocal
+      .set({ hour: 23, minute: 59, second: 0, millisecond: 0 })
+      .toUTC()
+      .toJSDate();
+    const target =
+      row?.policy.endsAt && row.policy.endsAt < endOfDay
+        ? row.policy.endsAt
+        : endOfDay;
+    const minutes = Math.max(0, Math.ceil((target.getTime() - now.getTime()) / 60_000));
+    const snoozed =
+      minutes > 0
+        ? await snoozeReminder({ userId: owner.id, reminderId, minutes })
+        : null;
+    await cancelPendingPromptRenagsForTarget({
+      userId: owner.id,
+      targetReminderId: reminderId,
+      targetItemId: source?.plannerItemId ?? row?.policy.itemId ?? null,
+      targetPolicyId: source?.policyId ?? row?.policy.id ?? null,
+      reason: "reminder_snoozed_end_of_day",
+    }).catch(() => undefined);
+    await writeAudit({
+      userId: owner.id,
+      action: "assistant.reminder_snooze_attempt",
+      entityType: "reminder",
+      entityId: reminderId,
+      details: {
+        preset: "end_of_day",
+        minutes,
+        succeeded: Boolean(snoozed),
+        scheduledAt: snoozed?.scheduledAt?.toISOString() ?? null,
+      },
+    }).catch(() => undefined);
+    await ctx.answerCallbackQuery(snoozed ? "Отложил до конца дня" : "Окно уже закончилось");
+    if (snoozed) {
+      await ctx.reply(
+        `Ок, напомню снова в ${DateTime.fromJSDate(snoozed.scheduledAt, { zone: "utc" }).setZone(owner.timezone).toFormat("HH:mm")}.`,
+      );
+    }
+    await refreshAfterCallback(ctx, source?.plannerItemId ?? row?.policy.itemId);
+  });
+
   bot.callbackQuery(/^(?:reminder:confirm_move_tomorrow|r:cmt):(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
     const reminderId = ctx.match[1];
@@ -1692,6 +1742,26 @@ export function registerCallbacks(bot: Bot<BotContext>) {
     await ctx.reply("Как изменить напоминание?", {
       reply_markup: reminderPolicyMenuKeyboard(row.policy.itemId),
     });
+  });
+
+  bot.callbackQuery(/^reminder:stop_prompt:(.+)$/, async (ctx) => {
+    const owner = requireOwner(ctx);
+    const row = await getPolicyForReminder(ctx.match[1]);
+    if (!row || row.policy.userId !== owner.id) {
+      await ctx.answerCallbackQuery("Напоминание не найдено");
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      row.policy.recurrenceRule
+        ? "Остановить повторяющееся правило? Сама задача останется в плане."
+        : "Остановить это напоминание? Сама задача останется в плане.",
+      {
+        reply_markup: new InlineKeyboard()
+          .text("Да, остановить", `policy:cancel_rule:${row.policy.id}`)
+          .text("Отмена", `policy:open:${row.policy.id}`),
+      },
+    );
   });
 
   bot.callbackQuery(/^reminder:skip:(.+)$/, async (ctx) => {

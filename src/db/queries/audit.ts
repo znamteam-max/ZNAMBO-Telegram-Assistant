@@ -27,6 +27,36 @@ export async function writeAudit(params: {
     });
 }
 
+export async function writeAuditOnceByKey(params: {
+  userId?: string | null;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  auditKey: string;
+  details?: Record<string, unknown>;
+}) {
+  const conditions = [
+    eq(auditLog.action, params.action),
+    sql`${auditLog.details}->>'auditKey' = ${params.auditKey}`,
+  ];
+  if (params.userId) conditions.push(eq(auditLog.userId, params.userId));
+  if (params.entityId) conditions.push(eq(auditLog.entityId, params.entityId));
+  const [existing] = await getDb()
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(...conditions))
+    .limit(1);
+  if (existing) return false;
+  await writeAudit({
+    userId: params.userId,
+    action: params.action,
+    entityType: params.entityType,
+    entityId: params.entityId,
+    details: { ...(params.details ?? {}), auditKey: params.auditKey },
+  });
+  return true;
+}
+
 export async function getLatestAuditByAction(params: { userId: string; action: string }) {
   const [row] = await getDb()
     .select()

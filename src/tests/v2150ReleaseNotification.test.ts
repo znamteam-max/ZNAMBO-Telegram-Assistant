@@ -61,17 +61,35 @@ describe("V2.15.0 release notification", () => {
     harness.inspection.commitSha = "bbbbbb1234567890";
 
     const blocked = await notifyProductionRelease(
-      validInput({ commitSha: "bbbbbb1234567890" }),
+      validInput({
+        commitSha: "bbbbbb1234567890",
+        handoffCurrentProductionCommit: "bbbbbb1234567890",
+      }),
       harness.dependencies,
     );
     expect(blocked.reason).toBe("hotfix_requires_explicit_allow");
 
     const sent = await notifyProductionRelease(
-      validInput({ commitSha: "bbbbbb1234567890", allowHotfix: true }),
+      validInput({
+        commitSha: "bbbbbb1234567890",
+        handoffCurrentProductionCommit: "bbbbbb1234567890",
+        allowHotfix: true,
+      }),
       harness.dependencies,
     );
     expect(sent.sent).toBe(true);
     expect(harness.send).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks release notification when Current Production handoff is stale", async () => {
+    const harness = createHarness();
+    const result = await notifyProductionRelease(
+      validInput({ handoffCurrentProductionCommit: "stale-commit" }),
+      harness.dependencies,
+    );
+
+    expect(result.reason).toBe("handoff_current_production_mismatch");
+    expect(harness.send).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -139,8 +157,8 @@ describe("V2.15.0 release notification", () => {
     expect(versionText).toContain("Версия: V2.15.0");
     expect(versionText).toContain("Коммит: abcdef12");
     expect(versionText).toContain("Webhook: ok");
-    expect(notes).toContain("scheduled creation intents");
-    expect(notes).toContain("закреплённые контекстные заметки");
+    expect(notes).toContain("actionable re-nag cards");
+    expect(notes).toContain("закрепленные заметки о машине");
     expect(checklist).toContain("Release notification: sent");
     expect(checklist).toContain("Notification idempotency: verified");
   });
@@ -203,6 +221,8 @@ function validInput(
     summary: ["release notification"],
     tests: ["migrations:applied", "smoke:passed", "health", "webhook", "runner"],
     handoffUpdated: true,
+    handoffCurrentProductionVersion: version,
+    handoffCurrentProductionCommit: commitSha,
     ...overrides,
   };
 }

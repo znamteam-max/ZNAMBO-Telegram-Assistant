@@ -103,6 +103,15 @@ export async function listReminderPoliciesByStatus(userId: string, status: strin
     .limit(limit);
 }
 
+export async function listReminderPoliciesForUser(userId: string, limit = 500) {
+  return getDb()
+    .select()
+    .from(reminderPolicies)
+    .where(eq(reminderPolicies.userId, userId))
+    .orderBy(desc(reminderPolicies.createdAt))
+    .limit(limit);
+}
+
 export async function listReminderPoliciesForItem(userId: string, itemId: string, limit = 100) {
   return getDb()
     .select()

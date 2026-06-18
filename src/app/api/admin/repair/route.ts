@@ -130,6 +130,17 @@ import {
   previewV2230ProductionRepair,
 } from "@/services/v2230ProductionRepair";
 import { runV2230PinnedContextNoteSmoke } from "@/services/v2230ProductionSmoke";
+import {
+  applyV2240ProductionRepair,
+  previewV2240ProductionRepair,
+} from "@/services/v2240ProductionRepair";
+import {
+  runV2240ActionableRenagSmoke,
+  runV2240CarryoverCardSmoke,
+  runV2240MonthlyAuditThrottleSmoke,
+  runV2240MonthlyCardSmoke,
+  runV2240PinnedRepairSmoke,
+} from "@/services/v2240ProductionSmoke";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { notifyProductionRelease } from "@/services/releaseNotification";
 import { getOwnerTimeDebug } from "@/services/timeDiagnostics";
@@ -163,6 +174,8 @@ export async function POST(request: Request) {
     summary?: string[];
     tests?: string[];
     handoffUpdated?: boolean;
+    handoffCurrentProductionVersion?: string;
+    handoffCurrentProductionCommit?: string;
     allowHotfix?: boolean;
   };
   if (
@@ -176,6 +189,12 @@ export async function POST(request: Request) {
       summary: Array.isArray(body.summary) ? body.summary : undefined,
       tests: Array.isArray(body.tests) ? body.tests : undefined,
       handoffUpdated: body.handoffUpdated === true,
+      handoffCurrentProductionVersion: String(
+        body.handoffCurrentProductionVersion ?? "",
+      ),
+      handoffCurrentProductionCommit: String(
+        body.handoffCurrentProductionCommit ?? "",
+      ),
       allowHotfix: body.allowHotfix === true,
     });
     return NextResponse.json(result, {
@@ -500,6 +519,50 @@ export async function POST(request: Request) {
       userId: owner.id,
       timezone: owner.timezone,
     });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2240_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV2240ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2240_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV2240ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2240_pinned_repair_smoke" && body.confirm === true) {
+    const result = await runV2240PinnedRepairSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2240_actionable_renag_smoke" && body.confirm === true) {
+    const result = await runV2240ActionableRenagSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2240_carryover_card_smoke" && body.confirm === true) {
+    const result = await runV2240CarryoverCardSmoke({ timezone: owner.timezone });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2240_monthly_card_smoke" && body.confirm === true) {
+    const result = await runV2240MonthlyCardSmoke({ timezone: owner.timezone });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2240_monthly_audit_throttle_smoke" && body.confirm === true) {
+    const result = await runV2240MonthlyAuditThrottleSmoke({ userId: owner.id });
     return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
   }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {

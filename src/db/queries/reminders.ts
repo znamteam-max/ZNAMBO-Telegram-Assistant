@@ -650,17 +650,26 @@ async function snoozePolicyReminder(params: {
       .limit(1);
     if (!policy) return null;
 
-    if (!policy.startsAt || !policy.intervalMinutes) return null;
-    const snoozePlan = planPolicySnooze({
-      anchor: policy.startsAt,
-      intervalMinutes: policy.intervalMinutes,
-      now: params.now,
-      snoozeMinutes: params.minutes,
-      endsAt: policy.endsAt,
-      inclusiveEnd: policy.windowEndInclusive,
-    });
     const snoozeAt = new Date(params.now.getTime() + params.minutes * 60 * 1000);
-    const nextRegular = snoozePlan.nextRegularAt;
+    if (
+      policy.endsAt &&
+      (policy.windowEndInclusive ? snoozeAt > policy.endsAt : snoozeAt >= policy.endsAt)
+    ) {
+      return null;
+    }
+    const snoozePlan =
+      policy.startsAt && policy.intervalMinutes
+        ? planPolicySnooze({
+            anchor: policy.startsAt,
+            intervalMinutes: policy.intervalMinutes,
+            now: params.now,
+            snoozeMinutes: params.minutes,
+            endsAt: policy.endsAt,
+            inclusiveEnd: policy.windowEndInclusive,
+          })
+        : null;
+    if (snoozePlan && !snoozePlan.snoozeAt) return null;
+    const nextRegular = snoozePlan?.nextRegularAt ?? policy.nextFireAt;
 
     await tx
       .update(reminders)
@@ -684,6 +693,33 @@ async function snoozePolicyReminder(params: {
         updatedAt: params.now,
       })
       .where(eq(reminderPolicies.id, policy.id));
+
+    const [snoozedReminder] = await tx
+      .insert(reminders)
+      .values({
+        userId: policy.userId,
+        plannerItemId: policy.itemId,
+        type: params.source.type,
+        idempotencyKey: `${params.source.id}:policy_snooze:${snoozeAt.toISOString()}`,
+        scheduledAt: snoozeAt,
+        repeatUntilAck: policy.requireAck || params.source.repeatUntilAck,
+        parentReminderId: params.source.parentReminderId ?? params.source.id,
+        recurrenceKey: params.source.recurrenceKey ?? policy.recurrenceRule,
+        policyId: policy.id,
+        purpose: "snooze",
+        menuType: params.source.menuType ?? "reminder",
+        autoDeleteAfterResponse: params.source.autoDeleteAfterResponse,
+        payload: {
+          ...(params.source.payload ?? {}),
+          title: policy.title,
+          policyType: policy.policyType,
+          category: policy.category,
+          snoozedFrom: params.source.id,
+          snoozedUntil: snoozeAt.toISOString(),
+        },
+      })
+      .onConflictDoNothing({ target: reminders.idempotencyKey })
+      .returning();
 
     if (nextRegular) {
       const [insertedOccurrence] = await tx
@@ -745,7 +781,10 @@ async function snoozePolicyReminder(params: {
       }
     }
 
-    return Object.assign({ ...params.source, scheduledAt: snoozeAt }, { snoozeTarget: "policy" });
+    return Object.assign(
+      snoozedReminder ?? { ...params.source, scheduledAt: snoozeAt },
+      { snoozeTarget: "policy" },
+    );
   });
 }
 

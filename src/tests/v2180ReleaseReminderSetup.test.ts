@@ -36,10 +36,10 @@ describe("current release notification and reminder setup", () => {
       inspection: healthyInspection(),
     });
 
-    expect(text).toContain("scheduled creation intents");
-    expect(text).toContain("закреплённые контекстные заметки");
-    expect(text).toContain("re-nag prompt");
-    expect(text).toContain("V2.23.0");
+    expect(text).toContain("actionable re-nag cards");
+    expect(text).toContain("закрепленные заметки о машине");
+    expect(text).toContain("policy snooze");
+    expect(text).toContain("V2.24.0");
     expect(text).not.toContain("????");
     expect(text).not.toContain("пїЅ");
     expect(hasMojibakeSignal(text)).toBe(false);
@@ -54,13 +54,15 @@ describe("current release notification and reminder setup", () => {
         summary: ["??????? ???????"],
         tests: ["migrations:not_required", "smoke:passed"],
         handoffUpdated: true,
+        handoffCurrentProductionVersion: RELEASE_NOTES.version,
+        handoffCurrentProductionCommit: "abcdef1234567890",
       },
       harness.dependencies,
     );
 
     const sentText = harness.send.mock.calls[0]?.[0].text ?? "";
-    expect(sentText).toContain("scheduled creation intents");
-    expect(sentText).toContain("закреплённые контекстные заметки");
+    expect(sentText).toContain("actionable re-nag cards");
+    expect(sentText).toContain("закрепленные заметки о машине");
     expect(sentText).not.toContain("????");
   });
 

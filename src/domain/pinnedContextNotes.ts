@@ -23,6 +23,7 @@ const CREATE_PREFIXES = [
   "закрепленная заметка:",
   "закреплённая заметка:",
   "запомни отдельно:",
+  "запомни где машина:",
   "pinned note:",
   "separate reminder:",
 ];
@@ -90,12 +91,13 @@ function parsePrefixedCreate(
 ) {
   for (const prefix of CREATE_PREFIXES) {
     if (!normalized.startsWith(prefix)) continue;
-    if (hasExplicitSchedule(text, params)) return null;
     const body = text.slice(prefix.length).trim();
     if (!body) return null;
+    const carLocation = /машин|автомобил|car/.test(normalized);
+    if (!carLocation && hasExplicitSchedule(text, params)) return null;
     return buildCreateIntent({
       codeword: prefix.replace(/:$/, ""),
-      category: /машин|car/.test(normalized) ? "car_location" : "general",
+      category: carLocation ? "car_location" : "general",
       body,
     });
   }

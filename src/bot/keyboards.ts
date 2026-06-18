@@ -647,6 +647,89 @@ export function reminderActionKeyboard(reminderId: string, plannerItemId?: strin
   return keyboard.text("⬅️ К плану", "dashboard:refresh");
 }
 
+export type ActionableReminderAction =
+  | "ack"
+  | "snooze_30"
+  | "snooze_60"
+  | "snooze_120"
+  | "snooze_240"
+  | "snooze_end_of_day"
+  | "edit"
+  | "stop"
+  | "plan";
+
+export function actionableReminderActions(params: {
+  policy?: ReminderPolicy | null;
+  now?: Date;
+  timezone?: string;
+}) {
+  const now = params.now ?? new Date();
+  const timezone = params.timezone || params.policy?.timezone || "Europe/Moscow";
+  const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(timezone);
+  const localEndOfDay = nowLocal
+    .set({ hour: 23, minute: 59, second: 0, millisecond: 0 })
+    .toUTC()
+    .toJSDate();
+  const windowEnd = params.policy?.endsAt ?? null;
+  const effectiveEnd =
+    windowEnd && windowEnd < localEndOfDay ? windowEnd : localEndOfDay;
+  const canSnooze = (minutes: number) =>
+    !windowEnd || now.getTime() + minutes * 60_000 <= windowEnd.getTime();
+
+  const actions: ActionableReminderAction[] = [
+    "ack",
+    "snooze_30",
+    "snooze_60",
+    "snooze_120",
+  ];
+  if (canSnooze(240)) actions.push("snooze_240");
+  if (effectiveEnd > now) actions.push("snooze_end_of_day");
+  actions.push("edit", "stop", "plan");
+  return actions;
+}
+
+export function actionableReminderKeyboard(params: {
+  reminderId: string;
+  plannerItemId?: string | null;
+  policy?: ReminderPolicy | null;
+  now?: Date;
+  timezone?: string;
+}) {
+  const actions = actionableReminderActions(params);
+  const includes = (action: ActionableReminderAction) => actions.includes(action);
+  const recurringRule = Boolean(params.policy?.recurrenceRule);
+  const keyboard = new InlineKeyboard()
+    .text("✅ Сделал", `reminder:ack:${params.reminderId}`)
+    .text("😴 30 мин", `reminder:snooze:${params.reminderId}:30`)
+    .row()
+    .text("😴 1 час", `reminder:snooze:${params.reminderId}:60`)
+    .text("😴 2 часа", `reminder:snooze:${params.reminderId}:120`);
+
+  if (includes("snooze_240") || includes("snooze_end_of_day")) {
+    keyboard.row();
+    if (includes("snooze_240")) {
+      keyboard.text("😴 4 часа", `reminder:snooze:${params.reminderId}:240`);
+    }
+    if (includes("snooze_end_of_day")) {
+      keyboard.text("🌙 До конца дня", `reminder:snooze_eod:${params.reminderId}`);
+    }
+  }
+
+  keyboard
+    .row()
+    .text(
+      recurringRule ? "✏️ Изменить правило" : "✏️ Изменить",
+      `reminder:edit:${params.reminderId}`,
+    )
+    .text(
+      recurringRule ? "🔕 Остановить правило" : "🔕 Остановить",
+      `reminder:stop_prompt:${params.reminderId}`,
+    )
+    .row()
+    .text("⬅️ К плану", "dashboard:refresh");
+  return keyboard;
+}
+
 export function actionPlanKeyboard(planId: string) {
   return new InlineKeyboard()
     .text("ОК", `plan:confirm:${planId}`)

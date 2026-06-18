@@ -514,12 +514,15 @@ export async function updatePlannerItemDetails(params: {
   itemId: string;
   kind?: string;
   title?: string;
+  description?: string | null;
+  location?: string | null;
   timezone?: string;
   startAt?: Date | null;
   endAt?: Date | null;
   dueAt?: Date | null;
   category?: string | null;
   visibility?: string | null;
+  sourcePolicyId?: string | null;
   priority?: number;
   metadata?: Record<string, unknown>;
 }): Promise<PlannerItem | null> {
@@ -528,12 +531,15 @@ export async function updatePlannerItemDetails(params: {
     .set({
       ...(params.kind !== undefined ? { kind: params.kind } : {}),
       ...(params.title !== undefined ? { title: params.title } : {}),
+      ...(params.description !== undefined ? { description: params.description } : {}),
+      ...(params.location !== undefined ? { location: params.location } : {}),
       ...(params.timezone !== undefined ? { timezone: params.timezone } : {}),
       ...(params.startAt !== undefined ? { startAt: params.startAt } : {}),
       ...(params.endAt !== undefined ? { endAt: params.endAt } : {}),
       ...(params.dueAt !== undefined ? { dueAt: params.dueAt } : {}),
       ...(params.category !== undefined ? { category: params.category } : {}),
       ...(params.visibility !== undefined ? { visibility: params.visibility } : {}),
+      ...(params.sourcePolicyId !== undefined ? { sourcePolicyId: params.sourcePolicyId } : {}),
       ...(params.priority !== undefined
         ? { priority: Math.max(1, Math.min(5, params.priority)) }
         : {}),

@@ -79,6 +79,8 @@ export type NotifyProductionReleaseInput = {
   summary?: string[];
   tests?: string[];
   handoffUpdated: boolean;
+  handoffCurrentProductionVersion: string;
+  handoffCurrentProductionCommit: string;
   allowHotfix?: boolean;
 };
 
@@ -117,6 +119,12 @@ export async function notifyProductionRelease(
 
   if (!input.handoffUpdated) {
     return blocked("handoff_not_updated");
+  }
+  if (
+    normalizeReleaseVersion(input.handoffCurrentProductionVersion) !== version ||
+    input.handoffCurrentProductionCommit.trim() !== commitSha
+  ) {
+    return blocked("handoff_current_production_mismatch");
   }
   if (!hasCompletionEvidence(tests, "migrations")) {
     return blocked("migrations_not_verified");
@@ -159,6 +167,10 @@ export async function notifyProductionRelease(
     summary,
     tests,
     handoffUpdated: true,
+    handoffCurrentProductionVersion: normalizeReleaseVersion(
+      input.handoffCurrentProductionVersion,
+    ),
+    handoffCurrentProductionCommit: input.handoffCurrentProductionCommit.trim(),
     health: {
       healthOk: inspection.healthOk,
       webhookOk: inspection.webhookOk,
@@ -397,6 +409,8 @@ export function renderReleaseNotifyResult(result: NotifyProductionReleaseResult)
     webhook_unhealthy: "Telegram webhook не готов",
     runner_unhealthy: "runner/scheduler не готов",
     handoff_not_updated: "handoff ещё не обновлён",
+    handoff_current_production_mismatch:
+      "Current Production в handoff не совпадает с production version/commit",
     migrations_not_verified: "миграции не подтверждены",
     smoke_not_recorded: "smoke-проверка не подтверждена",
     hotfix_requires_explicit_allow: "hotfix требует явного разрешения",

@@ -7,6 +7,7 @@ import {
   listEveningReviewItems,
   listYesterdayCarryCandidates,
 } from "@/db/queries/items";
+import { getReminderPolicyById } from "@/db/queries/reminderPolicies";
 import {
   archiveDeliveredTestItem,
   claimDueReminders,
@@ -18,16 +19,6 @@ import {
   type ClaimedReminder,
 } from "@/db/queries/reminders";
 import { getUserById } from "@/db/queries/users";
-import { formatReminderMessage } from "@/bot/formatters";
-import {
-  eventReactionKeyboard,
-  eventReminderMenuKeyboard,
-  normalReminderMenuKeyboard,
-  reminderActionKeyboard,
-  reminderMenuKeyboard,
-  singleItemManagementKeyboard,
-  tentativeEventFollowupKeyboard,
-} from "@/bot/keyboards";
 import { logger } from "@/lib/logger";
 import { renderAndSaveTaskView } from "@/agent/views/renderAndSaveTaskView";
 import { sortJarvisItemsForDisplay } from "@/agent/views/renderShared";
@@ -53,6 +44,7 @@ import {
   recordPendingPromptRenag,
   runDuePendingPromptRenags,
 } from "@/services/pendingPromptRenag";
+import { renderActionableReminderCard } from "@/telegram/reminderCard";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -139,6 +131,9 @@ export async function runDueReminders(params?: {
             targetReminderId: reminder.id,
             targetItemId: sentMessage.targetItemId ?? reminder.plannerItemId,
             targetPolicyId: sentMessage.targetPolicyId ?? reminder.policyId,
+            renderMode: sentMessage.renderMode,
+            allowedActions: sentMessage.allowedActions,
+            buttonsAttached: sentMessage.buttonsAttached,
             now,
           }).catch((error) => {
             logger.warn("Pending action prompt registration failed", {
@@ -275,6 +270,9 @@ async function sendReminder(
       text: rendered.reply,
       targetItemId: null,
       targetPolicyId: null,
+      renderMode: null,
+      allowedActions: [],
+      buttonsAttached: false,
     };
   }
 
@@ -307,18 +305,25 @@ async function sendReminder(
       text: rendered.reply,
       targetItemId: null,
       targetPolicyId: null,
+      renderMode: null,
+      allowedActions: [],
+      buttonsAttached: false,
     };
   }
 
-  const item = reminder.plannerItemId ? await getPlannerItemByAnyId(reminder.plannerItemId) : null;
-  const text =
-    isPostEventReminder(reminder) && item
-      ? item.kind === "training"
-        ? `Тренировка «${item.title}» завершилась. Что делаем?`
-        : `Событие «${item.title}» завершилось. Что делаем?`
-      : formatReminderMessage(reminder, item);
+  const [item, policy] = await Promise.all([
+    reminder.plannerItemId ? getPlannerItemByAnyId(reminder.plannerItemId) : null,
+    reminder.policyId ? getReminderPolicyById(reminder.policyId) : null,
+  ]);
+  const card = renderActionableReminderCard({
+    reminder,
+    item,
+    policy,
+    now: options?.now ?? new Date(),
+  });
+  const text = card.text;
   const messageOptions = {
-    reply_markup: buildReminderKeyboard(reminder, item, options?.now ?? new Date()),
+    reply_markup: card.keyboard,
   };
   const actionRequired = isActionRequiredReminder(reminder, item);
   if (options?.compact) {
@@ -342,6 +347,9 @@ async function sendReminder(
       text,
       targetItemId: item?.id ?? reminder.plannerItemId ?? null,
       targetPolicyId: reminder.policyId ?? null,
+      renderMode: card.renderMode,
+      allowedActions: card.allowedActions,
+      buttonsAttached: card.buttonsAttached,
     };
   }
   const sent = await sender.sendMessage(user.telegramUserId.toString(), text, messageOptions);
@@ -351,34 +359,10 @@ async function sendReminder(
     text,
     targetItemId: item?.id ?? reminder.plannerItemId ?? null,
     targetPolicyId: reminder.policyId ?? null,
+    renderMode: card.renderMode,
+    allowedActions: card.allowedActions,
+    buttonsAttached: card.buttonsAttached,
   };
-}
-
-function buildReminderKeyboard(
-  reminder: ClaimedReminder,
-  item: Awaited<ReturnType<typeof getPlannerItemByAnyId>>,
-  now: Date,
-) {
-  if (isPostEventReminder(reminder) && item) {
-    return eventReactionKeyboard(item.id, item.kind);
-  }
-  if (item && isEventLikePlannerItem(item)) {
-    return eventReminderMenuKeyboard(reminder.id, item, now);
-  }
-  if (reminder.policyId) {
-    return reminderMenuKeyboard(reminder.id, reminder.plannerItemId);
-  }
-  if (reminder.repeatUntilAck || item?.kind === "recurring_task") {
-    return reminderActionKeyboard(reminder.id, reminder.plannerItemId);
-  }
-  if (reminder.type === "followup" && item?.kind === "tentative_event") {
-    return tentativeEventFollowupKeyboard(item.id);
-  }
-  if (item?.metadata?.managementButtonsRequested === true) {
-    return singleItemManagementKeyboard(item.id);
-  }
-  if (item) return normalReminderMenuKeyboard(reminder.id, item.id);
-  return undefined;
 }
 
 function isPostEventReminder(reminder: ClaimedReminder) {

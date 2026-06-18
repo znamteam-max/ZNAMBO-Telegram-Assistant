@@ -8,6 +8,7 @@ type ActionLogEntry = {
   createdAt: Date;
   action: string;
   status?: string | null;
+  entityId?: string | null;
   details: Record<string, unknown>;
 };
 
@@ -21,7 +22,7 @@ export async function buildActionLog(params: {
   const limit = Math.max(1, Math.min(params.limit ?? 30, params.exportMode ? 200 : 50));
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
   const [auditRows, agentRows] = await Promise.all([
-    listRecentAuditLogs({ userId: params.userId, since, limit }),
+    listRecentAuditLogs({ userId: params.userId, since, limit: Math.min(limit * 4, 200) }),
     listRecentAgentActions({ userId: params.userId, since, limit }),
   ]);
   const entries: ActionLogEntry[] = [
@@ -30,6 +31,7 @@ export async function buildActionLog(params: {
       id: row.id,
       createdAt: row.createdAt,
       action: row.action,
+      entityId: row.entityId,
       details: sanitizeForActionLog(
         row.action === "assistant.agent_decision_trace" ||
           row.action === "assistant.jarvis_trace" ||
@@ -57,14 +59,15 @@ export async function buildActionLog(params: {
         }),
       };
     }),
-  ]
+  ];
+  const collapsed = collapseMonthlyAuditSpam(entries)
     .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
     .slice(0, limit);
 
   const lines = [
-    `Action log: last ${hours}h, ${entries.length} entries`,
+    `Action log: last ${hours}h, ${collapsed.length} entries`,
     "",
-    ...entries.flatMap((entry, index) => [
+    ...collapsed.flatMap((entry, index) => [
       `${index + 1}. ${formatDate(entry.createdAt)} · ${entry.source} · ${entry.action}${entry.status ? ` · ${entry.status}` : ""}`,
       `   id: ${entry.id}`,
       `   ${summarizeDetails(entry.details, params.exportMode === true)}`,
@@ -72,8 +75,39 @@ export async function buildActionLog(params: {
   ];
   return {
     text: lines.join("\n").slice(0, params.exportMode ? 80_000 : 3_800),
-    entries,
+    entries: collapsed,
   };
+}
+
+export function collapseMonthlyAuditSpam(entries: ActionLogEntry[]) {
+  const seen = new Map<string, ActionLogEntry>();
+  const output: ActionLogEntry[] = [];
+  for (const entry of [...entries].sort(
+    (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+  )) {
+    if (entry.action !== "assistant.monthly_day_range_occurrence_checked") {
+      output.push(entry);
+      continue;
+    }
+    const auditKey =
+      typeof entry.details.auditKey === "string"
+        ? entry.details.auditKey
+        : typeof entry.details.scheduledFor === "string"
+          ? String(entry.details.scheduledFor).slice(0, 10)
+          : "unknown";
+    const key = `${entry.action}:${entry.entityId ?? "none"}:${auditKey}`;
+    const existing = seen.get(key);
+    if (existing) {
+      existing.details = {
+        ...existing.details,
+        collapsedDuplicates: Number(existing.details.collapsedDuplicates ?? 0) + 1,
+      };
+      continue;
+    }
+    seen.set(key, entry);
+    output.push(entry);
+  }
+  return output;
 }
 
 export function normalizeAgentActionOutputForLog(

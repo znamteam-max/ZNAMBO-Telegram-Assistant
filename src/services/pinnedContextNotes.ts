@@ -4,6 +4,7 @@ import {
   createManualPlannerItem,
   findPinnedContextNotes,
   listPinnedContextNotes,
+  updatePlannerItemDetails,
 } from "@/db/queries/items";
 import {
   formatPinnedContextNoteLine,
@@ -16,6 +17,51 @@ export async function createPinnedContextNote(params: {
   sourceMessageId?: string | null;
   intent: Extract<PinnedContextIntent, { type: "create" }>;
 }) {
+  const existing =
+    params.intent.category === "car_location"
+      ? (await listPinnedContextNotes(params.userId, 50)).find(
+          (item) => item.metadata?.pinnedCategory === "car_location",
+        )
+      : null;
+  if (existing) {
+    const item = await updatePlannerItemDetails({
+      userId: params.userId,
+      itemId: existing.id,
+      kind: "note",
+      title: params.intent.title,
+      description: params.intent.body,
+      startAt: null,
+      endAt: null,
+      dueAt: null,
+      category: "pinned_context",
+      visibility: "active",
+      sourcePolicyId: null,
+      metadata: {
+        pinnedContext: true,
+        pinnedCategory: params.intent.category,
+        codeword: params.intent.codeword,
+        textHash: params.intent.textHash,
+        sourceTimezone: params.timezone,
+        mutableByReminderFlow: false,
+        excludeFromRecurringPolicyResolution: true,
+        pinnedContextUpdatedAt: new Date().toISOString(),
+      },
+    });
+    if (!item) throw new Error("Pinned context note update failed");
+    await writeAudit({
+      userId: params.userId,
+      action: "assistant.pinned_context_note_updated",
+      entityType: "planner_item",
+      entityId: item.id,
+      details: {
+        sourceMessageId: params.sourceMessageId ?? null,
+        category: params.intent.category,
+        codeword: params.intent.codeword,
+        textHash: params.intent.textHash,
+      },
+    }).catch(() => undefined);
+    return item;
+  }
   const item = await createManualPlannerItem({
     userId: params.userId,
     kind: "note",
@@ -139,4 +185,3 @@ function formatPinnedContextAnswerLine(item: {
   const line = formatPinnedContextNoteLine(item);
   return line.replace(" — ", ": ");
 }
-

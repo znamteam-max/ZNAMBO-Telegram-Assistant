@@ -139,6 +139,10 @@ import {
   applyV2230ProductionRepair,
   previewV2230ProductionRepair,
 } from "@/services/v2230ProductionRepair";
+import {
+  applyV2240ProductionRepair,
+  previewV2240ProductionRepair,
+} from "@/services/v2240ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -243,6 +247,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2210 preview|apply - owner timezone, monthly audit and follow-up visibility repair",
         "/admin_repair_v2220 preview|apply - session escape, interval-window and recurring-card repair",
         "/admin_repair_v2230 preview|apply - creation intent, pinned notes, re-nag and labels repair",
+        "/admin_repair_v2240 preview|apply - actionable re-nag, car pinned notes and carryover repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -908,6 +913,8 @@ export function registerCommands(bot: Bot<BotContext>) {
         "smoke:owner_confirmed_after_production_acceptance",
       ],
       handoffUpdated: true,
+      handoffCurrentProductionVersion: version,
+      handoffCurrentProductionCommit: commitSha,
     });
     await replyAndRecord(ctx, renderReleaseNotifyResult(result));
   });
@@ -1601,6 +1608,39 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2230 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2240", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2240ProductionRepair({ userId: owner.id, timezone: owner.timezone })
+        : await previewV2240ProductionRepair({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.24 repair applied:" : "V2.24 repair preview:",
+        `• car-location reminder candidates: ${result.carLocationReminderCandidates}`,
+        `• carryover policies: ${result.carryoverPolicies}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• repaired car items: ${arrayLength(result, "repairedCarItemIds")}`,
+              `• archived duplicates: ${arrayLength(result, "archivedDuplicateCarItemIds")}`,
+              `• cancelled policies: ${arrayLength(result, "cancelledPolicyIds")}`,
+              `• carried policies: ${arrayLength(result, "carriedPolicyIds")}`,
+            ]
+          : ["Для применения: /admin_repair_v2240 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {
