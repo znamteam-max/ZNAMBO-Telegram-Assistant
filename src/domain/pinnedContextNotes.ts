@@ -171,13 +171,14 @@ function inferTitle(body: string) {
 }
 
 function hasExplicitSchedule(text: string, params: { timezone: string; now: Date }) {
-  return Boolean(
-    parseRussianTimeRange({ text, timezone: params.timezone, now: params.now }) ||
-      parseRussianDateTime({ text, timezone: params.timezone, now: params.now }),
-  );
+  const range = parseRussianTimeRange({ text, timezone: params.timezone, now: params.now });
+  if (range) return true;
+  const dateTime = parseRussianDateTime({ text, timezone: params.timezone, now: params.now });
+  if (!dateTime) return false;
+  if (dateTime.source !== "time_only") return true;
+  return /(?:^|\s)(?:в|во|к|на)\s*\d{1,2}[.:]\d{2}(?=\s|$|[,.;:!?])/i.test(normalizeRu(text));
 }
 
 function normalizeRu(value: string) {
   return value.toLocaleLowerCase("ru").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
 }
-

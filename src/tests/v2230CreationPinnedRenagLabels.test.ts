@@ -85,6 +85,27 @@ describe("V2.23.0 creation priority, pinned notes, carryover and labels", () => 
     expect(query).toEqual({ type: "query", category: "car_location", query: "машина" });
   });
 
+  it("keeps version-like dotted text as a pinned note but lets explicit schedules escape", () => {
+    const versionNote = parsePinnedContextIntent({
+      text: "Отдельное напоминание: машину оставил на тестовой парковке V2.23 рядом с подъездом.",
+      timezone,
+      now,
+    });
+    const scheduled = parsePinnedContextIntent({
+      text: "Отдельное напоминание: завтра в 10:00 проверить парковку.",
+      timezone,
+      now,
+    });
+
+    expect(versionNote).toEqual(
+      expect.objectContaining({
+        type: "create",
+        title: "Машина",
+      }),
+    );
+    expect(scheduled).toBeNull();
+  });
+
   it("moves unfinished yesterday until-done tasks to unresolved carryover instead of passive overdue", () => {
     const item = plannerItem({
       dueAt: new Date("2026-06-17T20:59:00.000Z"),
