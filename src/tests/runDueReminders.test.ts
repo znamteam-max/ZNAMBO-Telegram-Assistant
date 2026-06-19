@@ -200,6 +200,7 @@ describe("runDueReminders", () => {
     expect(sender.sendMessage).toHaveBeenCalledWith(
       "52203584",
       expect.stringContaining("old open task"),
+      expect.objectContaining({ disable_notification: true }),
     );
   });
 

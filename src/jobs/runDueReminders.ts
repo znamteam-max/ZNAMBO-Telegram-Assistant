@@ -33,7 +33,6 @@ import {
   recordRunnerFinished,
   recordRunnerStarted,
 } from "@/db/queries/schedulerHealth";
-import { writeAudit } from "@/db/queries/audit";
 import { acquireRuntimeLease, releaseRuntimeLease } from "@/db/queries/runtimeLocks";
 import { syncCompactChat } from "@/telegram/compactChatOrchestrator";
 import type { LiveDashboardTelegramApi } from "@/telegram/liveDashboard";
@@ -41,11 +40,9 @@ import { ensureDailySnapshot } from "@/services/dailyHistory";
 import { runDueCalendarSyncRetries } from "@/services/calendarSyncRetry";
 import { runDueYandexCalendarImports } from "@/services/yandexCalendarImport";
 import { isEventLikePlannerItem } from "@/domain/eventReminderSemantics";
-import {
-  recordPendingPromptRenag,
-  runDuePendingPromptRenags,
-} from "@/services/pendingPromptRenag";
+import { recordPendingPromptRenag, runDuePendingPromptRenags } from "@/services/pendingPromptRenag";
 import { renderActionableReminderCard } from "@/telegram/reminderCard";
+import { auditTelegramDelivery, withTelegramDeliveryPolicy } from "@/telegram/deliveryPolicy";
 
 export type ReminderTelegramSender = {
   sendMessage(
@@ -59,6 +56,7 @@ export type ReminderTelegramSender = {
     text: string,
     options?: Record<string, unknown>,
   ): Promise<unknown>;
+  deleteMessage?(chatId: string, messageId: number): Promise<unknown>;
 };
 
 export async function runDueReminders(params?: {
@@ -133,7 +131,8 @@ export async function runDueReminders(params?: {
           await recordPendingPromptRenag({
             userId: reminder.userId,
             promptType:
-              reminder.purpose ?? (isPostEventReminder(reminder) ? "post_event_menu" : reminder.type),
+              reminder.purpose ??
+              (isPostEventReminder(reminder) ? "post_event_menu" : reminder.type),
             text: sentMessage.text,
             targetReminderId: reminder.id,
             targetItemId: sentMessage.targetItemId ?? reminder.plannerItemId,
@@ -141,6 +140,7 @@ export async function runDueReminders(params?: {
             renderMode: sentMessage.renderMode,
             allowedActions: sentMessage.allowedActions,
             buttonsAttached: sentMessage.buttonsAttached,
+            lastTelegramMessageId: sentMessage.message_id ?? null,
             now,
           }).catch((error) => {
             logger.warn("Pending action prompt registration failed", {
@@ -270,7 +270,18 @@ async function sendReminder(
       emptyText: "Сегодня пока пусто. Можешь надиктовать дела, а я соберу план.",
       metadata: { source: "morning_digest" },
     });
-    const sent = await sender.sendMessage(user.telegramUserId.toString(), rendered.reply);
+    const sent = await sender.sendMessage(
+      user.telegramUserId.toString(),
+      rendered.reply,
+      withTelegramDeliveryPolicy("dashboard_refresh"),
+    );
+    await auditTelegramDelivery({
+      userId: user.id,
+      messageKind: "dashboard_refresh",
+      entityType: "reminder",
+      entityId: reminder.id,
+      targetReminderId: reminder.id,
+    });
     return {
       ...sent,
       actionRequired: false,
@@ -305,7 +316,18 @@ async function sendReminder(
       footer: "Что делаем? Можно написать: 1 выполнено, 2 на завтра, всё закрыть.",
       metadata: { source: "evening_checkin" },
     });
-    const sent = await sender.sendMessage(user.telegramUserId.toString(), rendered.reply);
+    const sent = await sender.sendMessage(
+      user.telegramUserId.toString(),
+      rendered.reply,
+      withTelegramDeliveryPolicy("dashboard_refresh"),
+    );
+    await auditTelegramDelivery({
+      userId: user.id,
+      messageKind: "dashboard_refresh",
+      entityType: "reminder",
+      entityId: reminder.id,
+      targetReminderId: reminder.id,
+    });
     return {
       ...sent,
       actionRequired: false,
@@ -329,10 +351,10 @@ async function sendReminder(
     now: options?.now ?? new Date(),
   });
   const text = card.text;
-  const messageOptions = {
+  const messageKind = isEventLikePlannerItem(item) ? "event_alert" : "reminder_alert";
+  const messageOptions = withTelegramDeliveryPolicy(messageKind, {
     reply_markup: card.keyboard,
-    disable_notification: false,
-  };
+  });
   const actionRequired = isActionRequiredReminder(reminder, item);
   if (options?.compact) {
     const synced = await syncCompactChat({
@@ -349,7 +371,7 @@ async function sendReminder(
       now: options.now,
       api: sender as LiveDashboardTelegramApi,
     });
-    await auditReminderSendMode({ user, reminder, messageKind: "reminder", compact: true });
+    await auditReminderSendMode({ user, reminder, messageKind, compact: true });
     return {
       message_id: synced.reminderMessageId ?? undefined,
       actionRequired,
@@ -362,7 +384,7 @@ async function sendReminder(
     };
   }
   const sent = await sender.sendMessage(user.telegramUserId.toString(), text, messageOptions);
-  await auditReminderSendMode({ user, reminder, messageKind: "reminder", compact: false });
+  await auditReminderSendMode({ user, reminder, messageKind, compact: false });
   return {
     ...sent,
     actionRequired,
@@ -378,25 +400,22 @@ async function sendReminder(
 async function auditReminderSendMode(params: {
   user: Awaited<ReturnType<typeof getUserById>>;
   reminder: ClaimedReminder;
-  messageKind: "reminder" | "renag" | "plan" | "status";
+  messageKind: "reminder_alert" | "event_alert";
   compact: boolean;
 }) {
   if (!params.user) return;
-  await writeAudit({
+  await auditTelegramDelivery({
     userId: params.user.id,
-    action: "assistant.telegram_send_mode",
+    messageKind: params.messageKind,
     entityType: "reminder",
     entityId: params.reminder.id,
+    targetReminderId: params.reminder.id,
+    targetPolicyId: params.reminder.policyId ?? null,
+    targetItemId: params.reminder.plannerItemId ?? null,
     details: {
-      messageKind: params.messageKind,
-      deliverySoundMode: "loud_reminder",
-      disableNotification: false,
       compact: params.compact,
-      targetReminderId: params.reminder.id,
-      targetPolicyId: params.reminder.policyId ?? null,
-      targetItemId: params.reminder.plannerItemId ?? null,
     },
-  }).catch(() => undefined);
+  });
 }
 
 function isPostEventReminder(reminder: ClaimedReminder) {

@@ -13,6 +13,7 @@ import {
   normalizeReleaseVersion,
   shortCommit,
 } from "@/lib/releaseMetadata";
+import { getTelegramDeliveryPolicy } from "@/telegram/deliveryPolicy";
 
 type HealthPayload = {
   ok?: boolean;
@@ -167,9 +168,7 @@ export async function notifyProductionRelease(
     summary,
     tests,
     handoffUpdated: true,
-    handoffCurrentProductionVersion: normalizeReleaseVersion(
-      input.handoffCurrentProductionVersion,
-    ),
+    handoffCurrentProductionVersion: normalizeReleaseVersion(input.handoffCurrentProductionVersion),
     handoffCurrentProductionCommit: input.handoffCurrentProductionCommit.trim(),
     health: {
       healthOk: inspection.healthOk,
@@ -478,6 +477,7 @@ async function sendTelegramReleaseMessage(params: {
       chat_id: params.telegramUserId,
       text: params.text,
       disable_web_page_preview: true,
+      disable_notification: getTelegramDeliveryPolicy("release_notification").disableNotification,
     }),
     signal: AbortSignal.timeout(15_000),
   });

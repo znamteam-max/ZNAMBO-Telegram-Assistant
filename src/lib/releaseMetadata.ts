@@ -1,20 +1,16 @@
 export const RELEASE_NOTES = {
-  version: "2.25.0",
-  previousVersion: "2.24.0",
-  title: "In-place re-nag, loud delivery and end-of-day semantics",
+  version: "2.26.0",
+  previousVersion: "2.25.0",
+  title: "Reminder stack, dashboard sound policy, weekday parsing and visit template",
   bullets: [
-    "re-nag карточки сначала редактируют текущую active card и не плодят цепочку одинаковых сообщений",
-    "reminder/re-nag отправка явно использует loud delivery: disable_notification=false и безопасный audit send-mode",
-    "кнопка До завтра для until-done/carryover подавляет остаток дня и возвращает напоминания завтра в 08:00",
-    "pinned car note больше не показывается в Сегодня — напоминания, а V2.25 repair отменяет случайные car policies",
-    "before-event labels больше не показывают технические 645 минут / 165 минут / 168 ч",
-    "добавлены /admin_repair_v2250 preview|apply и protected V2.25 production smokes",
+    "каждый 5-минутный re-nag отправляет одну новую громкую карточку и удаляет предыдущую, не создавая видимый стек",
+    "message_not_modified считается успешным no-op, а недоступное удаление переводит цель в безопасный edit-only режим",
+    "центральная sound policy делает reminder/re-nag/event громкими, а dashboard/status/debug/release — тихими",
+    "явное В понедельник в 12:00 создаёт будущий startAt и не превращается в просроченный дедлайн",
+    "пара визитов к ортодонту получает канонический шаблон: неделя, 3 дня, утро, 2 часа и 30 минут",
+    "добавлены /admin_repair_v2260 preview|apply и protected V2.26 production smokes",
   ],
-  testPrompts: [
-    "/admin_repair_v2250 preview",
-    "/dashboard",
-    "/admin_repair_v2250 apply",
-  ],
+  testPrompts: ["/admin_repair_v2260 preview", "/dashboard", "/admin_repair_v2260 apply"],
 } as const;
 
 export function normalizeReleaseVersion(version: string): string {

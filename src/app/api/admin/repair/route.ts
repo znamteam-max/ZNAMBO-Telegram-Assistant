@@ -153,6 +153,17 @@ import {
   runV2250LoudReminderDeliverySmoke,
   runV2250PinnedCarNoteRepairSmoke,
 } from "@/services/v2250ProductionSmoke";
+import {
+  applyV2260ProductionRepair,
+  previewV2260ProductionRepair,
+} from "@/services/v2260ProductionRepair";
+import {
+  runV2260DashboardSoundPolicySmoke,
+  runV2260OrthodontistTemplateSmoke,
+  runV2260PinnedNoteHygieneSmoke,
+  runV2260RenagStackSmoke,
+  runV2260WeekdayFutureParseSmoke,
+} from "@/services/v2260ProductionSmoke";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { notifyProductionRelease } from "@/services/releaseNotification";
 import { getOwnerTimeDebug } from "@/services/timeDiagnostics";
@@ -201,12 +212,8 @@ export async function POST(request: Request) {
       summary: Array.isArray(body.summary) ? body.summary : undefined,
       tests: Array.isArray(body.tests) ? body.tests : undefined,
       handoffUpdated: body.handoffUpdated === true,
-      handoffCurrentProductionVersion: String(
-        body.handoffCurrentProductionVersion ?? "",
-      ),
-      handoffCurrentProductionCommit: String(
-        body.handoffCurrentProductionCommit ?? "",
-      ),
+      handoffCurrentProductionVersion: String(body.handoffCurrentProductionVersion ?? ""),
+      handoffCurrentProductionCommit: String(body.handoffCurrentProductionCommit ?? ""),
       allowHotfix: body.allowHotfix === true,
     });
     return NextResponse.json(result, {
@@ -632,6 +639,56 @@ export async function POST(request: Request) {
   }
   if (body.action === "v2250_human_offset_render_smoke" && body.confirm === true) {
     const result = await runV2250HumanOffsetRenderSmoke({ userId: owner.id });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2260_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV2260ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2260_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV2260ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2260_renag_stack_smoke" && body.confirm === true) {
+    const result = await runV2260RenagStackSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2260_dashboard_sound_policy_smoke" && body.confirm === true) {
+    const result = await runV2260DashboardSoundPolicySmoke({ userId: owner.id });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2260_weekday_future_parse_smoke" && body.confirm === true) {
+    const result = await runV2260WeekdayFutureParseSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2260_orthodontist_template_smoke" && body.confirm === true) {
+    const result = await runV2260OrthodontistTemplateSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2260_pinned_note_hygiene_smoke" && body.confirm === true) {
+    const result = await runV2260PinnedNoteHygieneSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
     return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
   }
   if (body.action === "v242_snooze_probe" && body.confirm === true) {

@@ -85,12 +85,22 @@ export function collapseMonthlyAuditSpam(entries: ActionLogEntry[]) {
   for (const entry of [...entries].sort(
     (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
   )) {
-    if (entry.action !== "assistant.monthly_day_range_occurrence_checked") {
+    if (
+      entry.action !== "assistant.monthly_day_range_occurrence_checked" &&
+      !isLowValueRepeatedReminderAudit(entry)
+    ) {
       output.push(entry);
       continue;
     }
-    const auditKey =
-      typeof entry.details.auditKey === "string"
+    const auditKey = isLowValueRepeatedReminderAudit(entry)
+      ? String(
+          entry.details.targetPolicyId ??
+            entry.details.targetReminderId ??
+            entry.details.targetItemId ??
+            entry.entityId ??
+            "unknown",
+        )
+      : typeof entry.details.auditKey === "string"
         ? entry.details.auditKey
         : typeof entry.details.scheduledFor === "string"
           ? String(entry.details.scheduledFor).slice(0, 10)
@@ -110,6 +120,23 @@ export function collapseMonthlyAuditSpam(entries: ActionLogEntry[]) {
   return output;
 }
 
+function isLowValueRepeatedReminderAudit(entry: ActionLogEntry) {
+  if (
+    [
+      "assistant.renag_card_sent_loud",
+      "assistant.renag_previous_card_deleted",
+      "assistant.renag_edit_noop_success",
+      "assistant.renag_duplicate_visible_card_prevented",
+    ].includes(entry.action)
+  ) {
+    return true;
+  }
+  return (
+    entry.action === "assistant.telegram_send_mode" &&
+    ["renag_alert", "dashboard_refresh"].includes(String(entry.details.messageKind ?? ""))
+  );
+}
+
 export function normalizeAgentActionOutputForLog(
   status: string | null | undefined,
   output: Record<string, unknown>,
@@ -126,7 +153,9 @@ export function normalizeAgentActionOutputForLog(
 }
 
 export function parseActionLogArgs(raw: string | undefined | null) {
-  const value = String(raw ?? "").trim().toLowerCase();
+  const value = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   if (!value) return { hours: 24, limit: 30, exportMode: false };
   if (value === "export") return { hours: 24, limit: 200, exportMode: true };
   const hourMatch = value.match(/^(\d{1,3})\s*h$/);
@@ -196,5 +225,8 @@ function summarizeDetails(details: Record<string, unknown>, verbose: boolean) {
 }
 
 function formatDate(date: Date) {
-  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+  return date
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d{3}Z$/, "Z");
 }

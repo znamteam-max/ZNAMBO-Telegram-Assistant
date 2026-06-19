@@ -261,6 +261,9 @@ function formatMorningEventSetLabel(
   item?: PlannerItem | null,
 ) {
   if (!policies.length) return null;
+  if (policies.some((policy) => policy.metadata?.orthodontistTemplate === "v2260")) {
+    return "утром в день визита";
+  }
   const zone = item?.timezone || policies[0]?.timezone || timezone;
   const times = [
     ...new Set(
@@ -268,7 +271,9 @@ function formatMorningEventSetLabel(
         .map((policy) => policy.nextFireAt ?? policy.startsAt)
         .filter((value): value is Date => Boolean(value))
         .sort((left, right) => left.getTime() - right.getTime())
-        .map((value) => DateTime.fromJSDate(value, { zone: "utc" }).setZone(zone).toFormat("HH:mm")),
+        .map((value) =>
+          DateTime.fromJSDate(value, { zone: "utc" }).setZone(zone).toFormat("HH:mm"),
+        ),
     ),
   ];
   if (!times.length) return "утром в день события";
@@ -363,7 +368,8 @@ function dayWord(days: number) {
 
 function formatBeforeEventPolicy(policy: ReminderPolicy, timezone: string, item?: PlannerItem) {
   const label = policy.metadata?.relativeLabel;
-  if (typeof label === "string" && label.trim() && !isTechnicalBeforeEventLabel(label)) return label;
+  if (typeof label === "string" && label.trim() && !isTechnicalBeforeEventLabel(label))
+    return label;
   const metadataMinutes = Number(policy.metadata?.minutesBefore);
   if (Number.isFinite(metadataMinutes) && metadataMinutes > 0) {
     return formatBeforeEventOffset(
@@ -388,7 +394,8 @@ function formatBeforeEventPolicy(policy: ReminderPolicy, timezone: string, item?
 }
 
 function formatPostEventPolicy(policy: ReminderPolicy, timezone: string, item?: PlannerItem) {
-  const fireAt = policy.nextFireAt ?? policy.startsAt ?? item?.endAt ?? item?.startAt ?? item?.dueAt;
+  const fireAt =
+    policy.nextFireAt ?? policy.startsAt ?? item?.endAt ?? item?.startAt ?? item?.dueAt;
   const zone = item?.timezone || policy.timezone || timezone;
   if (!fireAt) return null;
   const clock = DateTime.fromJSDate(fireAt, { zone: "utc" }).setZone(zone).toFormat("HH:mm");

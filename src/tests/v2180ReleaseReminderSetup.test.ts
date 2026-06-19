@@ -36,10 +36,9 @@ describe("current release notification and reminder setup", () => {
       inspection: healthyInspection(),
     });
 
-    expect(text).toContain("re-nag карточки сначала редактируют");
-    expect(text).toContain("До завтра");
-    expect(text).toContain("loud delivery");
-    expect(text).toContain("V2.25.0");
+    expect(text).toContain("re-nag отправляет одну новую громкую карточку");
+    expect(text).toContain("dashboard/status/debug/release — тихими");
+    expect(text).toContain("V2.26.0");
     expect(text).not.toContain("????");
     expect(text).not.toContain("пїЅ");
     expect(hasMojibakeSignal(text)).toBe(false);
@@ -61,8 +60,8 @@ describe("current release notification and reminder setup", () => {
     );
 
     const sentText = harness.send.mock.calls[0]?.[0].text ?? "";
-    expect(sentText).toContain("re-nag карточки сначала редактируют");
-    expect(sentText).toContain("До завтра");
+    expect(sentText).toContain("re-nag отправляет одну новую громкую карточку");
+    expect(sentText).toContain("dashboard/status/debug/release — тихими");
     expect(sentText).not.toContain("????");
   });
 

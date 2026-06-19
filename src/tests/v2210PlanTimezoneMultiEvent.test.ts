@@ -83,7 +83,7 @@ describe("V2.21.0 owner timezone, visual plan and multi-event reminders", () => 
       "2026-07-01T19:00:00",
       "2026-07-02T11:45:00",
     ]);
-    expect(execution.actionPlan?.actions.every((action) => action.reminders.length === 6)).toBe(
+    expect(execution.actionPlan?.actions.every((action) => action.reminders.length === 5)).toBe(
       true,
     );
     const labels = execution.actionPlan?.actions.flatMap((action) =>
@@ -91,7 +91,8 @@ describe("V2.21.0 owner timezone, visual plan and multi-event reminders", () => 
     );
     expect(labels).toContain("за неделю");
     expect(labels).toContain("за 3 дня");
-    expect(labels).toContain("за 2 дня");
+    expect(labels).toContain("за 2 часа");
+    expect(labels).toContain("за 30 минут");
     expect(labels).toContain("утром в день визита");
   });
 });

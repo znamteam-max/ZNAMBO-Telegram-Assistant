@@ -188,7 +188,10 @@ describe("live dashboard lifecycle", () => {
     expect(api.sendMessage).toHaveBeenCalledWith(
       "42",
       expect.stringContaining("Эфир ВС"),
-      expect.objectContaining({ reply_markup: expect.anything() }),
+      expect.objectContaining({
+        reply_markup: expect.anything(),
+        disable_notification: true,
+      }),
     );
     expect(mocks.createActiveDashboard).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: 11 }),

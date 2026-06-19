@@ -31,6 +31,7 @@ import { formatRuWeekdayDateTime } from "@/domain/dateTime";
 import { formatDeadlineDateTime } from "@/domain/deadlineSemantics";
 import { writeAudit } from "@/db/queries/audit";
 import { formatPinnedContextNoteLine, isPinnedContextNote } from "@/domain/pinnedContextNotes";
+import { auditTelegramDelivery, withTelegramDeliveryPolicy } from "@/telegram/deliveryPolicy";
 
 import { getBot } from "@/bot/createBot";
 import { entityListKeyboard } from "@/bot/keyboards";
@@ -86,7 +87,8 @@ export async function renderLiveDashboard(params: {
     if (!calendarByItemId.has(sync.plannerItemId)) calendarByItemId.set(sync.plannerItemId, sync);
   }
   const itemRows = timeline.rows.filter(
-    (row) => row.item && !isPinnedContextNote(row.item) && !["history", "hidden"].includes(row.dateBucket),
+    (row) =>
+      row.item && !isPinnedContextNote(row.item) && !["history", "hidden"].includes(row.dateBucket),
   );
   const allPinnedItems = timeline.rows
     .filter((row) => row.item && isPinnedContextNote(row.item) && row.item.status === "active")
@@ -158,7 +160,9 @@ export async function renderLiveDashboard(params: {
     .sort(compareDashboardItems)
     .slice(0, 10);
   const scheduledIds = new Set(
-    [...currentItems, ...todayItems, ...tomorrowItems, ...soonItems, ...laterItems].map((item) => item.id),
+    [...currentItems, ...todayItems, ...tomorrowItems, ...soonItems, ...laterItems].map(
+      (item) => item.id,
+    ),
   );
   const overdueItems = timeline.byBucket.overdue
     .filter((row) => row.item)
@@ -196,7 +200,9 @@ export async function renderLiveDashboard(params: {
       .map((row) => row.item!)
       .filter((item) => !pastTodayIds.has(item.id)),
   ].slice(0, 5);
-  const carryoverItems = unresolvedItems.filter((item) => item.metadata?.untilDoneCarryover === true);
+  const carryoverItems = unresolvedItems.filter(
+    (item) => item.metadata?.untilDoneCarryover === true,
+  );
   const unresolvedNonCarryoverItems = unresolvedItems.filter(
     (item) => item.metadata?.untilDoneCarryover !== true,
   );
@@ -393,34 +399,36 @@ export async function renderLiveDashboard(params: {
     metadata: { source: "live_dashboard", conflictCount: conflicts.length },
   });
 
-  await Promise.resolve(writeAudit({
-    userId: params.userId,
-    action: "assistant.plan_rendered",
-    entityType: "dashboard",
-    details: {
-      sectionCounts: {
-        current: currentItems.length,
-        todayEvents: todayEventItems.length,
-        todayTasks: todayTaskItems.length,
-        unattachedPolicies: unattachedPolicies.length,
-        actionablePostEventPolicies: actionablePostEventPolicies.length,
-        reviewRequiredPolicies: reviewRequiredPolicies.length,
-        tomorrow: tomorrowItems.length,
-        soon: soonItems.length,
-        later: laterItems.length,
-        pinned: pinnedItems.length,
-        important: importantItems.length,
-        longTerm: longTermItems.length,
-        overdue: overdueItems.length,
-        pastReview: pastReviewItems.length,
-        carryover: carryoverItems.length,
-        unresolved: unresolvedNonCarryoverItems.length,
+  await Promise.resolve(
+    writeAudit({
+      userId: params.userId,
+      action: "assistant.plan_rendered",
+      entityType: "dashboard",
+      details: {
+        sectionCounts: {
+          current: currentItems.length,
+          todayEvents: todayEventItems.length,
+          todayTasks: todayTaskItems.length,
+          unattachedPolicies: unattachedPolicies.length,
+          actionablePostEventPolicies: actionablePostEventPolicies.length,
+          reviewRequiredPolicies: reviewRequiredPolicies.length,
+          tomorrow: tomorrowItems.length,
+          soon: soonItems.length,
+          later: laterItems.length,
+          pinned: pinnedItems.length,
+          important: importantItems.length,
+          longTerm: longTermItems.length,
+          overdue: overdueItems.length,
+          pastReview: pastReviewItems.length,
+          carryover: carryoverItems.length,
+          unresolved: unresolvedNonCarryoverItems.length,
+        },
+        hiddenBackgroundPolicies: hiddenBackgroundPolicies.length,
+        conflictCount: conflicts.length,
+        planRenderModel,
       },
-      hiddenBackgroundPolicies: hiddenBackgroundPolicies.length,
-      conflictCount: conflicts.length,
-      planRenderModel,
-    },
-  })).catch(() => undefined);
+    }),
+  ).catch(() => undefined);
 
   return {
     text: lines.join("\n"),
@@ -534,7 +542,11 @@ export async function renderReminderPolicyList(params: {
         ]
       : []),
     ...(pinnedNotes.length
-      ? ["", "Закреплённые заметки:", ...pinnedNotes.map((item) => formatPinnedContextNoteLine(item))]
+      ? [
+          "",
+          "Закреплённые заметки:",
+          ...pinnedNotes.map((item) => formatPinnedContextNoteLine(item)),
+        ]
       : []),
   ].join("\n");
 }
@@ -587,6 +599,13 @@ export async function sendOrRefreshLiveDashboard(params: {
   const sent = await api.sendMessage(params.chatId, rendered.text, {
     parse_mode: "HTML",
     reply_markup: rendered.keyboard,
+    ...withTelegramDeliveryPolicy("dashboard_refresh"),
+  });
+  await auditTelegramDelivery({
+    userId: params.userId,
+    messageKind: "dashboard_refresh",
+    entityType: "dashboard",
+    details: { automaticRefresh: true },
   });
   const dashboard = await createActiveDashboard({
     userId: params.userId,
@@ -738,10 +757,7 @@ function formatNumberedDashboardRow(index: number, text: string) {
 }
 
 function escapeTelegramHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function isTodayScopedItem(item: PlannerItem, timezone: string, now: Date) {
@@ -764,10 +780,10 @@ function dashboardReminderIcon(
     policies.some((policy) =>
       Boolean(
         policy.recurrenceRule ||
-          policy.policyType === "recurring" ||
-          policy.policyType === "long_term" ||
-          policy.policyType === "nag_until_ack" ||
-          (policy.intervalMinutes && policy.policyType !== "interval_window"),
+        policy.policyType === "recurring" ||
+        policy.policyType === "long_term" ||
+        policy.policyType === "nag_until_ack" ||
+        (policy.intervalMinutes && policy.policyType !== "interval_window"),
       ),
     )
   ) {

@@ -157,8 +157,8 @@ describe("V2.15.0 release notification", () => {
     expect(versionText).toContain("Версия: V2.15.0");
     expect(versionText).toContain("Коммит: abcdef12");
     expect(versionText).toContain("Webhook: ok");
-    expect(notes).toContain("re-nag карточки сначала редактируют");
-    expect(notes).toContain("До завтра");
+    expect(notes).toContain("re-nag отправляет одну новую громкую карточку");
+    expect(notes).toContain("dashboard/status/debug/release — тихими");
     expect(checklist).toContain("Release notification: sent");
     expect(checklist).toContain("Notification idempotency: verified");
   });

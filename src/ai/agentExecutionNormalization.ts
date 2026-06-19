@@ -6,8 +6,15 @@ import type {
   AgentReminderPolicy,
 } from "@/ai/schemas/agentExecution";
 import type { ActionPlanItem } from "@/ai/schemas";
-import { parseRussianWeekdayAppointment } from "@/domain/russianWeekday";
-import { normalizeKnownProjectNames, parseDeadlineSemantics } from "@/domain/deadlineSemantics";
+import {
+  parseRussianWeekdayAppointment,
+  stripRussianWeekdaySchedulePhrase,
+} from "@/domain/russianWeekday";
+import {
+  hasDeadlineIntent,
+  normalizeKnownProjectNames,
+  parseDeadlineSemantics,
+} from "@/domain/deadlineSemantics";
 import { sanitizePlannerTitle } from "@/domain/titleSanitizer";
 import {
   normalizeRecurringReminderTitle,
@@ -16,6 +23,10 @@ import {
 } from "@/domain/recurringPolicySemantics";
 import { parseBeforeEventReminderSpecs } from "@/domain/beforeEventReminderParsing";
 import { normalizeTodayUntilDoneTask } from "@/domain/todayUntilDoneTask";
+import {
+  buildOrthodontistReminderTemplate,
+  ORTHODONTIST_TEMPLATE_VERSION,
+} from "@/domain/orthodontistReminderTemplate";
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 
@@ -195,13 +206,13 @@ function normalizeRecurringPolicySemantics(params: {
               repeatUntilAck: intent.requireAck,
             }
           : intent.recurrenceKind === "weekly"
-          ? {
-              frequency: "weekly",
-              daysOfWeek: [intent.weekday as "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU"],
-              timeLocal: intent.timeLocal,
-              repeatUntilAck: intent.requireAck,
-            }
-          : null,
+            ? {
+                frequency: "weekly",
+                daysOfWeek: [intent.weekday as "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU"],
+                timeLocal: intent.timeLocal,
+                repeatUntilAck: intent.requireAck,
+              }
+            : null,
       metadata: {
         sourceNormalization: "recurring_policy_v2100",
         recurrenceRule: intent.recurrenceRule,
@@ -289,56 +300,26 @@ function normalizeMultiEventReminderTemplate(params: {
   const eventStarts = parseJulyEventStarts(params.text, params.timezone, params.now);
   if (eventStarts.length < 2) return params.execution;
 
-  const wantsWeek = /за\s+недел/i.test(normalized);
-  const wantsThreeDays = /за\s+3\s+дн/i.test(normalized);
-  const wantsTwoDays = /за\s+2\s+дн/i.test(normalized);
-  const wantsMorningSet = /утром/i.test(normalized) && /(много|несколько|эти\s+дни|день\s+визит)/i.test(normalized);
-
   const actions: ActionPlanItem[] = [];
-  const warnings: string[] = [];
-  for (const [index, start] of eventStarts.entries()) {
-    const reminders: ActionPlanItem["reminders"] = [];
-    const addReminder = (
-      fireAt: DateTime,
-      minutesBefore: number,
-      relativeLabel: string,
-      morningSet = false,
-    ) => {
-      if (fireAt <= DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone)) return;
-      reminders.push({
-        type: "event_before" as const,
-        scheduledAtLocal: fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
-        offsetMinutesBefore: minutesBefore,
-        repeatUntilAck: false,
-        payload: {
-          minutesBefore,
-          relativeLabel,
-          eventMorningSet: morningSet,
-          sourceNormalization: "multi_event_reminder_template_v2210",
-        },
-      });
-    };
-
-    if (wantsWeek) addReminder(start.minus({ weeks: 1 }), 7 * 24 * 60, "за неделю");
-    if (wantsThreeDays) addReminder(start.minus({ days: 3 }), 3 * 24 * 60, "за 3 дня");
-    if (wantsTwoDays) addReminder(start.minus({ days: 2 }), 2 * 24 * 60, "за 2 дня");
-    if (wantsMorningSet) {
-      const morning = [8, 9, 10]
-        .map((hour) => start.startOf("day").set({ hour, minute: 0, second: 0, millisecond: 0 }))
-        .filter((fireAt) => fireAt < start.minus({ minutes: 15 }));
-      if (morning.length < 2) {
-        warnings.push(`morning_set_needs_clarification:${index + 1}`);
-      } else {
-        for (const fireAt of morning) {
-          addReminder(
-            fireAt,
-            Math.max(1, Math.round(start.diff(fireAt, "minutes").minutes)),
-            "утром в день визита",
-            true,
-          );
-        }
-      }
-    }
+  const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
+  for (const start of eventStarts) {
+    const reminders: ActionPlanItem["reminders"] = buildOrthodontistReminderTemplate({
+      eventStart: start,
+      now: nowLocal,
+    }).map((template) => ({
+      type: "event_before" as const,
+      scheduledAtLocal: template.fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+      offsetMinutesBefore: template.minutesBefore,
+      repeatUntilAck: false,
+      payload: {
+        minutesBefore: template.minutesBefore,
+        relativeLabel: template.relativeLabel,
+        eventMorningSet: template.eventMorningSet,
+        orthodontistTemplate: ORTHODONTIST_TEMPLATE_VERSION,
+        orthodontistTemplateRole: template.templateRole,
+        sourceNormalization: "orthodontist_reminder_template_v2260",
+      },
+    }));
 
     actions.push({
       actionType: "event",
@@ -360,22 +341,11 @@ function normalizeMultiEventReminderTemplate(params: {
       reminders,
       memoryCandidates: [],
       metadata: {
-        sourceNormalization: "multi_event_reminder_template_v2210",
+        sourceNormalization: "orthodontist_reminder_template_v2260",
         reminderTemplateAppliedPerEvent: true,
+        orthodontistTemplate: ORTHODONTIST_TEMPLATE_VERSION,
       },
     });
-  }
-
-  if (warnings.length) {
-    return {
-      ...params.execution,
-      intent: "clarify" as const,
-      reply: "Для утренних напоминаний по одному из визитов осталось меньше двух безопасных слотов. Уточни время.",
-      actionPlan: null,
-      itemUpdates: [],
-      reminderPolicies: [],
-      clarificationQuestions: ["Во сколько утром напоминать по визитам?"],
-    };
   }
 
   return {
@@ -436,9 +406,12 @@ function normalizeProjectNamesInExecution(execution: AgentExecution): AgentExecu
     },
     reminderPolicies: execution.reminderPolicies.map((policy) => ({
       ...policy,
-      title: titleMap.get(policy.title) ?? sanitizePlannerTitle(normalizeKnownProjectNames(policy.title)),
+      title:
+        titleMap.get(policy.title) ??
+        sanitizePlannerTitle(normalizeKnownProjectNames(policy.title)),
       itemTitle: policy.itemTitle
-        ? titleMap.get(policy.itemTitle) ?? sanitizePlannerTitle(normalizeKnownProjectNames(policy.itemTitle))
+        ? (titleMap.get(policy.itemTitle) ??
+          sanitizePlannerTitle(normalizeKnownProjectNames(policy.itemTitle)))
         : policy.itemTitle,
     })),
   };
@@ -621,27 +594,31 @@ function normalizeClearReminderIntent(params: {
     timezone: proposed?.timezone || params.timezone,
     startAtLocal: null,
     endAtLocal: null,
-    dueAtLocal: nagUntilAck || todayWithoutSpecificTime
-      ? endOfTodayLocal.toFormat("yyyy-MM-dd'T'HH:mm:ss")
-      : fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    dueAtLocal:
+      nagUntilAck || todayWithoutSpecificTime
+        ? endOfTodayLocal.toFormat("yyyy-MM-dd'T'HH:mm:ss")
+        : fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
     durationMinutes: null,
     confidence: Math.max(proposed?.confidence ?? 0, 0.96),
     risk: "low",
     requiresConfirmation: false,
-    reminders: nagUntilAck || todayWithoutSpecificTime
-      ? []
-      : [
-          {
-            type: "custom",
-            scheduledAtLocal: fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
-            offsetMinutesBefore: null,
-            repeatUntilAck: false,
-            payload: { sourceNormalization: "clear_reminder_v270" },
-          },
-        ],
+    reminders:
+      nagUntilAck || todayWithoutSpecificTime
+        ? []
+        : [
+            {
+              type: "custom",
+              scheduledAtLocal: fireAt.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+              offsetMinutesBefore: null,
+              repeatUntilAck: false,
+              payload: { sourceNormalization: "clear_reminder_v270" },
+            },
+          ],
     metadata: {
       ...(proposed?.metadata ?? {}),
-      sourceNormalization: todayWithoutSpecificTime ? "today_task_due_v2200" : "clear_reminder_v270",
+      sourceNormalization: todayWithoutSpecificTime
+        ? "today_task_due_v2200"
+        : "clear_reminder_v270",
       reminderIntentExplicit: true,
       todayTaskDueNormalized: todayWithoutSpecificTime,
       timeScope: todayWithoutSpecificTime ? "today" : undefined,
@@ -1015,16 +992,29 @@ function normalizeRussianWeekdaySemantics(params: {
   now: Date;
   activeContext: string;
 }) {
+  if (
+    params.execution.actionPlan?.actions.some(
+      (action) => action.kind === "recurring_task" || action.recurrence != null,
+    ) ||
+    params.execution.reminderPolicies.some((policy) =>
+      ["recurring", "long_term"].includes(policy.policyType),
+    ) ||
+    /кажд(?:ый|ую|ое|ые)\s+(?:понедельник|вторник|сред|четверг|пятниц|суббот|воскрес)/iu.test(
+      params.text,
+    )
+  ) {
+    return params.execution;
+  }
   const appointment = parseRussianWeekdayAppointment(params);
-  if (!appointment) return params.execution;
+  if (!appointment || hasDeadlineIntent(params.text)) return params.execution;
   const isMedicalFamily =
     /(ортодонт|врач|доктор|стоматолог|клиник|больниц|ребен|ребён|роба?)/i.test(params.text);
-  if (!isMedicalFamily) return params.execution;
-
   const medicalContextPattern = /ортодонт/i.test(params.text)
     ? /(ортодонт|стоматолог)/i
     : /(врач|доктор|стоматолог|клиник|больниц)/i;
-  const existingId = extractMatchingContextItemId(params.activeContext, medicalContextPattern);
+  const existingId = isMedicalFamily
+    ? extractMatchingContextItemId(params.activeContext, medicalContextPattern)
+    : null;
   if (existingId) {
     return {
       ...params.execution,
@@ -1049,23 +1039,34 @@ function normalizeRussianWeekdaySemantics(params: {
   }
 
   const proposed = params.execution.actionPlan?.actions[0];
+  const scheduledTitle = stripRussianWeekdaySchedulePhrase(params.text);
   const action: ActionPlanItem = {
     ...(proposed ?? buildSyntheticAppointmentAction(params.timezone)),
-    actionType: "event",
-    kind: "event",
-    title: normalizeMedicalAppointmentTitle(params.text, proposed?.title),
+    actionType: isMedicalFamily ? "event" : "task",
+    kind: isMedicalFamily ? "event" : "task",
+    title: isMedicalFamily
+      ? normalizeMedicalAppointmentTitle(params.text, proposed?.title)
+      : scheduledTitle,
     timezone: proposed?.timezone || params.timezone,
     startAtLocal: appointment.localDateTime,
+    endAtLocal: null,
     dueAtLocal: null,
-    priority: Math.max(proposed?.priority ?? 3, 4),
+    durationMinutes: null,
+    reminders: [],
+    priority: isMedicalFamily ? Math.max(proposed?.priority ?? 3, 4) : (proposed?.priority ?? 3),
     metadata: {
       ...(proposed?.metadata ?? {}),
-      sourceNormalization: "russian_weekday_v252",
-      category: "health",
-      familyRelated: true,
-      importanceMode: "auto",
-      basePriority: 4,
-      reminderSuggestion: "offer_before_event",
+      sourceNormalization: "russian_weekday_v2260",
+      explicitWeekdaySchedule: true,
+      ...(isMedicalFamily
+        ? {
+            category: "health",
+            familyRelated: true,
+            importanceMode: "auto",
+            basePriority: 4,
+            reminderSuggestion: "offer_before_event",
+          }
+        : {}),
     },
   };
   return {

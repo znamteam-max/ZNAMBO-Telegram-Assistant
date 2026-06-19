@@ -7,7 +7,8 @@ const EXPLICIT_DEADLINE_MARKER =
   /(?:^|[^\p{L}])(?:дедлайн|deadline|срок|к\s+дедлайну|сдать|успеть|надо|нужно|край)(?=$|[^\p{L}])/iu;
 const RELATIVE_DEADLINE =
   /(?:сегодня|завтра|послезавтра|понедельник|понедельника|понедельнику|вторник|вторника|вторнику|среда|среду|среды|четверг|четверга|четвергу|пятница|пятницу|пятницы|суббота|субботу|субботы|воскресенье|воскресенья)[^,;]*до\s+\d{1,2}(?:[.:]\d{2})?/i;
-const DATE_DEADLINE = /до\s+\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?(?:\s+(?:в\s+)?)?\d{1,2}(?:[.:]\d{2})?/i;
+const DATE_DEADLINE =
+  /до\s+\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?(?:\s+(?:в\s+)?)?\d{1,2}(?:[.:]\d{2})?/i;
 const WEEKDAY_DEADLINE =
   /до\s+(?:понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья)\s+(?:в\s+)?\d{1,2}(?:[.:]\d{2})?/i;
 const END_OF_DAY_DEADLINE = /(?:сегодня|завтра)\s+до\s+конца\s+дня/i;
@@ -141,19 +142,19 @@ function extractDeadlineSegment(text: string, hasExplicitRange: boolean) {
 function toDeadlineDateTimeText(segment: string) {
   let value = segment
     .replace(/(?:дедлайн|deadline|срок|к\s+дедлайну)[:,]?\s*/i, "")
-    .replace(/^(?:сдать|успеть|надо|нужно|край).*?(?=(?:сегодня|завтра|послезавтра|в\s+(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)|до\s+(?:понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья)|до\s+\d))/i, "")
+    .replace(
+      /^(?:сдать|успеть|надо|нужно|край).*?(?=(?:сегодня|завтра|послезавтра|в\s+(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)|до\s+(?:понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья)|до\s+\d))/i,
+      "",
+    )
     .trim();
 
   value = value
     .replace(/до\s+(?=\d{1,2}(?:[.:]\d{2})?(?:$|[^\d]))/i, "в ")
     .replace(
-      /до\s+(понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья)\s+(?=\d{1,2}(?:[.:]\d{2})?)/i,
+      /до\s+(понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья)\s+(?:в\s+)?(?=\d{1,2}(?:[.:]\d{2})?)/i,
       (_match, weekday: string) => `в ${normalizeDeadlineWeekdayCase(weekday)} `,
     )
-    .replace(
-      /до\s+(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\s+(?=\d{1,2}(?:[.:]\d{2})?)/i,
-      " $1 в ",
-    );
+    .replace(/до\s+(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\s+(?=\d{1,2}(?:[.:]\d{2})?)/i, " $1 в ");
 
   if (
     /^\s*\d{1,2}(?:[.:]\d{2})?\s*$/.test(value) ||
@@ -209,11 +210,7 @@ function extractDeadlineTitle(text: string) {
   return title ? normalizeKnownProjectNames(title) : null;
 }
 
-function parseEndOfDayDeadline(params: {
-  text: string;
-  timezone: string;
-  now?: Date;
-}) {
+function parseEndOfDayDeadline(params: { text: string; timezone: string; now?: Date }) {
   const match = params.text.match(END_OF_DAY_DEADLINE);
   if (!match) return null;
   const nowLocal = DateTime.fromJSDate(params.now ?? new Date(), { zone: "utc" }).setZone(

@@ -1,10 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  actionableReminderActions,
-  actionableReminderKeyboard,
-} from "@/bot/keyboards";
+import { actionableReminderActions, actionableReminderKeyboard } from "@/bot/keyboards";
 import { collapseMonthlyAuditSpam } from "@/services/actionLog";
 import { parsePinnedContextIntent } from "@/domain/pinnedContextNotes";
 import { formatBeforeEventOffset } from "@/domain/reminderPolicyPresentation";
@@ -45,7 +42,9 @@ describe("V2.24 actionable reminder cards", () => {
       plannerItemId: policy.itemId,
       policy,
       now,
-    }).inline_keyboard.flat().map((button) => button.text);
+    })
+      .inline_keyboard.flat()
+      .map((button) => button.text);
 
     expect(labels).toEqual([
       "✅ Сделал",
@@ -299,6 +298,105 @@ describe("V2.24 pending prompt re-nag", () => {
     expect(renagMocks.writeAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "assistant.renag_card_edited" }),
     );
+  });
+
+  it("sends one loud re-nag and deletes the previous visible card", async () => {
+    const { runDuePendingPromptRenags } = await import("@/services/pendingPromptRenag");
+    renagMocks.listDue.mockResolvedValueOnce([
+      pendingAction({ output: { lastTelegramMessageId: 77, renagCount: 1 } }),
+    ]);
+    renagMocks.getUser.mockResolvedValueOnce({
+      id: "22222222-2222-4222-8222-222222222222",
+      telegramUserId: 52203584n,
+    });
+    renagMocks.resolve.mockResolvedValueOnce({
+      status: "ready",
+      card: {
+        text: "Напоминание: тест",
+        keyboard: new InlineKeyboard().text("✅ Сделал", "reminder:ack:test"),
+        renderMode: "task_until_done",
+        allowedActions: ["ack"],
+        buttonsAttached: true,
+      },
+    });
+    const sendMessage = vi.fn(async () => ({ message_id: 78 }));
+    const deleteMessage = vi.fn(async () => true);
+
+    const result = await runDuePendingPromptRenags({
+      now: new Date("2026-06-18T10:11:00.000Z"),
+      sender: { sendMessage, deleteMessage },
+    });
+
+    expect(result).toEqual(expect.objectContaining({ sent: 1, replaced: 1 }));
+    expect(sendMessage).toHaveBeenCalledWith(
+      "52203584",
+      "Напоминание: тест",
+      expect.objectContaining({ disable_notification: false }),
+    );
+    expect(deleteMessage).toHaveBeenCalledWith("52203584", 77);
+    expect(renagMocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "assistant.renag_previous_card_deleted" }),
+    );
+  });
+
+  it("treats message_not_modified as an edit no-op success", async () => {
+    const { runDuePendingPromptRenags } = await import("@/services/pendingPromptRenag");
+    renagMocks.listDue.mockResolvedValueOnce([
+      pendingAction({
+        output: {
+          lastTelegramMessageId: 77,
+          renagCount: 1,
+          stackDeliveryMode: "edit_only",
+        },
+      }),
+    ]);
+    renagMocks.getUser.mockResolvedValueOnce({
+      id: "22222222-2222-4222-8222-222222222222",
+      telegramUserId: 52203584n,
+    });
+    renagMocks.resolve.mockResolvedValueOnce({
+      status: "ready",
+      card: {
+        text: "Напоминание: тест",
+        keyboard: new InlineKeyboard().text("✅ Сделал", "reminder:ack:test"),
+        renderMode: "task_until_done",
+        allowedActions: ["ack"],
+        buttonsAttached: true,
+      },
+    });
+    const sendMessage = vi.fn();
+    const editMessageText = vi.fn(async () => {
+      throw new Error("Bad Request: message is not modified");
+    });
+
+    const result = await runDuePendingPromptRenags({
+      now: new Date("2026-06-18T10:11:00.000Z"),
+      sender: { sendMessage, editMessageText },
+    });
+
+    expect(result).toEqual(expect.objectContaining({ sent: 0, edited: 1 }));
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(renagMocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "assistant.renag_edit_noop_success" }),
+    );
+  });
+
+  it("collapses repeated low-value re-nag audit rows in actionlog", () => {
+    const entries = [
+      {
+        ...actionLogEntry("renag-1", "2026-06-18T10:00:00.000Z"),
+        action: "assistant.renag_card_sent_loud",
+        details: { targetPolicyId: "policy-1" },
+      },
+      {
+        ...actionLogEntry("renag-2", "2026-06-18T10:05:00.000Z"),
+        action: "assistant.renag_card_sent_loud",
+        details: { targetPolicyId: "policy-1" },
+      },
+    ];
+    const collapsed = collapseMonthlyAuditSpam(entries);
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0].details.collapsedDuplicates).toBe(1);
   });
 });
 

@@ -17,6 +17,15 @@ export type RussianWeekdayAppointment = {
   localDateTime: string;
 };
 
+const WEEKDAY_SCHEDULE_PREFIX =
+  /^\s*(?:в|во|на)\s+(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)\s+(?:к|на|в)\s+\d{1,2}(?:[.:]\d{1,2})?\s*[,;:]?\s*/iu;
+
+export function stripRussianWeekdaySchedulePhrase(text: string) {
+  const stripped = text.replace(WEEKDAY_SCHEDULE_PREFIX, "").trim();
+  if (!stripped) return text.trim();
+  return stripped.replace(/^./u, (character) => character.toLocaleUpperCase("ru"));
+}
+
 export function parseRussianWeekdayAppointment(params: {
   text: string;
   timezone: string;
@@ -44,9 +53,7 @@ export function parseRussianWeekdayAppointment(params: {
 }
 
 function extractAppointmentClock(text: string) {
-  const match = text.match(
-    /(?:^|\s)(?:к|на|в)\s+(\d{1,2})(?:[.:](\d{1,2}))?(?=\s|[,.!?;]|$)/i,
-  );
+  const match = text.match(/(?:^|\s)(?:к|на|в)\s+(\d{1,2})(?:[.:](\d{1,2}))?(?=\s|[,.!?;]|$)/i);
   if (!match) return null;
   const hour = Number(match[1]);
   const minute = Number(match[2] ?? 0);

@@ -147,6 +147,10 @@ import {
   applyV2250ProductionRepair,
   previewV2250ProductionRepair,
 } from "@/services/v2250ProductionRepair";
+import {
+  applyV2260ProductionRepair,
+  previewV2260ProductionRepair,
+} from "@/services/v2260ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -253,6 +257,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2230 preview|apply - creation intent, pinned notes, re-nag and labels repair",
         "/admin_repair_v2240 preview|apply - actionable re-nag, car pinned notes and carryover repair",
         "/admin_repair_v2250 preview|apply - in-place re-nag, loud delivery and EOD semantics repair",
+        "/admin_repair_v2260 preview|apply - re-nag stack, silent dashboard, weekday and orthodontist repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -1625,7 +1630,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v2240", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyV2240ProductionRepair({ userId: owner.id, timezone: owner.timezone })
@@ -1658,7 +1665,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
   bot.command("admin_repair_v2250", async (ctx) => {
     const owner = requireOwner(ctx);
-    const mode = String(ctx.match ?? "preview").trim().toLowerCase();
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
     const result =
       mode === "apply"
         ? await applyV2250ProductionRepair({ userId: owner.id, timezone: owner.timezone })
@@ -1682,6 +1691,48 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2250 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2260", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2260ProductionRepair({ userId: owner.id, timezone: owner.timezone })
+        : await previewV2260ProductionRepair({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.26 repair applied:" : "V2.26 repair preview:",
+        `• duplicate visible re-nag cards: ${numberValue(result, "duplicateVisibleRenagCards")}`,
+        `• re-nag cards to delete: ${numberValue(result, "renagCardsToDelete")}`,
+        `• misparsed weekday items: ${numberValue(result, "misparsedWeekdayItems")}`,
+        `• orthodontist template mismatches: ${numberValue(result, "orthodontistTemplateMismatches")}`,
+        `• pinned notes with reminder policies: ${numberValue(result, "pinnedNotesWithReminderPolicies")}`,
+        `• loud dashboards after reminders: ${numberValue(result, "dashboardsSentLoudAfterReminder")}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• deleted old re-nag cards: ${numberValue(result, "deletedOldRenagCards")}`,
+              `• superseded old re-nag cards: ${numberValue(result, "supersededOldRenagCards")}`,
+              `• fixed weekday items: ${numberValue(result, "fixedWeekdayItems")}`,
+              `• normalized orthodontist templates: ${numberValue(result, "normalizedOrthodontistReminderTemplates")}`,
+              `• converted pinned notes: ${numberValue(result, "convertedPinnedNotes")}`,
+              `• cancelled pinned-note policies: ${numberValue(result, "cancelledPinnedNotePolicies")}`,
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2260 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {
