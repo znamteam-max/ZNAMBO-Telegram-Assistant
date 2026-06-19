@@ -164,6 +164,14 @@ import {
   runV2260RenagStackSmoke,
   runV2260WeekdayFutureParseSmoke,
 } from "@/services/v2260ProductionSmoke";
+import {
+  applyV2270ProductionRepair,
+  previewV2270ProductionRepair,
+} from "@/services/v2270ProductionRepair";
+import {
+  runV2270UntilDoneAiNormalizationSmoke,
+  runV2270UntilDonePhraseOrderSmoke,
+} from "@/services/v2270ProductionSmoke";
 import { renderReminderControlCenter } from "@/telegram/reminderControlCenter";
 import { notifyProductionRelease } from "@/services/releaseNotification";
 import { getOwnerTimeDebug } from "@/services/timeDiagnostics";
@@ -686,6 +694,38 @@ export async function POST(request: Request) {
   }
   if (body.action === "v2260_pinned_note_hygiene_smoke" && body.confirm === true) {
     const result = await runV2260PinnedNoteHygieneSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2270_repair_preview") {
+    return NextResponse.json({
+      ok: true,
+      preview: await previewV2270ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2270_repair_apply" && body.confirm === true) {
+    return NextResponse.json({
+      ok: true,
+      result: await applyV2270ProductionRepair({
+        userId: owner.id,
+        timezone: owner.timezone,
+      }),
+    });
+  }
+  if (body.action === "v2270_until_done_phrase_order_smoke" && body.confirm === true) {
+    const result = await runV2270UntilDonePhraseOrderSmoke({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    return NextResponse.json({ ok: result.ok, result }, { status: result.ok ? 200 : 500 });
+  }
+  if (body.action === "v2270_until_done_ai_normalization_smoke" && body.confirm === true) {
+    const result = await runV2270UntilDoneAiNormalizationSmoke({
       userId: owner.id,
       timezone: owner.timezone,
     });

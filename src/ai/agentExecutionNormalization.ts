@@ -27,6 +27,7 @@ import {
   buildOrthodontistReminderTemplate,
   ORTHODONTIST_TEMPLATE_VERSION,
 } from "@/domain/orthodontistReminderTemplate";
+import { detectOpenEndedUntilDoneIntent } from "@/domain/openEndedUntilDoneIntent";
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 
@@ -685,42 +686,26 @@ function normalizeOpenEndedNagUntilAck(params: {
   timezone: string;
   now: Date;
 }): AgentExecution {
-  const intervalMinutes = extractIntervalMinutes(params.text);
-  const hasReminderIntent = /(?:напомни|напоминай|напоминать|напомняй)/i.test(params.text);
-  const hasUntilDoneStop =
-    /пока\s+(?:я\s+)?не\s+(?:выполн[а-яё]*|сдел[а-яё]*|отмеч[а-яё]*|подтверд[а-яё]*|законч[а-яё]*|закро[а-яё]*)|до\s+выполнения/i.test(
-      params.text,
-    );
-  const hasExplicitStart =
-    Boolean(extractReminderClock(params.text)) ||
-    /начиная\s+с\s+\d{1,2}|(?:^|\s)с\s+\d{1,2}(?:[.:]\d{2})?/i.test(params.text);
-  if (!intervalMinutes || !hasReminderIntent || !hasUntilDoneStop || hasExplicitStart) {
-    return params.execution;
-  }
-
-  const title = extractOpenEndedNagTitle(params.text);
-  if (!title) return params.execution;
-
-  const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
-  const firstReminder = nowLocal.plus({ minutes: 5 }).startOf("minute");
-  const todayOnly = /(?:сегодня|до\s+конца\s+дня)/i.test(params.text);
-  const windowEnd = todayOnly
-    ? nowLocal.set({ hour: 23, minute: 59, second: 0, millisecond: 0 })
-    : null;
-  if (windowEnd && firstReminder > windowEnd) return params.execution;
+  const detected = detectOpenEndedUntilDoneIntent({
+    text: params.text,
+    timezone: params.timezone,
+    now: params.now,
+  });
+  if (!detected || detected.confidence !== "high") return params.execution;
 
   const proposed = params.execution.actionPlan?.actions.find(
     (action) => action.kind !== "recurring_task",
   );
+  const originalPolicyType = params.execution.reminderPolicies[0]?.policyType ?? null;
   const action: ActionPlanItem = {
-    ...(proposed ?? buildSyntheticReminderAction(title, params.timezone)),
+    ...(proposed ?? buildSyntheticReminderAction(detected.title, params.timezone)),
     actionType: "task",
     kind: "task",
-    title,
+    title: detected.title,
     timezone: proposed?.timezone || params.timezone,
     startAtLocal: null,
     endAtLocal: null,
-    dueAtLocal: windowEnd?.toFormat("yyyy-MM-dd'T'HH:mm:ss") ?? null,
+    dueAtLocal: detected.endsAtLocal,
     durationMinutes: null,
     reminders: [],
     priority: Math.max(proposed?.priority ?? 3, 4),
@@ -731,32 +716,41 @@ function normalizeOpenEndedNagUntilAck(params: {
     metadata: {
       ...(proposed?.metadata ?? {}),
       sourceNormalization: "open_nag_until_ack_v2240",
+      phraseOrderNormalization: "open_nag_until_ack_v2270",
       reminderIntentExplicit: true,
-      openEndedUntilDone: !todayOnly,
-      timeScope: todayOnly ? "today" : "persistent",
-      intervalMinutes,
+      openEndedUntilDone: detected.timeScope === "persistent",
+      timeScope: detected.timeScope,
+      intervalMinutes: detected.intervalMinutes,
       stopCondition: "until_done",
-      firstReminderAtLocal: firstReminder.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+      firstReminderAtLocal: detected.nextFireAtLocal,
+      untilDoneTextHash: detected.textHash,
+      untilDoneTitleHash: detected.titleHash,
+      untilDoneTitlePreviewSafe: detected.titlePreviewSafe,
+      untilDoneSourceOrder: detected.sourceOrder,
+      untilDoneAiProposalNormalized: true,
+      originalPolicyType,
+      normalizedPolicyType: "nag_until_ack",
+      normalizationReason: "source_text_contains_cadence_and_until_done",
     },
   };
   const policy: AgentReminderPolicy = {
     operation: "create_interval_window_policy",
     itemIds: [],
-    itemTitle: title,
-    title,
+    itemTitle: detected.title,
+    title: detected.title,
     category: "nag_until_done",
     policyType: "nag_until_ack",
-    startsAtLocal: firstReminder.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
-    endsAtLocal: windowEnd?.toFormat("yyyy-MM-dd'T'HH:mm:ss") ?? null,
-    nextFireAtLocal: firstReminder.toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    startsAtLocal: detected.startsAtLocal,
+    endsAtLocal: detected.endsAtLocal,
+    nextFireAtLocal: detected.nextFireAtLocal,
     recurrenceRule: null,
-    intervalMinutes,
+    intervalMinutes: detected.intervalMinutes,
     requireAck: true,
     maxOccurrences: null,
     minutesBefore: null,
     windowEndInclusive: true,
     catchUpMode: "one_immediate_then_resume",
-    onWindowEnd: todayOnly ? "move_to_overdue_or_review" : "carry_to_next_day",
+    onWindowEnd: detected.timeScope === "today" ? "move_to_overdue_or_review" : "carry_to_next_day",
     quietHoursStart: null,
     quietHoursEnd: null,
     allowDuringQuietHours: false,
@@ -768,7 +762,7 @@ function normalizeOpenEndedNagUntilAck(params: {
     reply: null,
     actionPlan: {
       intent: "plan",
-      summary: title,
+      summary: detected.title,
       reply: null,
       confidence: 0.99,
       requiresConfirmation: false,
@@ -780,23 +774,6 @@ function normalizeOpenEndedNagUntilAck(params: {
     reminderPolicies: [policy],
     clarificationQuestions: [],
   };
-}
-
-function extractOpenEndedNagTitle(text: string) {
-  const afterStop = text.match(
-    /пока\s+(?:я\s+)?не\s+(?:выполн[а-яё]*|сдел[а-яё]*|отмеч[а-яё]*|подтверд[а-яё]*|законч[а-яё]*|закро[а-яё]*)\s*[,;:\-]\s*(.+)$/i,
-  )?.[1];
-  const candidate = afterStop
-    ? afterStop
-    : text
-        .replace(/^(?:напомни|напоминай|напоминать|напомняй)(?:\s+мне)?\s+/i, "")
-        .replace(/^кажд(?:ый|ые)\s+(?:час|\d{1,3}\s*мин(?:ут[уы]?)?|полчаса)\s*[,;:\-]?\s*/i, "")
-        .replace(/[,;:\-]?\s*(?:до\s+тех\s+пор,?\s*)?пока\s+(?:я\s+)?не\s+.*$/i, "");
-  const cleaned = candidate
-    .replace(/^(?:задачу\s+)?/i, "")
-    .replace(/[.!?\s]+$/u, "")
-    .trim();
-  return cleaned ? `${cleaned[0].toLocaleUpperCase("ru")}${cleaned.slice(1)}` : null;
 }
 
 function normalizeTodayUntilDoneSemantics(params: {

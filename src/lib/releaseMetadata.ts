@@ -1,16 +1,20 @@
 export const RELEASE_NOTES = {
-  version: "2.26.0",
-  previousVersion: "2.25.0",
-  title: "Reminder stack, dashboard sound policy, weekday parsing and visit template",
+  version: "2.27.0",
+  previousVersion: "2.26.0",
+  title: "Until-done phrase order and action plan guard fix",
   bullets: [
-    "каждый 5-минутный re-nag отправляет одну новую громкую карточку и удаляет предыдущую, не создавая видимый стек",
-    "message_not_modified считается успешным no-op, а недоступное удаление переводит цель в безопасный edit-only режим",
-    "центральная sound policy делает reminder/re-nag/event громкими, а dashboard/status/debug/release — тихими",
-    "явное В понедельник в 12:00 создаёт будущий startAt и не превращается в просроченный дедлайн",
-    "пара визитов к ортодонту получает канонический шаблон: неделя, 3 дня, утро, 2 часа и 30 минут",
-    "добавлены /admin_repair_v2260 preview|apply и protected V2.26 production smokes",
+    "фразы вида «починить кран … до тех пор, когда не сделаю, каждый час» теперь детерминированно становятся nag_until_ack",
+    "исходный текст выигрывает у плохого AI-предложения recurring/task без времени",
+    "pending preview больше не показывает «без времени», если в исходной фразе есть cadence + until-done",
+    "guard безопасно стартует open-ended nag_until_ack от now/nearest safe slot вместо missing_initial_fire",
+    "добавлены безопасные audit-события и protected V2.27 smokes",
+    "добавлен /admin_repair_v2270 preview|apply без изменений Yandex Calendar и без автосоздания реальных задач",
   ],
-  testPrompts: ["/admin_repair_v2260 preview", "/dashboard", "/admin_repair_v2260 apply"],
+  testPrompts: [
+    "Напоминай мне починить кран в ванной до тех пор, когда не сделаю, каждый час",
+    "/admin_repair_v2270 preview",
+    "/admin_repair_v2270 apply",
+  ],
 } as const;
 
 export function normalizeReleaseVersion(version: string): string {

@@ -370,6 +370,11 @@ function groupActions(actions: ActionPlanItem[]) {
 }
 
 function formatActionPlanItem(action: ActionPlanItem, timezone: string): string {
+  if (isUntilDoneActionPlanItem(action)) {
+    const interval =
+      typeof action.metadata?.intervalMinutes === "number" ? action.metadata.intervalMinutes : 60;
+    return `${action.title}\n  ↻ ${formatOpenEndedNagInterval(interval)}, пока не отмечу выполненным`;
+  }
   const zone = action.timezone ?? timezone;
   const schedule = action.startAtLocal ? formatProposalLocalTime(action.startAtLocal, zone) : null;
   const deadline = action.dueAtLocal
@@ -383,7 +388,25 @@ function formatActionPlanItem(action: ActionPlanItem, timezone: string): string 
   return `${when} — ${tentative}${action.title}${action.description ? ` (${action.description})` : ""}${recurrence}`;
 }
 
+function isUntilDoneActionPlanItem(action: ActionPlanItem) {
+  return (
+    action.metadata?.stopCondition === "until_done" &&
+    (action.metadata?.openEndedUntilDone === true ||
+      action.metadata?.timeScope === "persistent" ||
+      action.metadata?.timeScope === "today") &&
+    typeof action.metadata?.intervalMinutes === "number"
+  );
+}
+
 function formatItemScheduleAndDeadline(item: PlannerItem, timezone: string) {
+  if (
+    item.metadata?.stopCondition === "until_done" &&
+    (item.metadata?.openEndedUntilDone === true || item.metadata?.timeScope === "persistent")
+  ) {
+    const interval =
+      typeof item.metadata?.intervalMinutes === "number" ? item.metadata.intervalMinutes : 60;
+    return `${formatOpenEndedNagInterval(interval)}, пока не отмечу выполненным`;
+  }
   const zone = item.timezone || timezone;
   const schedule = item.startAt ? formatLocalDateRange(item.startAt, item.endAt, zone) : null;
   const deadline = item.dueAt ? `дедлайн ${formatDeadlineDateTime(item.dueAt, zone)}` : null;

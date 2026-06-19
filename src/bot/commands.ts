@@ -151,6 +151,10 @@ import {
   applyV2260ProductionRepair,
   previewV2260ProductionRepair,
 } from "@/services/v2260ProductionRepair";
+import {
+  applyV2270ProductionRepair,
+  previewV2270ProductionRepair,
+} from "@/services/v2270ProductionRepair";
 import { buildActionLog, parseActionLogArgs } from "@/services/actionLog";
 import {
   getReleaseOverview,
@@ -258,6 +262,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         "/admin_repair_v2240 preview|apply - actionable re-nag, car pinned notes and carryover repair",
         "/admin_repair_v2250 preview|apply - in-place re-nag, loud delivery and EOD semantics repair",
         "/admin_repair_v2260 preview|apply - re-nag stack, silent dashboard, weekday and orthodontist repair",
+        "/admin_repair_v2270 preview|apply - until-done phrase order and stale draft repair",
         "/admin_state_v252 — безопасный production state",
         "/settings Europe/Moscow — сменить часовой пояс",
         "/export — выгрузить данные",
@@ -1733,6 +1738,43 @@ export function registerCommands(bot: Bot<BotContext>) {
               "• Yandex objects changed: 0",
             ]
           : ["Для применения: /admin_repair_v2260 apply"]),
+      ].join("\n"),
+    );
+    if (mode === "apply" && ctx.chat?.id) {
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+  bot.command("admin_repair_v2270", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const mode = String(ctx.match ?? "preview")
+      .trim()
+      .toLowerCase();
+    const result =
+      mode === "apply"
+        ? await applyV2270ProductionRepair({ userId: owner.id, timezone: owner.timezone })
+        : await previewV2270ProductionRepair({ userId: owner.id, timezone: owner.timezone });
+    await replyAndRecord(
+      ctx,
+      [
+        mode === "apply" ? "V2.27 repair applied:" : "V2.27 repair preview:",
+        `• failed until-done drafts: ${numberValue(result, "failedUntilDoneDrafts")}`,
+        `• stale pending plans missing until-done policy: ${numberValue(result, "stalePendingPlansMissingUntilDonePolicy")}`,
+        `• recurring policies missing initial fire: ${numberValue(result, "recurringPoliciesMissingInitialFireButSourceUntilDone")}`,
+        `• stale sessions to clear: ${numberValue(result, "staleSessionsToClear")}`,
+        "• calendar objects to change: 0",
+        `• safe: ${result.safeToApply ? "yes" : "no"}`,
+        ...(mode === "apply"
+          ? [
+              `• cancelled stale pending plans: ${numberValue(result, "cancelledStalePendingPlans")}`,
+              `• cleared stale sessions: ${numberValue(result, "clearedStaleSessions")}`,
+              "• created user tasks: 0",
+              "• Yandex objects changed: 0",
+            ]
+          : ["Для применения: /admin_repair_v2270 apply"]),
       ].join("\n"),
     );
     if (mode === "apply" && ctx.chat?.id) {

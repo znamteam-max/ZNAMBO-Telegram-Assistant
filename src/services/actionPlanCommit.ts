@@ -278,6 +278,24 @@ export async function commitStoredActionPlan(params: {
             },
           });
         }
+        if (item.metadata?.phraseOrderNormalization === "open_nag_until_ack_v2270") {
+          await tx.insert(auditLog).values({
+            userId: params.userId,
+            action: "assistant.until_done_phrase_detected",
+            entityType: "planner_item",
+            entityId: item.id,
+            details: {
+              actionPlanId: planRecord.id,
+              textHash: item.metadata.untilDoneTextHash ?? null,
+              intervalMinutes: item.metadata.intervalMinutes ?? null,
+              stopCondition: "until_done",
+              titleHash: item.metadata.untilDoneTitleHash ?? null,
+              titlePreviewSafe: item.metadata.untilDoneTitlePreviewSafe ?? null,
+              sourceOrder: item.metadata.untilDoneSourceOrder ?? "mixed",
+              timezone: item.timezone || params.timezone,
+            },
+          });
+        }
       }
 
       for (const [policyIndex, proposal] of reminderPolicyProposals.entries()) {
@@ -362,6 +380,22 @@ export async function commitStoredActionPlan(params: {
             .returning();
           if (!policy) throw new UserFacingError("Не получилось создать reminder policy.");
           createdPolicies.push(policy);
+          if (target?.metadata?.untilDoneAiProposalNormalized === true) {
+            await tx.insert(auditLog).values({
+              userId: params.userId,
+              action: "assistant.until_done_ai_proposal_normalized",
+              entityType: "reminder_policy",
+              entityId: policy.id,
+              details: {
+                originalPolicyType: target.metadata.originalPolicyType ?? null,
+                normalizedPolicyType: "nag_until_ack",
+                reason: "source_text_contains_cadence_and_until_done",
+                intervalMinutes: proposal.intervalMinutes,
+                startsAtMode: "now",
+                endsAt: null,
+              },
+            });
+          }
 
           const spacing = await findNextAvailableReminderSlot({
             ownerId: params.userId,
@@ -415,11 +449,12 @@ export async function commitStoredActionPlan(params: {
               entityType: "reminder_policy",
               entityId: policy.id,
               details: {
-                plannerItemId: target?.id ?? null,
+                itemId: target?.id ?? null,
+                policyId: policy.id,
                 reminderId: reminder.id,
                 intervalMinutes: proposal.intervalMinutes,
-                firstReminderAt: spacing.scheduledAt.toISOString(),
-                stopCondition: "until_done",
+                nextFireAt: spacing.scheduledAt.toISOString(),
+                endsAt: null,
                 timezone,
               },
             });
@@ -529,6 +564,18 @@ function determinePolicyInitialFire(params: {
       : null;
   }
   if (params.startsAt) return params.startsAt;
+  if (
+    params.proposal.policyType === "nag_until_ack" &&
+    params.proposal.requireAck === true &&
+    params.proposal.intervalMinutes
+  ) {
+    return DateTime.fromJSDate(params.now, { zone: "utc" })
+      .setZone(params.timezone)
+      .plus({ minutes: 5 })
+      .startOf("minute")
+      .toUTC()
+      .toJSDate();
+  }
   if (["recurring", "long_term"].includes(params.proposal.policyType)) {
     const missingField = recurringRuleMissingField(params.proposal.recurrenceRule);
     if (missingField) {
@@ -594,11 +641,17 @@ function inferPolicyProposalMetadata(
     target?.metadata?.openEndedUntilDone === true
   ) {
     metadata.sourceNormalization = "open_nag_until_ack_v2240";
+    if (target.metadata.phraseOrderNormalization) {
+      metadata.phraseOrderNormalization = target.metadata.phraseOrderNormalization;
+    }
     metadata.openEndedUntilDone = true;
     metadata.timeScope = "persistent";
     metadata.intervalMinutes = proposal.intervalMinutes;
     metadata.stopCondition = "until_done";
     metadata.firstReminderAtLocal = proposal.nextFireAtLocal ?? proposal.startsAtLocal;
+    metadata.untilDoneTextHash = target.metadata.untilDoneTextHash ?? null;
+    metadata.untilDoneTitleHash = target.metadata.untilDoneTitleHash ?? null;
+    metadata.untilDoneSourceOrder = target.metadata.untilDoneSourceOrder ?? null;
   }
   return metadata;
 }

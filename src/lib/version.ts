@@ -1,4 +1,4 @@
-export const APP_VERSION = "2.26.0";
+export const APP_VERSION = "2.27.0";
 export const POLICY_ENGINE_VERSION = "2.5.3";
 export const INTERVAL_ALGORITHM_VERSION = "anchor-grid-v2";
 export const RECONCILER_ENABLED = true;
