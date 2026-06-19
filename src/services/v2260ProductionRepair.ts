@@ -8,7 +8,10 @@ import {
   listReminderPoliciesForUser,
   updateReminderPolicy,
 } from "@/db/queries/reminderPolicies";
-import { cancelPendingRemindersForPolicy, createReminderIfMissing } from "@/db/queries/reminders";
+import {
+  cancelPendingRemindersForPolicy,
+  ensurePendingReminderForPolicyAt,
+} from "@/db/queries/reminders";
 import { getUserById } from "@/db/queries/users";
 import type { AgentAction, PlannerItem, ReminderPolicy } from "@/db/schema";
 import { hasDeadlineIntent } from "@/domain/deadlineSemantics";
@@ -332,7 +335,7 @@ async function normalizeOrthodontistPolicies(params: {
   );
   for (const entry of buildOrthodontistReminderTemplate({ eventStart: start, now: nowLocal })) {
     const idempotencyKey = `v2260:orthodontist:${item.id}:${entry.templateRole}:${entry.fireAt.toUTC().toISO()}`;
-    const policy = await createReminderPolicyIfMissing({
+    const existingPolicy = await createReminderPolicyIfMissing({
       userId: params.userId,
       itemId: item.id,
       title: item.title,
@@ -353,7 +356,24 @@ async function normalizeOrthodontistPolicies(params: {
         repairedBy: "admin_repair_v2260",
       },
     });
-    await createReminderIfMissing({
+    const policy =
+      (await updateReminderPolicy({
+        userId: params.userId,
+        policyId: existingPolicy.id,
+        status: "active",
+        startsAt: entry.fireAt.toUTC().toJSDate(),
+        nextFireAt: entry.fireAt.toUTC().toJSDate(),
+        metadata: {
+          minutesBefore: entry.minutesBefore,
+          relativeLabel: entry.relativeLabel,
+          eventMorningSet: entry.eventMorningSet,
+          orthodontistTemplate: ORTHODONTIST_TEMPLATE_VERSION,
+          orthodontistTemplateRole: entry.templateRole,
+          repairedBy: "admin_repair_v2260",
+          reactivatedAt: params.now.toISOString(),
+        },
+      })) ?? existingPolicy;
+    await ensurePendingReminderForPolicyAt({
       userId: params.userId,
       plannerItemId: item.id,
       policyId: policy.id,

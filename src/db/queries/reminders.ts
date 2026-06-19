@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 
 import { planPolicySnooze } from "@/domain/reminderPolicySchedule";
 import { findNextAvailableReminderSlot } from "@/services/reminderCollisionSpacing";
@@ -489,6 +489,66 @@ export async function createReminderIfMissing(params: {
   return row ?? null;
 }
 
+export async function ensurePendingReminderForPolicyAt(params: {
+  userId: string;
+  plannerItemId: string;
+  policyId: string;
+  type: string;
+  idempotencyKey: string;
+  scheduledAt: Date;
+  repeatUntilAck?: boolean;
+  purpose?: string | null;
+  menuType?: string | null;
+  payload?: Record<string, unknown>;
+}) {
+  const [existing] = await getDb()
+    .select()
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.userId, params.userId),
+        or(
+          eq(reminders.idempotencyKey, params.idempotencyKey),
+          and(
+            eq(reminders.plannerItemId, params.plannerItemId),
+            eq(reminders.type, params.type),
+            eq(reminders.scheduledAt, params.scheduledAt),
+          ),
+        ),
+      ),
+    )
+    .orderBy(
+      sql`case when ${reminders.idempotencyKey} = ${params.idempotencyKey} then 0 else 1 end`,
+    )
+    .limit(1);
+  if (!existing) {
+    return createReminderIfMissing({
+      ...params,
+      disableSpacing: true,
+    });
+  }
+  const keepExistingScheduledAt = existing.idempotencyKey === params.idempotencyKey;
+  const [updated] = await getDb()
+    .update(reminders)
+    .set({
+      policyId: params.policyId,
+      idempotencyKey: params.idempotencyKey,
+      scheduledAt: keepExistingScheduledAt ? existing.scheduledAt : params.scheduledAt,
+      status: "pending",
+      claimedAt: null,
+      sentAt: null,
+      lastError: null,
+      repeatUntilAck: params.repeatUntilAck ?? false,
+      purpose: params.purpose,
+      menuType: params.menuType,
+      payload: params.payload ?? {},
+      updatedAt: new Date(),
+    })
+    .where(eq(reminders.id, existing.id))
+    .returning();
+  return updated ?? null;
+}
+
 function withSpacingPayload(
   payload: Record<string, unknown>,
   desiredAt: Date,
@@ -693,7 +753,9 @@ export async function snoozeReminderUntil(params: {
     await getDb()
       .update(plannerItems)
       .set({ snoozedUntil: params.snoozedUntil, updatedAt: now })
-      .where(and(eq(plannerItems.id, source.plannerItemId), eq(plannerItems.userId, params.userId)));
+      .where(
+        and(eq(plannerItems.id, source.plannerItemId), eq(plannerItems.userId, params.userId)),
+      );
     await getDb()
       .update(reminders)
       .set({ status: "cancelled", updatedAt: now })
@@ -718,7 +780,11 @@ export async function snoozeReminderUntil(params: {
     purpose: "snooze",
     menuType: source.menuType,
     autoDeleteAfterResponse: source.autoDeleteAfterResponse,
-    payload: { ...source.payload, snoozedFrom: source.id, snoozedUntil: params.snoozedUntil.toISOString() },
+    payload: {
+      ...source.payload,
+      snoozedFrom: source.id,
+      snoozedUntil: params.snoozedUntil.toISOString(),
+    },
   });
   return reminder ? Object.assign(reminder, { snoozeTarget: "item_until" }) : null;
 }
@@ -923,10 +989,9 @@ async function snoozePolicyReminder(params: {
       }
     }
 
-    return Object.assign(
-      snoozedReminder ?? { ...params.source, scheduledAt: snoozeAt },
-      { snoozeTarget: "policy" },
-    );
+    return Object.assign(snoozedReminder ?? { ...params.source, scheduledAt: snoozeAt }, {
+      snoozeTarget: "policy",
+    });
   });
 }
 
