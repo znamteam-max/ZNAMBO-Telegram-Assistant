@@ -17,6 +17,18 @@ export function chooseSpacedReminderSlot(params: {
   latestAt?: Date | null;
   maxAttempts?: number;
 }): ReminderSlotChoice {
+  // Relative user actions such as "+2 часа" and "через 30 минут" are generated
+  // from Date.now(), so they intentionally retain seconds/milliseconds. Treat that
+  // precision as an explicit requested instant and never move it for collision spacing.
+  // Canonical automatic reminder slots are minute-aligned and keep the normal spacing rule.
+  if (hasSubMinutePrecision(params.desiredAt)) {
+    return {
+      scheduledAt: params.desiredAt,
+      shifted: false,
+      shiftMinutes: 0,
+    };
+  }
+
   const minSpacingMinutes = params.minSpacingMinutes ?? 5;
   const maxAttempts = params.maxAttempts ?? 24;
   const spacingMs = minSpacingMinutes * 60_000;
@@ -62,6 +74,14 @@ export async function findNextAvailableReminderSlot(params: {
   excludeReminderIds?: string[];
   maxAttempts?: number;
 }): Promise<ReminderSlotChoice> {
+  if (hasSubMinutePrecision(params.desiredAt)) {
+    return {
+      scheduledAt: params.desiredAt,
+      shifted: false,
+      shiftMinutes: 0,
+    };
+  }
+
   const minSpacingMinutes = params.minSpacingMinutes ?? 5;
   const maxAttempts = params.maxAttempts ?? 24;
   const spacingMs = minSpacingMinutes * 60_000;
@@ -89,4 +109,8 @@ export async function findNextAvailableReminderSlot(params: {
     latestAt: params.latestAt,
     maxAttempts,
   });
+}
+
+function hasSubMinutePrecision(value: Date) {
+  return value.getUTCSeconds() !== 0 || value.getUTCMilliseconds() !== 0;
 }
