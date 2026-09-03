@@ -192,6 +192,9 @@ function sanitizeValue(value: unknown): unknown {
 }
 
 function isSensitiveKey(key: string) {
+  // Token usage counters are observability data, not credentials. Keep them numeric
+  // in owner-only logs while continuing to redact actual auth/session token fields.
+  if (/^(?:input|output|total|prompt|completion)[_-]?tokens?$/i.test(key)) return false;
   return /(secret|token|password|authorization|api[_-]?key|database[_-]?url|connection[_-]?string|bearer)/i.test(
     key,
   );

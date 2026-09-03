@@ -16,8 +16,10 @@ import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 import { formatRuWeekdayDateRange } from "@/domain/dateTime";
 import { formatHumanReminderPolicy } from "@/domain/reminderPolicyPresentation";
 import {
+  formatReminderCadence,
   formatUntilDoneReminderSummary,
   normalizeUntilDoneReminder,
+  parseExplicitReminderIntervalMinutes,
   type UntilDoneReminderNormalization,
 } from "@/domain/untilDoneReminderText";
 import {
@@ -220,9 +222,7 @@ export async function handleReminderPolicyEditTurn(
       "Готово:",
       session.item.title,
       "",
-      `Напоминания: ❗ ${
-        parsed.intervalMinutes === 60 ? "каждый час" : `каждые ${parsed.intervalMinutes} мин`
-      } с ${parsed.windowStart}${
+      `Напоминания: ❗ ${formatReminderCadence(parsed.intervalMinutes)} с ${parsed.windowStart}${
         parsed.windowEnd ? ` до ${parsed.windowEnd}` : ", без ограничения"
       }, пока не отмечу`,
       `Окно: ${
@@ -319,12 +319,7 @@ async function applyNormalizedUntilDonePolicy(params: {
 
 export function parseReminderPolicyDraftInput(text: string) {
   const normalized = text.toLocaleLowerCase("ru").replace(/ё/g, "е").trim();
-  const intervalMinutes =
-    /кажд(?:ый|ые)\s+час|раз\s+в\s+час/i.test(normalized)
-      ? 60
-      : /кажд(?:ые|ый)\s+(?:полчаса|30\s*мин)/i.test(normalized)
-        ? 30
-        : Number(normalized.match(/кажд(?:ые|ый)\s+(\d{1,3})\s*мин/i)?.[1] ?? 0) || undefined;
+  const intervalMinutes = parseExplicitReminderIntervalMinutes(normalized) ?? undefined;
   const window = parseReminderWindowText(normalized);
   return {
     intervalMinutes,
@@ -391,12 +386,10 @@ export function parseReminderCadence(params: {
   const normalized = params.text.toLowerCase().replace(/ё/g, "е");
   const input = parseReminderPolicyDraftInput(normalized);
   const window = parseReminderWindowText(normalized);
-  const cadenceOnly =
-    /(кажд(?:ый|ые)\s+(?:час|полчаса|\d+\s*мин)|раз\s+в\s+час)/i.test(normalized) &&
-    Boolean(input.windowStart && input.windowEnd);
+  const cadenceOnly = Boolean(input.intervalMinutes && input.windowStart && input.windowEnd);
   if (!cadenceOnly) return null;
   if (window.overnightCandidate) return null;
-  const intervalMinutes = input.intervalMinutes ?? (/полчаса|30\s*мин/i.test(normalized) ? 30 : 60);
+  const intervalMinutes = input.intervalMinutes!;
   const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
   const anchorLocal = params.itemAnchor
     ? DateTime.fromJSDate(params.itemAnchor, { zone: "utc" }).setZone(params.timezone)
@@ -420,7 +413,7 @@ export function parseReminderCadence(params: {
 }
 
 function formatInterval(minutes: number) {
-  return minutes === 60 ? "каждый час" : `каждые ${minutes} минут`;
+  return formatReminderCadence(minutes);
 }
 
 async function applyRecurringItemCadencePolicy(params: {

@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
+import { listHistoricalTranscriptsByMessageIds } from "@/db/queries/messages";
 import { agentActions, auditLog } from "@/db/schema";
 import { hardenAgentTraceDetails } from "@/domain/agentTraceHygiene";
 import { sanitizeForActionLog } from "@/services/actionLog";
@@ -34,9 +35,21 @@ export async function buildFullJournal(params: {
     listAuditRows({ userId: params.userId, since }),
     listAgentActionRows({ userId: params.userId, since }),
   ]);
+  const historicalTranscriptRows = await listHistoricalTranscriptsByMessageIds({
+    userId: params.userId,
+    messageIds: conversationRows
+      .filter((row) => row.role === "user" && !row.transcript && isMediaMessageType(row.messageType))
+      .map((row) => row.telegramMessageId)
+      .filter((value): value is string => Boolean(value)),
+  });
+  const historicalTranscripts = new Map(
+    historicalTranscriptRows
+      .filter((row) => typeof row.transcript === "string" && row.transcript.trim())
+      .map((row) => [row.id, row.transcript!] as const),
+  );
 
   const events: JournalEvent[] = [
-    ...conversationRows.map(conversationToEvent),
+    ...conversationRows.map((row) => conversationToEvent(row, historicalTranscripts)),
     ...auditRows.map(auditToEvent),
     ...actionRows.map(agentActionToEvent),
   ].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
@@ -109,17 +122,24 @@ async function listAgentActionRows(params: { userId: string; since: Date | null 
 
 function conversationToEvent(
   row: Awaited<ReturnType<typeof listConversationMessagesForExport>>[number],
+  historicalTranscripts: Map<string, string>,
 ): JournalEvent {
   const metadata = row.metadata ?? {};
   const isUser = row.role === "user";
-  const visible = isUser ? row.transcript ?? row.text : row.text;
+  const fallbackTranscript = row.telegramMessageId
+    ? historicalTranscripts.get(row.telegramMessageId) ?? null
+    : null;
+  const transcript = row.transcript ?? fallbackTranscript;
+  const visible = isUser ? transcript ?? row.text : row.text;
   const kind = isUser
-    ? `USER/${row.messageType}${row.transcript ? "/transcript" : ""}`
+    ? `USER/${row.messageType}${transcript ? "/transcript" : ""}`
     : `BOT/${row.messageType}`;
   const lifecycle = typeof metadata.lifecycle === "string" ? metadata.lifecycle : null;
   const outboundId = metadata.telegramOutboundMessageId ?? metadata.telegramMessageId ?? null;
   const metaLine = isUser
-    ? null
+    ? fallbackTranscript && !row.transcript
+      ? "transcript_source=historical_telegram_message"
+      : null
     : [
         lifecycle ? `lifecycle=${lifecycle}` : null,
         outboundId ? `telegram_message_id=${String(outboundId)}` : null,
@@ -177,4 +197,8 @@ function redactSecretLikeText(value: string) {
     .replace(/sk-[A-Za-z0-9_-]{12,}/g, "[redacted-openai-key]")
     .replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]")
     .replace(/postgres(?:ql)?:\/\/[^\s]+/gi, "[redacted-database-url]");
+}
+
+function isMediaMessageType(messageType: string) {
+  return ["voice", "audio", "video_note", "video"].includes(messageType);
 }

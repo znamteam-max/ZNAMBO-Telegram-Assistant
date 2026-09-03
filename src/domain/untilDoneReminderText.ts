@@ -35,7 +35,7 @@ export function normalizeUntilDoneReminder(params: {
     endOfDayExplicit;
   if (!reminderIntent || (!untilDoneExplicit && !endOfDayExplicit)) return null;
 
-  const explicitInterval = parseExplicitIntervalMinutes(normalized);
+  const explicitInterval = parseExplicitReminderIntervalMinutes(normalized);
   const intervalMinutes = explicitInterval ?? 60;
   const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
   let starts = nowLocal.plus({ minutes: 1 }).set({ second: 0, millisecond: 0 });
@@ -67,25 +67,52 @@ export function formatUntilDoneReminderSummary(params: {
   const first = DateTime.fromJSDate(params.normalized.startsAt, { zone: "utc" })
     .setZone(params.timezone)
     .toFormat("HH:mm");
-  const cadence =
-    params.normalized.intervalMinutes === 60
-      ? "каждый час"
-      : `каждые ${params.normalized.intervalMinutes} минут`;
+  const cadence = formatReminderCadence(params.normalized.intervalMinutes);
   return [
     `Ок, буду напоминать ${cadence} до конца дня, пока не отметишь выполненным.`,
     `Первое напоминание: сегодня ${first}.`,
   ].join("\n");
 }
 
-function parseExplicitIntervalMinutes(text: string) {
-  if (/кажд(?:ый|ые)\s+час|раз\s+в\s+час|hourly|every\s+hour/i.test(text)) return 60;
-  if (/кажд(?:ые|ый)\s+(?:полчаса|30\s*мин)/i.test(text)) return 30;
-  const minutes = text.match(/кажд(?:ые|ый)\s+(\d{1,3})\s*мин/i);
+export function parseExplicitReminderIntervalMinutes(text: string): number | null {
+  const normalized = normalizeRu(text);
+  if (/кажд(?:ый|ые)\s+час|раз\s+в\s+час|hourly|every\s+hour/i.test(normalized)) return 60;
+  if (/кажд(?:ые|ый)\s+(?:полчаса|30\s*мин)/i.test(normalized)) return 30;
+
+  const hours =
+    normalized.match(/кажд(?:ые|ый)\s+(\d{1,3})\s*час(?:а|ов)?/i) ??
+    normalized.match(/раз\s+в\s+(\d{1,3})\s*час(?:а|ов)?/i);
+  if (hours?.[1]) {
+    const value = Number(hours[1]);
+    if (Number.isFinite(value) && value > 0) return value * 60;
+  }
+
+  const minutes =
+    normalized.match(/кажд(?:ые|ый)\s+(\d{1,3})\s*мин/i) ??
+    normalized.match(/раз\s+в\s+(\d{1,3})\s*мин/i);
   if (minutes?.[1]) {
     const value = Number(minutes[1]);
     if (Number.isFinite(value) && value > 0) return value;
   }
   return null;
+}
+
+export function formatReminderCadence(minutes: number) {
+  if (minutes === 60) return "каждый час";
+  if (minutes > 60 && minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `каждые ${hours} ${ruHours(hours)}`;
+  }
+  return `каждые ${minutes} минут`;
+}
+
+function ruHours(value: number) {
+  const mod100 = value % 100;
+  const mod10 = value % 10;
+  if (mod100 >= 11 && mod100 <= 14) return "часов";
+  if (mod10 === 1) return "час";
+  if (mod10 >= 2 && mod10 <= 4) return "часа";
+  return "часов";
 }
 
 function normalizeRu(value: string) {
