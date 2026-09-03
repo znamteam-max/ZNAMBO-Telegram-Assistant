@@ -3,6 +3,7 @@ import { clearActiveItemEditSession } from "@/services/itemEditSessions";
 import { clearActiveMultiReminderSetupSession } from "@/services/multiReminderSetupSessions";
 import { clearActiveRecurringPolicyDraftSession } from "@/services/recurringPolicyDraftSessions";
 import { clearActiveReminderPolicyEditSession } from "@/services/reminderPolicyEditSessions";
+import { clearPendingPlanEditSession } from "@/services/pendingPlanEditSessions";
 import { isStandaloneIntervalWindowReminderText } from "@/domain/intervalWindowReminderIntent";
 
 export type ClearedInteractionSession =
@@ -10,7 +11,8 @@ export type ClearedInteractionSession =
   | "multi_reminder_setup_session"
   | "reminder_policy_edit_session"
   | "recurring_policy_draft"
-  | "external_calendar_edit_session";
+  | "external_calendar_edit_session"
+  | "pending_plan_edit_session";
 
 export type ClearedInteractionSessionDetails = {
   type: ClearedInteractionSession;
@@ -96,6 +98,9 @@ export async function clearActiveInteractionSessionsWithDetails(params: {
     preserve.has("external_calendar_edit_session")
       ? Promise.resolve(null)
       : clearExternalCalendarEditSession({ userId: params.userId, reason: params.reason }),
+    preserve.has("pending_plan_edit_session")
+      ? Promise.resolve(null)
+      : clearPendingPlanEditSession({ userId: params.userId, reason: params.reason }),
   ]);
   if (results[0].status === "fulfilled" && results[0].value) {
     cleared.push(details("item_edit_session", results[0].value));
@@ -111,6 +116,9 @@ export async function clearActiveInteractionSessionsWithDetails(params: {
   }
   if (results[4].status === "fulfilled" && results[4].value) {
     cleared.push(details("external_calendar_edit_session", results[4].value));
+  }
+  if (results[5].status === "fulfilled" && results[5].value) {
+    cleared.push(details("pending_plan_edit_session", results[5].value));
   }
   return cleared;
 }
