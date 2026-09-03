@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { messageAttachments, telegramMessages } from "../schema";
@@ -76,4 +76,25 @@ export async function getLatestTranscriptForUser(userId: string) {
     .orderBy(desc(telegramMessages.createdAt))
     .limit(1);
   return row ?? null;
+}
+
+export async function listHistoricalTranscriptsByMessageIds(params: {
+  userId: string;
+  messageIds: string[];
+}) {
+  const ids = [...new Set(params.messageIds.filter(Boolean))];
+  if (!ids.length) return [];
+  return getDb()
+    .select({
+      id: telegramMessages.id,
+      transcript: telegramMessages.transcript,
+    })
+    .from(telegramMessages)
+    .where(
+      and(
+        eq(telegramMessages.userId, params.userId),
+        inArray(telegramMessages.id, ids),
+        isNotNull(telegramMessages.transcript),
+      ),
+    );
 }
