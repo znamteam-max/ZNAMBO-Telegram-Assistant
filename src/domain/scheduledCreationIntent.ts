@@ -28,7 +28,8 @@ export function parseScheduledCreationIntent(params: {
   if (hasExplicitTargetReference(params.text)) return null;
   const hasNegative = hasNegativeReminderIntent(params.text);
   const hasPositive = hasPositiveReminderIntent(params.text);
-  if (!hasNegative && !hasPositive) return null;
+  const hasStandaloneEvent = looksLikeStandaloneScheduledEvent(params.text);
+  if (!hasNegative && !hasPositive && !hasStandaloneEvent) return null;
 
   const title = extractScheduledTitle(params.text);
   if (!title || title.length < 2) return null;
@@ -70,10 +71,9 @@ export function parseScheduledCreationIntent(params: {
 
 export function looksLikeExplicitNewScheduledCreationText(text: string) {
   if (hasExplicitTargetReference(text)) return false;
-  if (!hasPositiveReminderIntent(text) && !hasNegativeReminderIntent(text)) return false;
-  if (!/(?:^|\s)(?:в|во|к|на|с)\s*\d{1,2}(?:[.:]\d{2})?(?:\s|,|$)/i.test(text)) {
-    return false;
-  }
+  const reminderDriven = hasPositiveReminderIntent(text) || hasNegativeReminderIntent(text);
+  if (!reminderDriven && !looksLikeStandaloneScheduledEvent(text)) return false;
+  if (!hasExplicitClock(text)) return false;
   return extractScheduledTitle(text).length >= 2;
 }
 
@@ -82,6 +82,25 @@ export function hasExplicitTargetReference(text: string) {
   return /(?:к\s+(?:этому|нему|последнему|выбранному)|по\s+этому|добавь\s+к\s+(?:этому|нему|последнему|выбранному))/i.test(
     normalized,
   );
+}
+
+function looksLikeStandaloneScheduledEvent(text: string) {
+  const normalized = text.toLocaleLowerCase("ru").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+  if (!hasExplicitClock(normalized)) return false;
+  if (looksLikeManagementMutation(normalized)) return false;
+  return /(?:^|\s)(?:созвон|встреча|эфир|прием|визит|тренировка|запись)(?:\s|$|[,.;:!?])/i.test(
+    normalized,
+  );
+}
+
+function looksLikeManagementMutation(text: string) {
+  return /(?:^|\s)(?:перенеси|перенести|перенес(?:и|ли|ен)?|измени|изменить|сдвинь|сдвинуть|передвинь|передвинуть|отмени|отменить|удали|удалить)(?:\s|$|[,.;:!?])/i.test(
+    text,
+  );
+}
+
+function hasExplicitClock(text: string) {
+  return /(?:^|\s)(?:в|во|к|на|с)\s*\d{1,2}(?:[.:]\d{2})?(?:\s|,|$)/i.test(text);
 }
 
 function extractScheduledTitle(text: string) {
