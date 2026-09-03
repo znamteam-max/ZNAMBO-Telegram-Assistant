@@ -174,14 +174,19 @@ export async function renderLiveDashboard(params: {
     .map((row) => row.item!)
     .slice(0, 5);
   const pastReviewIds = new Set(pastReviewItems.map((item) => item.id));
+  const unresolvedPastRows = timeline.byBucket.unresolvedPast.filter((row) => row.item);
+  const unresolvedPastIds = new Set(unresolvedPastRows.map((row) => row.item!.id));
   const importantItems = allItems
-    .filter(
-      (item) =>
-        !scheduledIds.has(item.id) &&
-        !pastTodayIds.has(item.id) &&
-        !pastReviewIds.has(item.id) &&
-        !overdueIds.has(item.id) &&
-        getBasePriority({ item }) >= 4,
+    .filter((item) =>
+      shouldRenderInImportantSection({
+        itemId: item.id,
+        basePriority: getBasePriority({ item }),
+        scheduledIds,
+        pastTodayIds,
+        pastReviewIds,
+        overdueIds,
+        unresolvedPastIds,
+      }),
     )
     .slice(0, 5);
   const longTermItems = itemRows
@@ -195,8 +200,7 @@ export async function renderLiveDashboard(params: {
     .slice(0, 5);
   const unresolvedItems = [
     ...pastTodayItems,
-    ...timeline.byBucket.unresolvedPast
-      .filter((row) => row.item)
+    ...unresolvedPastRows
       .map((row) => row.item!)
       .filter((item) => !pastTodayIds.has(item.id)),
   ].slice(0, 5);
@@ -438,6 +442,25 @@ export async function renderLiveDashboard(params: {
     viewState,
     conflicts,
   };
+}
+
+export function shouldRenderInImportantSection(params: {
+  itemId: string;
+  basePriority: number;
+  scheduledIds: ReadonlySet<string>;
+  pastTodayIds: ReadonlySet<string>;
+  pastReviewIds: ReadonlySet<string>;
+  overdueIds: ReadonlySet<string>;
+  unresolvedPastIds: ReadonlySet<string>;
+}) {
+  return (
+    params.basePriority >= 4 &&
+    !params.scheduledIds.has(params.itemId) &&
+    !params.pastTodayIds.has(params.itemId) &&
+    !params.pastReviewIds.has(params.itemId) &&
+    !params.overdueIds.has(params.itemId) &&
+    !params.unresolvedPastIds.has(params.itemId)
+  );
 }
 
 function buildPlanRenderModel(counts: {
@@ -753,7 +776,7 @@ function policyReviewRow(
 }
 
 function formatNumberedDashboardRow(index: number, text: string) {
-  return `<b>${index}</b> \u00b7 ${escapeTelegramHtml(text)}`;
+  return `<b>${index}</b> · ${escapeTelegramHtml(text)}`;
 }
 
 function escapeTelegramHtml(value: string) {
