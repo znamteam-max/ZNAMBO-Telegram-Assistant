@@ -235,52 +235,78 @@ function withTodayUntilDoneDerivedDue(
   const zone = item.timezone || timezone;
   const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(zone);
   const anchor = item.dueAt ?? item.startAt ?? null;
+
+  // A carryover marker describes an old schedule, not a permanent identity of the item.
+  // Once the item is explicitly rescheduled to today or later, stale carryover metadata
+  // must not force it back into "Не закрыто со вчера" or duplicate it in "Важное".
+  const normalizedItem = normalizeStaleCarryover(item, anchor, nowLocal, zone);
+  const normalizedAnchor = normalizedItem.dueAt ?? normalizedItem.startAt ?? null;
+
   const activeTodayUntilDonePolicy = policies.find(
     (candidate) => candidate.status === "active" && isTodayUntilDoneReminderPolicy(candidate),
   );
   if (
-    item.status === "active" &&
-    anchor &&
-    anchor < now &&
-    (isTodayUntilDonePlannerItem(item) || Boolean(activeTodayUntilDonePolicy))
+    normalizedItem.status === "active" &&
+    normalizedAnchor &&
+    normalizedAnchor < now &&
+    (isTodayUntilDonePlannerItem(normalizedItem) || Boolean(activeTodayUntilDonePolicy))
   ) {
-    const anchorLocal = DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(zone);
+    const anchorLocal = DateTime.fromJSDate(normalizedAnchor, { zone: "utc" }).setZone(zone);
     if (anchorLocal < nowLocal.startOf("day")) {
       return {
-        ...item,
+        ...normalizedItem,
         metadata: {
-          ...item.metadata,
+          ...normalizedItem.metadata,
           ...(activeTodayUntilDonePolicy
             ? todayUntilDoneMetadataFromPolicy(activeTodayUntilDonePolicy)
             : {}),
           untilDoneCarryover: true,
-          originalDueAt: anchor.toISOString(),
+          originalDueAt: normalizedAnchor.toISOString(),
           carryoverLocalDate: anchorLocal.toISODate(),
           carryoverMarkedAt: now.toISOString(),
         },
       };
     }
   }
-  if (item.startAt || item.dueAt) return item;
+  if (normalizedItem.startAt || normalizedItem.dueAt) return normalizedItem;
   const policy = policies.find((candidate) => {
     if (candidate.status !== "active") return false;
     if (!isTodayUntilDoneReminderPolicy(candidate) || !candidate.endsAt) return false;
     const endLocal = DateTime.fromJSDate(candidate.endsAt, { zone: "utc" }).setZone(
       candidate.timezone || zone,
     );
-    const nowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(candidate.timezone || zone);
-    return endLocal.hasSame(nowLocal, "day") || endLocal >= nowLocal;
+    const policyNowLocal = DateTime.fromJSDate(now, { zone: "utc" }).setZone(
+      candidate.timezone || zone,
+    );
+    return endLocal.hasSame(policyNowLocal, "day") || endLocal >= policyNowLocal;
   });
-  if (!policy?.endsAt) return item;
+  if (!policy?.endsAt) return normalizedItem;
   return {
-    ...item,
+    ...normalizedItem,
     dueAt: policy.endsAt,
     metadata: {
-      ...item.metadata,
+      ...normalizedItem.metadata,
       ...todayUntilDoneMetadataFromPolicy(policy),
       derivedDueAtFromPolicyId: policy.id,
     },
   };
+}
+
+function normalizeStaleCarryover(
+  item: PlannerItem,
+  anchor: Date | null,
+  nowLocal: DateTime,
+  timezone: string,
+): PlannerItem {
+  if (item.metadata?.untilDoneCarryover !== true || !anchor) return item;
+  const anchorLocal = DateTime.fromJSDate(anchor, { zone: "utc" }).setZone(timezone);
+  if (anchorLocal < nowLocal.startOf("day")) return item;
+
+  const metadata = { ...item.metadata };
+  delete metadata.untilDoneCarryover;
+  delete metadata.carryoverLocalDate;
+  delete metadata.carryoverMarkedAt;
+  return { ...item, metadata };
 }
 
 function isTomorrow(value: Date, now: Date, timezone: string) {

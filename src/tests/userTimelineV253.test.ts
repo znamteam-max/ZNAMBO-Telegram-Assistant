@@ -40,6 +40,55 @@ describe("V2.5.3 canonical user timeline", () => {
     expect(timeline.policies).toHaveLength(1);
     expect(timeline.rows[0].entityRef).toEqual({ type: "campaign", id: "central_park" });
   });
+
+  it("clears stale carryover classification after an explicit reschedule to today", () => {
+    const timeline = buildUserTimelineViewFromData({
+      timezone: "Europe/Moscow",
+      now,
+      items: [
+        item({
+          id: "lenses",
+          title: "Забрать линзы для Аси",
+          dueAt: new Date("2026-06-12T16:00:00.000Z"),
+          metadata: {
+            untilDoneCarryover: true,
+            carryoverLocalDate: "2026-06-11",
+            carryoverMarkedAt: "2026-06-12T06:00:00.000Z",
+          },
+        }),
+      ],
+      policies: [],
+    });
+
+    const row = timeline.rows.find((candidate) => candidate.entityRef.id === "lenses");
+    expect(row?.dateBucket).toBe("today");
+    expect(row?.item?.metadata?.untilDoneCarryover).not.toBe(true);
+    expect(timeline.byBucket.unresolvedPast).toHaveLength(0);
+    expect(timeline.byBucket.today.map((candidate) => candidate.entityRef.id)).toContain("lenses");
+  });
+
+  it("keeps a genuinely unfinished task from yesterday in carryover", () => {
+    const timeline = buildUserTimelineViewFromData({
+      timezone: "Europe/Moscow",
+      now,
+      items: [
+        item({
+          id: "old-carryover",
+          title: "Придумать интеграцию кэфов",
+          dueAt: new Date("2026-06-11T20:59:00.000Z"),
+          metadata: {
+            untilDoneCarryover: true,
+            carryoverLocalDate: "2026-06-11",
+          },
+        }),
+      ],
+      policies: [],
+    });
+
+    expect(timeline.byBucket.unresolvedPast.map((row) => row.entityRef.id)).toEqual([
+      "old-carryover",
+    ]);
+  });
 });
 
 function item(overrides: Partial<PlannerItem>): PlannerItem {
@@ -62,6 +111,7 @@ function item(overrides: Partial<PlannerItem>): PlannerItem {
     category: null,
     visibility: "active",
     sourcePolicyId: null,
+    snoozedUntil: null,
     priority: 3,
     source: "telegram",
     metadata: {},
@@ -93,6 +143,8 @@ function policy(overrides: Partial<ReminderPolicy> = {}): ReminderPolicy {
     onWindowEnd: "expire_silently",
     quietHours: null,
     escalationPolicy: null,
+    snoozedUntil: null,
+    snoozeScope: null,
     metadata: {},
     createdAt: now,
     updatedAt: now,
