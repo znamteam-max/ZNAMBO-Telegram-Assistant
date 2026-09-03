@@ -16,6 +16,24 @@ import {
 
 export type ClaimedReminder = Reminder;
 
+// These fragments deliberately inspect persisted occurrence identity, not timestamp
+// precision. An exact-clock snooze is just as authoritative as a relative one.
+function explicitSnoozeSql() {
+  return sql`(coalesce(r.purpose = 'snooze', false)
+    or (coalesce(r.payload->>'userExplicitSnooze', 'false') = 'true'
+      and (not (r.payload ? 'scheduleOccurrenceKey')
+        or r.payload->>'scheduleOccurrenceKey' is not distinct from r.idempotency_key))
+    or coalesce(r.idempotency_key, '') ~ ':(policy_snooze|snooze|snooze_until|item_snooze_until):')`;
+}
+
+function spacingAppliedSql() {
+  return sql`((not (r.payload ? 'scheduleOccurrenceKey')
+    or r.payload->>'scheduleOccurrenceKey' is not distinct from r.idempotency_key)
+    and (coalesce(r.payload->>'spacingAlreadyApplied', 'false') = 'true'
+    or coalesce(r.payload->>'spacingReason', r.payload->'metadata'->>'spacingReason', '') = 'collision_avoidance'
+    or coalesce(r.payload->>'spacingShiftMinutes', r.payload->'metadata'->>'spacingShiftMinutes', '0') not in ('0', '0.0', '')))`;
+}
+
 export async function claimDueReminders(params: {
   now: Date;
   limit: number;
@@ -46,6 +64,15 @@ export async function claimDueReminders(params: {
     )
     update "assistant"."reminders" as r
     set status = 'claimed',
+        payload = coalesce(r.payload, '{}'::jsonb) || jsonb_build_object(
+          'scheduleOccurrenceKey', r.idempotency_key,
+          'originalDesiredAt', case when ${explicitSnoozeSql()}
+            then coalesce(r.payload->>'snoozedUntil', r.scheduled_at::text)
+            else coalesce(r.payload->>'originalDesiredAt', r.payload->'metadata'->>'originalDesiredAt', r.scheduled_at::text) end,
+          'finalScheduledAt', r.scheduled_at,
+          'userExplicitSnooze', ${explicitSnoozeSql()},
+          'spacingAlreadyApplied', ${spacingAppliedSql()}
+        ),
         claimed_at = now(),
         attempt_count = r.attempt_count + 1,
         updated_at = now()
@@ -90,10 +117,12 @@ async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
         r.policy_id,
         p.policy_type,
         p.ends_at,
+        (${explicitSnoozeSql()} or ${spacingAppliedSql()}) as pinned,
         r.scheduled_at as old_scheduled_at,
         row_number() over (
           partition by r.user_id, date_trunc('minute', r.scheduled_at)
-          order by r.scheduled_at asc, r.created_at asc, r.id asc
+          order by (${explicitSnoozeSql()} or ${spacingAppliedSql()}) desc,
+            r.scheduled_at asc, r.created_at asc, r.id asc
         ) as rn
       from "assistant"."reminders" r
       left join "assistant"."reminder_policies" p on p.id = r.policy_id
@@ -102,15 +131,27 @@ async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
     )
     update "assistant"."reminders" as r
     set scheduled_at = ${nowIso}::timestamptz + ((ranked.rn - 1) * interval '5 minutes'),
+        payload = coalesce(r.payload, '{}'::jsonb) || jsonb_build_object(
+          'scheduleOccurrenceKey', r.idempotency_key,
+          'originalDesiredAt', coalesce(r.payload->>'originalDesiredAt', r.payload->'metadata'->>'originalDesiredAt', ranked.old_scheduled_at::text),
+          'finalScheduledAt', ${nowIso}::timestamptz + ((ranked.rn - 1) * interval '5 minutes'),
+          'userExplicitSnooze', false,
+          'spacingAlreadyApplied', true,
+          'spacingReason', 'collision_avoidance'
+        ),
         updated_at = now()
     from ranked
     where r.id = ranked.id
       and ranked.rn > 1
-      and not (
+      and not ranked.pinned
+      and r.status = 'pending'
+      and r.scheduled_at = ranked.old_scheduled_at
+      and not (${explicitSnoozeSql()} or ${spacingAppliedSql()})
+      and not coalesce((
         ranked.policy_type in ('interval_window', 'nag_until_ack')
         and ranked.ends_at is not null
         and ${nowIso}::timestamptz + ((ranked.rn - 1) * interval '5 minutes') > ranked.ends_at
-      )
+      ), false)
     returning
       r.id,
       r.user_id as "userId",
@@ -142,6 +183,9 @@ async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
         policyId: row.policyId,
         originalDesiredAt: oldScheduledAt.toISOString(),
         scheduledAt: scheduledAt.toISOString(),
+        finalScheduledAt: scheduledAt.toISOString(),
+        userExplicitSnooze: false,
+        spacingAlreadyApplied: true,
         shifted: true,
         shiftMinutes: Math.round((scheduledAt.getTime() - oldScheduledAt.getTime()) / 60_000),
         collisionRank: row.rn,
@@ -449,7 +493,7 @@ export async function createReminderIfMissing(params: {
         desiredAt: params.scheduledAt,
         latestAt: params.spacingLatestAt,
       });
-  const payload = withSpacingPayload(params.payload ?? {}, params.scheduledAt, spacing);
+  const payload = withSpacingPayload(params.payload ?? {}, params.scheduledAt, spacing, params.idempotencyKey);
   const [row] = await getDb()
     .insert(reminders)
     .values({
@@ -553,24 +597,30 @@ function withSpacingPayload(
   payload: Record<string, unknown>,
   desiredAt: Date,
   spacing: { scheduledAt: Date; shifted: boolean; shiftMinutes: number; blockedReason?: string },
+  occurrenceKey: string,
 ) {
-  if (!spacing.shifted && !spacing.blockedReason) return payload;
   const metadata =
     payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
       ? (payload.metadata as Record<string, unknown>)
       : {};
   return {
     ...payload,
+    // Payloads are copied by recurring/repeat writers. A new occurrence must not
+    // inherit a previous occurrence's authoritative snooze or once-only spacing.
+    scheduleOccurrenceKey: occurrenceKey,
+    userExplicitSnooze: /:(policy_snooze|snooze|snooze_until|item_snooze_until):/.test(occurrenceKey),
+    spacingAlreadyApplied: spacing.shifted,
+    finalScheduledAt: spacing.scheduledAt.toISOString(),
     metadata: {
       ...metadata,
       originalDesiredAt: desiredAt.toISOString(),
       spacingShiftMinutes: spacing.shiftMinutes,
-      spacingReason: spacing.shifted ? "collision_avoidance" : "collision_avoidance_blocked",
-      ...(spacing.blockedReason ? { spacingBlockedReason: spacing.blockedReason } : {}),
+      spacingReason: spacing.shifted ? "collision_avoidance" : spacing.blockedReason ? "collision_avoidance_blocked" : null,
+      spacingBlockedReason: spacing.blockedReason ?? null,
     },
     originalDesiredAt: desiredAt.toISOString(),
     spacingShiftMinutes: spacing.shiftMinutes,
-    spacingReason: spacing.shifted ? "collision_avoidance" : "collision_avoidance_blocked",
+    spacingReason: spacing.shifted ? "collision_avoidance" : spacing.blockedReason ? "collision_avoidance_blocked" : null,
   };
 }
 
