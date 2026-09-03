@@ -12,6 +12,7 @@ import { registerCallbacks } from "./callbacks";
 import { registerCommands } from "./commands";
 import { registerMessageHandlers } from "./messageHandlers";
 import { recordUpdateOnce } from "./updateRecorder";
+import { stabilityScheduleReminderMenuKeyboard } from "./stabilityKeyboards";
 
 let bot: Bot<BotContext> | null = null;
 let botInitPromise: Promise<void> | null = null;
@@ -45,6 +46,17 @@ export function createBot() {
     await ctx.reply(
       "Пришли исправленную формулировку одним сообщением. Старый план не меняю автоматически.",
     );
+  });
+
+  // The legacy schedule menu contains a callback payload that can exceed Telegram's
+  // 64-byte callback_data limit for UUID item ids. Intercept this menu before the
+  // legacy callback handler so one invalid option cannot break the whole keyboard.
+  instance.callbackQuery(/^policy_menu:schedule:(.+)$/, async (ctx) => {
+    const itemId = String(ctx.match?.[1] ?? "");
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Как повторять?", {
+      reply_markup: stabilityScheduleReminderMenuKeyboard(itemId),
+    });
   });
 
   // Backward-compatible direct alias. This bypasses the natural-language router entirely.
