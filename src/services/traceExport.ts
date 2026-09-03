@@ -10,7 +10,6 @@ const MAX_ROWS = 5000;
 
 type ConversationRow = Awaited<ReturnType<typeof listConversationMessagesForExport>>[number];
 type AuditRow = typeof auditLog.$inferSelect;
-type AgentActionRow = typeof agentActions.$inferSelect;
 
 export function parseTraceExportArgs(raw: string | undefined | null) {
   const value = String(raw ?? "").trim().toLowerCase();
