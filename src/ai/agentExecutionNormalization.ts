@@ -1,4 +1,5 @@
 import { DateTime } from "luxon";
+import { normalizeActionPlanEventTime } from "@/ai/actionPlanEventTime";
 
 import type {
   AgentExecution,
@@ -67,7 +68,9 @@ export function normalizeAgentExecutionProposal(params: {
   });
   const sameMessageReminder = normalizeSameMessageEventReminderPolicies({
     ...params,
-    execution: temporal,
+    execution: temporal.actionPlan
+      ? { ...temporal, actionPlan: normalizeActionPlanEventTime({ ...params, plan: temporal.actionPlan }) }
+      : temporal,
   });
   const clearReminder = normalizeClearReminderIntent({
     ...params,

@@ -5,6 +5,7 @@ import {
 import { handleHardManagementIntent } from "@/agent/hardManagementRouter";
 import { renderScheduleViewTool, renderTaskViewTool } from "@/agent/jarvisTools";
 import { buildActionPlan } from "@/ai/planner";
+import { normalizeActionPlanEventTime } from "@/ai/actionPlanEventTime";
 import {
   buildValidationFailureReply,
   validatePlannerItemsBeforeSave,
@@ -435,6 +436,10 @@ export async function executeActionPlanForMessage(
 
   const recurringDraft = await blockIncompleteRecurringPoliciesWithDraft(ctx, params);
   if (recurringDraft) return recurringDraft;
+
+  // Guard every creation entry point before validation, storage and confirmation.
+  // Already-normalized agent proposals are idempotent through this boundary.
+  params = { ...params, plan: normalizeActionPlanEventTime(params) };
 
   const validation = validatePlannerItemsBeforeSave({
     plan: params.plan,

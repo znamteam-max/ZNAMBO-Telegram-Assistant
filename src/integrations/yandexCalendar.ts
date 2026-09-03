@@ -681,7 +681,7 @@ async function readCalendarObjectOnce(url: string, expectedUid: string, signal?:
   }
 }
 
-function buildIcs(item: PlannerItem, href: string): string {
+export function buildIcs(item: PlannerItem, href: string): string {
   const now = formatIcsDate(new Date());
   const start = formatIcsDate(item.startAt ?? new Date());
   const end = formatIcsDate(

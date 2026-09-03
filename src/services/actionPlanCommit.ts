@@ -765,7 +765,7 @@ async function findActionPlanByIdempotencyKey(idempotencyKey: string) {
   return existing ?? null;
 }
 
-function materializeAction(params: {
+export function materializeAction(params: {
   action: ActionPlanItem;
   timezone: string;
   now: Date;
