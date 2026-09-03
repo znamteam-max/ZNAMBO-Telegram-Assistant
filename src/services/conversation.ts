@@ -76,7 +76,17 @@ export async function recordAssistantConversationMessage(params: {
       )
       .orderBy(desc(conversationMessages.createdAt))
       .limit(1);
-    if (existing) return existing;
+    if (existing) {
+      if (params.telegramMessageId && !existing.telegramMessageId) {
+        const [correlated] = await getDb()
+          .update(conversationMessages)
+          .set({ telegramMessageId: params.telegramMessageId })
+          .where(eq(conversationMessages.id, existing.id))
+          .returning();
+        return correlated ?? existing;
+      }
+      return existing;
+    }
   }
 
   const [row] = await getDb()
