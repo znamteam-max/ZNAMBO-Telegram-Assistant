@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { stabilityScheduleReminderMenuKeyboard } from "@/bot/stabilityKeyboards";
 import {
   looksLikeExplicitNewScheduledCreationText,
   parseScheduledCreationIntent,
@@ -58,5 +59,15 @@ describe("V3.0 stability routing regressions", () => {
     expect(intent).not.toBeNull();
     expect(intent?.startLocal).toBe("2026-09-04T14:00:00");
     expect(intent?.reminders).toHaveLength(1);
+  });
+
+  it("keeps every hotfix schedule callback within Telegram's 64-byte limit", () => {
+    const keyboard = stabilityScheduleReminderMenuKeyboard(
+      "96b89a13-bf5d-4bd7-8e54-c77252d00376",
+    );
+
+    for (const button of keyboard.inline_keyboard.flat()) {
+      expect(Buffer.byteLength(button.callback_data ?? "", "utf8")).toBeLessThanOrEqual(64);
+    }
   });
 });
