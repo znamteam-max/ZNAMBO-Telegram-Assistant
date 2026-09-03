@@ -14,6 +14,7 @@ import { requireOwner } from "./context";
 import { handleJarvisTurn } from "@/agent/jarvisPipeline";
 import { getEnv } from "@/lib/env";
 import { handleIncomingUserMessage } from "./messagePipeline";
+import { handlePendingPlanEditTurn } from "./planEditFlow";
 import { replyAndRecord } from "./reply";
 import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
 import { renderTaskViewTool } from "@/agent/jarvisTools";
@@ -195,6 +196,7 @@ async function handleNaturalText(ctx: BotContext, text: string) {
 }
 
 async function handleNaturalLanguageTurn(ctx: BotContext, text: string, timezone: string) {
+  if (await handlePendingPlanEditTurn(ctx, text)) return;
   if (getEnv().OPENAI_REQUIRED_FOR_NATURAL_LANGUAGE || getEnv().JARVIS_MODE_ENABLED) {
     await handleJarvisTurn(ctx, text, timezone);
     return;
