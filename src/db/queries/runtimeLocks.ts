@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { runtimeLocks } from "../schema";
+import { reminderTimestamp } from "../reminderTimestampBoundary";
 
 export async function acquireRuntimeLease(params: {
   key: string;
@@ -28,7 +29,8 @@ export async function acquireRuntimeLease(params: {
     where "assistant"."runtime_locks"."locked_until" < ${params.now.toISOString()}::timestamptz
     returning "key", "owner_token" as "ownerToken", "locked_until" as "lockedUntil"
   `);
-  return (rows[0] as { key: string; ownerToken: string; lockedUntil: Date } | undefined) ?? null;
+  const row = rows[0] as { key: string; ownerToken: string; lockedUntil: unknown } | undefined;
+  return row ? { ...row, lockedUntil: reminderTimestamp(row.lockedUntil, "lockedUntil") } : null;
 }
 
 export async function releaseRuntimeLease(params: { key: string; ownerToken: string }) {

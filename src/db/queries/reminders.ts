@@ -3,6 +3,7 @@ import { and, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { planPolicySnooze } from "@/domain/reminderPolicySchedule";
 import { findNextAvailableReminderSlot } from "@/services/reminderCollisionSpacing";
 import { writeAudit } from "@/db/queries/audit";
+import { normalizeClaimedReminder, reminderTimestamp, ReminderTimestampError, type RawClaimedReminder } from "@/db/reminderTimestampBoundary";
 
 import { getDb } from "../client";
 import {
@@ -83,6 +84,7 @@ export async function claimDueReminders(params: {
       r.user_id as "userId",
       r.planner_item_id as "plannerItemId",
       r.type,
+      r.idempotency_key as "idempotencyKey",
       r.scheduled_at as "scheduledAt",
       r.status,
       r.claimed_at as "claimedAt",
@@ -103,7 +105,29 @@ export async function claimDueReminders(params: {
       r.created_at as "createdAt",
       r.updated_at as "updatedAt"
   `);
-  return rows as unknown as ClaimedReminder[];
+  const normalized: ClaimedReminder[] = [];
+  for (const row of rows as unknown as RawClaimedReminder[]) {
+    try {
+      normalized.push(normalizeClaimedReminder(row));
+    } catch (error) {
+      if (!(error instanceof ReminderTimestampError)) throw error;
+      await writeAudit({
+        userId: row.userId,
+        action: "assistant.reminder_timestamp_invalid",
+        entityType: "reminder",
+        entityId: row.id,
+        details: { boundary: "runner_claim", field: error.field, code: error.code },
+      });
+      // Reject only this claimed occurrence. Never send malformed data or let a
+      // serialization TypeError strand the rest of the claimed batch.
+      await getDb().execute(sql`
+        update "assistant"."reminders"
+        set status = 'failed', last_error = ${error.message}, updated_at = now()
+        where id = ${row.id}::uuid and status = 'claimed'
+      `);
+    }
+  }
+  return normalized;
 }
 
 async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
@@ -128,6 +152,7 @@ async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
       left join "assistant"."reminder_policies" p on p.id = r.policy_id
       where r.status = 'pending'
         and r.scheduled_at <= ${nowIso}::timestamptz
+        and isfinite(r.scheduled_at)
     )
     update "assistant"."reminders" as r
     set scheduled_at = ${nowIso}::timestamptz + ((ranked.rn - 1) * interval '5 minutes'),
@@ -170,8 +195,8 @@ async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
     scheduledAt: Date | string;
     rn: number;
   }>) {
-    const oldScheduledAt = toDate(row.oldScheduledAt);
-    const scheduledAt = toDate(row.scheduledAt);
+    const oldScheduledAt = reminderTimestamp(row.oldScheduledAt, "scheduledAt");
+    const scheduledAt = reminderTimestamp(row.scheduledAt, "scheduledAt");
     await writeAudit({
       userId: row.userId,
       action: "assistant.reminder_spacing_applied",
@@ -192,10 +217,6 @@ async function spreadDueReminderCollisionsBeforeClaim(now: Date) {
       },
     }).catch(() => undefined);
   }
-}
-
-function toDate(value: Date | string) {
-  return value instanceof Date ? value : new Date(value);
 }
 
 export async function isReminderStillDeliverable(params: { reminderId: string; now: Date }) {

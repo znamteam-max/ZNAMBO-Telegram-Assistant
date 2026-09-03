@@ -3,8 +3,10 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 
 // Real PostgreSQL SQL semantics, entirely in memory: never reads DATABASE_URL.
-export async function createReminderTestDb() {
-  const pg = await PGlite.create();
+export async function createReminderTestDb(options?: { rawTimestamps?: boolean }) {
+  const pg = await PGlite.create(options?.rawTimestamps
+    ? { parsers: { 1184: (value) => value } }
+    : {});
   await pg.exec(`
     create schema assistant;
     create table assistant.reminder_policies (

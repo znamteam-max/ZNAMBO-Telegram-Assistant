@@ -71,6 +71,8 @@ vi.mock("@/agent/state/taskViewState", () => ({
 }));
 
 import { runDueReminders } from "@/jobs/runDueReminders";
+import { normalizeClaimedReminder, type RawClaimedReminder } from "@/db/reminderTimestampBoundary";
+import { reminders } from "@/db/schema";
 
 describe("runDueReminders", () => {
   beforeEach(() => {
@@ -338,6 +340,27 @@ describe("runDueReminders", () => {
     expect(sender.sendMessage).not.toHaveBeenCalled();
     expect(mocks.markReminderSent).not.toHaveBeenCalled();
     expect(mocks.recordReminderDelivery).not.toHaveBeenCalled();
+  });
+
+  it("survives a terminal delivery failure after decoding the serialized claim row", async () => {
+    const now = new Date("2026-09-03T06:00:00Z");
+    const reminder = normalizeClaimedReminder({
+      id: "fixture-reminder", userId: "user-id", plannerItemId: "item-id",
+      type: "custom", attemptCount: 3, payload: {}, repeatUntilAck: false,
+      scheduledAt: "2026-09-03 05:00:00+00", claimedAt: "2026-09-03 06:00:00+00",
+      createdAt: "2026-09-02 06:00:00+00", updatedAt: "2026-09-03 06:00:00+00",
+      sentAt: null, ackedAt: null,
+    } as RawClaimedReminder);
+    mocks.claimDueReminders.mockResolvedValue([reminder]);
+    mocks.getUserById.mockResolvedValue(null); // controlled failure before send
+    mocks.markReminderFailed.mockImplementationOnce(async ({ reminder }) => {
+      expect(reminders.scheduledAt.mapToDriverValue(reminder.scheduledAt)).toBe("2026-09-03T05:00:00.000Z");
+    });
+    await expect(runDueReminders({ now, sender: { sendMessage: vi.fn() } })).resolves.toEqual({
+      claimed: 1, sent: 0, failed: 1,
+    });
+    expect(mocks.recordRunnerFinished).toHaveBeenCalled();
+    expect(mocks.releaseRuntimeLease).toHaveBeenCalled();
   });
 
   it("skips a concurrent runner when the distributed lease is already active", async () => {

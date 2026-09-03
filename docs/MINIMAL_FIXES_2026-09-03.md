@@ -62,3 +62,38 @@ src/tests/atomicAgentExecutionV242.test.ts.
 Validation: 76 files / 435 tests passed; lint passed; build passed; diff check passed.
 One parallel test/build run exceeded an existing 5-second dynamic-import test timeout;
 the full suite passed in isolation without changing the test or its timeout.
+
+## FIX 3 — raw reminder timestamp boundary
+
+Exact reproducible failure: drizzle-orm/postgres-js/driver.js installs a transparent
+parser for PostgreSQL OID 1184 (timestamptz). execute() returns strings such as
+`2026-09-03 05:00:00.123456+00`; claimDueReminders previously cast those rows to
+Reminder[] without decoding. On the terminal (third) delivery failure,
+markReminderFailed reused the raw scheduledAt in a typed UPDATE. Drizzle's
+PgTimestamp.mapToDriverValue calls value.toISOString(), throwing outside the
+runner's delivery catch. Digest rendering could also receive a string instead of Date.
+
+The raw query boundary now validates and decodes every reminder timestamp to Date,
+preserves nullable timestamps, and returns the missing idempotencyKey field.
+The raw runtime-lease lockedUntil timestamp is normalized too. Valid Date inputs and
+offset-bearing ISO/PG strings are supported; invalid dates, bare clocks, plain values,
+and non-finite PostgreSQL timestamps are rejected without coercion or value leakage.
+The runner rejects just the malformed claimed occurrence with a field/code-only audit
+and failed status; healthy siblings continue. This is future runtime validation,
+not a production data repair executed during this task.
+
+Typed ORM policy nextFireAt/snoozedUntil and health selects already use Drizzle's Date
+decoder. This baseline contains no Redis/forceReconcileAt wake-gate implementation;
+none was added or changed. Serialized policy metadata remains explicitly parsed in
+its existing consumers, not passed as raw Date fields.
+
+Files: src/db/reminderTimestampBoundary.ts, src/db/queries/reminders.ts,
+src/db/queries/runtimeLocks.ts, src/tests/reminderTimestampBoundary.test.ts,
+src/tests/helpers/reminderTestDb.ts, src/tests/runDueReminders.test.ts.
+
+Tests reproduce the installed driver's parser and terminal-failure serializer without
+connecting, then exercise the actual claim/update SQL against in-memory PostgreSQL
+with transparent timestamps. Includes Date, ISO, PG shape, invalid values, invalid
+record + valid sibling, lease, and runner completion/lease-release regression.
+
+Validation: 77 files / 452 tests passed; lint passed; build passed; diff check passed.
