@@ -8,6 +8,8 @@ import { buildOpenAiUsageSummary } from "@/services/openAiUsageSummary";
 import { clearActiveInteractionSessions } from "@/bot/sessionRouting";
 import { callbackReliabilityMiddleware } from "@/bot/callbackReliability";
 import { installFullJournalTelegramRecorder } from "@/telegram/fullJournalRecorder";
+import { cancelStoredActionPlan } from "@/services/actionPlanCommit";
+import { startPendingPlanEditSession } from "@/services/pendingPlanEditSessions";
 
 import { requireOwner, type BotContext } from "./context";
 import { attachOwner, requireAllowedOwner } from "./authorization";
@@ -38,17 +40,29 @@ export function createBot() {
     await next();
   });
 
-  // A plan-correction prompt must never leave an unrelated item/policy edit session alive.
-  // Otherwise the next free-text answer (for example "18.00") can mutate the wrong item.
+  // Selecting "edit plan" now creates a durable target lock. The old draft is cancelled
+  // immediately, so its stale Save button cannot later commit it. Ambiguous follow-ups
+  // such as "18.00" are blocked before the global update_existing_items router.
   instance.callbackQuery(/^(?:plan|pa):edit:(.+)$/, async (ctx) => {
     const owner = requireOwner(ctx);
+    const actionPlanId = String(ctx.match?.[1] ?? "");
     await clearActiveInteractionSessions({
       userId: owner.id,
       reason: "plan_edit_requested",
     });
+    await cancelStoredActionPlan({ actionPlanId, userId: owner.id }).catch(() => null);
+    await startPendingPlanEditSession({
+      userId: owner.id,
+      actionPlanId,
+      sourceMessageId: ctx.dbMessageId,
+    });
     await ctx.answerCallbackQuery();
     await ctx.reply(
-      "Пришли исправленную формулировку одним сообщением. Старый план не меняю автоматически.",
+      [
+        "Пришли исправленный пункт целиком одним сообщением.",
+        "Например: «Созвон по Взял Мяч сегодня в 18:00».",
+        "Старый вариант плана отменён, поэтому короткое «18.00» не сможет изменить другую задачу.",
+      ].join("\n"),
     );
   });
 
