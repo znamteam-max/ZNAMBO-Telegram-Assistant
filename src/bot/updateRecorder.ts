@@ -7,7 +7,7 @@ import type { BotContext } from "./context";
 
 export async function recordUpdateOnce(ctx: BotContext, next: NextFunction) {
   const message = ctx.message ?? ctx.editedMessage ?? ctx.callbackQuery?.message;
-  const text = ctx.message?.text ?? ctx.editedMessage?.text ?? ctx.callbackQuery?.data ?? null;
+  const text = extractVisibleIncomingText(ctx);
   const messageType = detectMessageType(ctx);
   const dbMessageId = await recordTelegramUpdate({
     updateId: ctx.update.update_id,
@@ -27,9 +27,24 @@ export async function recordUpdateOnce(ctx: BotContext, next: NextFunction) {
     telegramMessageId: dbMessageId,
     messageType,
     text,
-    metadata: { updateId: ctx.update.update_id, edited: Boolean(ctx.editedMessage) },
+    metadata: {
+      updateId: ctx.update.update_id,
+      edited: Boolean(ctx.editedMessage),
+      telegramMessageId: message?.message_id ?? null,
+      chatId: ctx.chat?.id ?? null,
+      callbackData: ctx.callbackQuery?.data ?? null,
+    },
   });
   await next();
+}
+
+function extractVisibleIncomingText(ctx: BotContext) {
+  const message = ctx.message ?? ctx.editedMessage;
+  if (message) {
+    if ("text" in message && typeof message.text === "string") return message.text;
+    if ("caption" in message && typeof message.caption === "string") return message.caption;
+  }
+  return ctx.callbackQuery?.data ?? null;
 }
 
 function detectMessageType(ctx: BotContext): string {
@@ -40,5 +55,7 @@ function detectMessageType(ctx: BotContext): string {
   if ("audio" in message) return "audio";
   if ("video_note" in message) return "video_note";
   if ("video" in message) return "video";
+  if ("photo" in message) return "photo";
+  if ("document" in message) return "document";
   return "other";
 }

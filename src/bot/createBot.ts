@@ -3,8 +3,11 @@ import { Bot, InputFile } from "grammy";
 import { requireEnv } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { buildActionLog } from "@/services/actionLog";
+import { buildFullJournal, parseFullJournalArgs } from "@/services/fullJournal";
+import { buildOpenAiUsageSummary } from "@/services/openAiUsageSummary";
 import { clearActiveInteractionSessions } from "@/bot/sessionRouting";
 import { callbackReliabilityMiddleware } from "@/bot/callbackReliability";
+import { installFullJournalTelegramRecorder } from "@/telegram/fullJournalRecorder";
 
 import { requireOwner, type BotContext } from "./context";
 import { attachOwner, requireAllowedOwner } from "./authorization";
@@ -19,6 +22,7 @@ let botInitPromise: Promise<void> | null = null;
 
 export function createBot() {
   const instance = new Bot<BotContext>(requireEnv("TELEGRAM_BOT_TOKEN"));
+  installFullJournalTelegramRecorder(instance);
   instance.use(requireAllowedOwner);
   instance.use(attachOwner);
   instance.use(recordUpdateOnce);
@@ -72,6 +76,34 @@ export function createBot() {
       new InputFile(Buffer.from(log.text, "utf8"), "znambo_actionlog.txt"),
       { caption: "Action log export без секретов." },
     );
+  });
+
+  instance.command("fulllog_export", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const range = parseFullJournalArgs(typeof ctx.match === "string" ? ctx.match : "");
+    const journal = await buildFullJournal({
+      userId: owner.id,
+      hours: range.hours,
+      all: range.all,
+    });
+    const suffix = range.all ? "all" : `${range.hours}h`;
+    await ctx.replyWithDocument(
+      new InputFile(Buffer.from(journal.text, "utf8"), `jarvis_full_journal_${suffix}.md`),
+      {
+        caption: journal.truncated
+          ? `Полный журнал: ${journal.eventCount} событий. Достигнут защитный лимит строк; для полного архива выгрузи меньший диапазон.`
+          : `Полный журнал: ${journal.eventCount} событий. Включены сообщения, расшифровки, ответы/удаления и внутренние state/action traces без секретов.`,
+      },
+    );
+  });
+
+  instance.command("apiusage", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const usage = await buildOpenAiUsageSummary({
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    await ctx.reply(usage.text);
   });
 
   registerCommands(instance);

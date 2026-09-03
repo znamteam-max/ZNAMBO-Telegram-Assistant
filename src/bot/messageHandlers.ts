@@ -1,6 +1,6 @@
 import type { Bot } from "grammy";
 
-import { transcribeMedia } from "@/ai/transcription";
+import { transcribeMediaWithUsage } from "@/ai/transcription";
 import { recordMessageAttachment, markTelegramMessageProcessed } from "@/db/queries/messages";
 import { UserFacingError } from "@/lib/errors";
 import {
@@ -22,6 +22,7 @@ import { navigationKeyboard } from "./keyboards";
 import { writeAudit } from "@/db/queries/audit";
 import { renderCleanupPreview } from "@/services/cleanupPreview";
 import { renderCompletedItemsView } from "@/services/completedItemsView";
+import { updateIncomingConversationTranscript } from "@/services/conversation";
 
 export function registerMessageHandlers(bot: Bot<BotContext>) {
   bot.on("message:text", async (ctx) => {
@@ -56,11 +57,12 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
 
       if (ctx.chat?.id) await ctx.api.sendChatAction(ctx.chat.id, "typing");
       const bytes = await downloadTelegramMedia(bot, media);
-      const transcript = await transcribeMedia({
+      const transcription = await transcribeMediaWithUsage({
         bytes,
         filename: media.filename,
         mimeType: media.mimeType,
       });
+      const transcript = transcription.text;
 
       if (ctx.dbMessageId) {
         await recordMessageAttachment({
@@ -72,7 +74,26 @@ export function registerMessageHandlers(bot: Bot<BotContext>) {
           durationSeconds: media.durationSeconds,
         });
         await markTelegramMessageProcessed(ctx.dbMessageId, transcript);
+        await updateIncomingConversationTranscript({
+          telegramMessageId: ctx.dbMessageId,
+          transcript,
+        });
       }
+      await writeAudit({
+        userId: owner.id,
+        action: "assistant.openai_usage",
+        entityType: "telegram_message",
+        entityId: ctx.dbMessageId,
+        details: {
+          capability: "transcription",
+          model: transcription.model,
+          succeeded: true,
+          inputTokens: transcription.inputTokens,
+          outputTokens: transcription.outputTokens,
+          totalTokens: transcription.totalTokens,
+          durationSeconds: transcription.durationSeconds ?? media.durationSeconds ?? null,
+        },
+      }).catch(() => undefined);
       await writeAudit({
         userId: owner.id,
         action: "assistant.transcription_status",

@@ -10,8 +10,12 @@ export async function replyAndRecord(ctx: BotContext, text: string, options?: Re
     userId: ctx.owner?.id,
     telegramMessageId: ctx.dbMessageId,
     text,
+    messageType: "telegram_send",
     metadata: {
-      telegramMessageId: "message_id" in message ? message.message_id : null,
+      journalVersion: 1,
+      telegramOutboundMessageId: "message_id" in message ? message.message_id : null,
+      lifecycle: "sent",
+      source: "replyAndRecord",
     },
   });
   return message;
