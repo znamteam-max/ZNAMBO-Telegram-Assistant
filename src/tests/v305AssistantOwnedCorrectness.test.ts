@@ -13,6 +13,7 @@ import { sanitizePlannerTitle } from "@/domain/titleSanitizer";
 import { sanitizeForActionLog } from "@/services/actionLog";
 import { isReadOnlyDiagnosticCommand, slashCommandName } from "@/bot/createBot";
 import { parseTraceExportArgs } from "@/services/traceExport";
+import { shouldRenderInImportantSection } from "@/telegram/liveDashboard";
 
 describe("V3.0.5 assistant-owned correctness fixes", () => {
   it("parses explicit N-hour reminder cadences", () => {
@@ -92,5 +93,31 @@ describe("V3.0.5 assistant-owned correctness fixes", () => {
     expect(parseTraceExportArgs("")).toEqual({ hours: 24 });
     expect(parseTraceExportArgs("48h")).toEqual({ hours: 48 });
     expect(parseTraceExportArgs("7d")).toEqual({ hours: 168 });
+  });
+
+  it("does not duplicate an unresolved carryover item into the Important primary section", () => {
+    const itemId = "e0cd618f-7a0b-4990-bd9e-d5450a228a4d";
+    expect(
+      shouldRenderInImportantSection({
+        itemId,
+        basePriority: 5,
+        scheduledIds: new Set(),
+        pastTodayIds: new Set(),
+        pastReviewIds: new Set(),
+        overdueIds: new Set(),
+        unresolvedPastIds: new Set([itemId]),
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderInImportantSection({
+        itemId,
+        basePriority: 5,
+        scheduledIds: new Set(),
+        pastTodayIds: new Set(),
+        pastReviewIds: new Set(),
+        overdueIds: new Set(),
+        unresolvedPastIds: new Set(),
+      }),
+    ).toBe(true);
   });
 });
