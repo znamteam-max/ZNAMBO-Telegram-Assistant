@@ -2,6 +2,7 @@ import type { BotContext } from "@/bot/context";
 import { requireOwner } from "@/bot/context";
 import { replyAndRecord } from "@/bot/reply";
 import { isGlobalCreationIntent } from "@/bot/sessionRouting";
+import { writeAudit } from "@/db/queries/audit";
 import { looksLikeExplicitNewScheduledCreationText } from "@/domain/scheduledCreationIntent";
 import {
   clearPendingPlanEditSession,
@@ -23,7 +24,7 @@ export async function handlePendingPlanEditTurn(ctx: BotContext, text: string) {
   const session = await getActivePendingPlanEditSession({ userId: owner.id }).catch(() => null);
   if (!session) return false;
 
-  if (looksLikeExplicitNewScheduledCreationText(text) || isGlobalCreationIntent(text)) {
+  if (isSelfContainedPlanEditReplacement(text)) {
     await clearPendingPlanEditSession({
       userId: owner.id,
       reason: "self_contained_plan_edit_replacement",
@@ -52,6 +53,18 @@ export async function handlePendingPlanEditTurn(ctx: BotContext, text: string) {
     },
   };
 
+  await writeAudit({
+    userId: owner.id,
+    action: "assistant.plan_edit_followup_blocked",
+    entityType: "action_plan",
+    entityId: session.actionPlanId,
+    details: {
+      sourceMessageId: ctx.dbMessageId ?? null,
+      blockedGlobalMutation: true,
+      reason: "requires_self_contained_replacement",
+    },
+  }).catch(() => undefined);
+
   await replyAndRecord(
     ctx,
     [
@@ -62,4 +75,8 @@ export async function handlePendingPlanEditTurn(ctx: BotContext, text: string) {
     ].join("\n"),
   );
   return true;
+}
+
+export function isSelfContainedPlanEditReplacement(text: string) {
+  return looksLikeExplicitNewScheduledCreationText(text) || isGlobalCreationIntent(text);
 }
