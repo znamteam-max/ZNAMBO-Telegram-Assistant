@@ -108,7 +108,12 @@ export async function listRecentConversationMessages(userId: string, limit = 12)
   return getDb()
     .select()
     .from(conversationMessages)
-    .where(eq(conversationMessages.userId, userId))
+    .where(
+      and(
+        eq(conversationMessages.userId, userId),
+        sql`${conversationMessages.messageType} not in ('telegram_edit', 'telegram_delete')`,
+      ),
+    )
     .orderBy(desc(conversationMessages.createdAt))
     .limit(limit);
 }
