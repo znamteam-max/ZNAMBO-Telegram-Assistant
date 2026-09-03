@@ -5,6 +5,7 @@ import { logger } from "@/lib/logger";
 import { buildActionLog } from "@/services/actionLog";
 import { buildFullJournal, parseFullJournalArgs } from "@/services/fullJournal";
 import { buildOpenAiUsageSummary } from "@/services/openAiUsageSummary";
+import { buildTraceExport, parseTraceExportArgs } from "@/services/traceExport";
 import { clearActiveInteractionSessions } from "@/bot/sessionRouting";
 import { callbackReliabilityMiddleware } from "@/bot/callbackReliability";
 import { installFullJournalTelegramRecorder } from "@/telegram/fullJournalRecorder";
@@ -19,6 +20,24 @@ import { registerMessageHandlers } from "./messageHandlers";
 import { recordUpdateOnce } from "./updateRecorder";
 import { stabilityScheduleReminderMenuKeyboard } from "./stabilityKeyboards";
 
+const READ_ONLY_DIAGNOSTIC_COMMANDS = new Set([
+  "actionlog",
+  "actionlog_export",
+  "fulllog_export",
+  "trace_export",
+  "debugrecent",
+  "debuglast",
+  "bugrecent",
+  "apiusage",
+  "aihealth",
+  "cronhealth",
+  "policydebug",
+  "versiondebug",
+  "admin_time_debug",
+  "calendar_import_status",
+  "calendardebug",
+]);
+
 let bot: Bot<BotContext> | null = null;
 let botInitPromise: Promise<void> | null = null;
 
@@ -31,7 +50,13 @@ export function createBot() {
   instance.use(callbackReliabilityMiddleware());
   instance.use(async (ctx, next) => {
     const text = ctx.message?.text ?? ctx.editedMessage?.text ?? "";
-    if (text.startsWith("/") && !text.toLowerCase().startsWith("/cancel") && ctx.owner?.id) {
+    const command = slashCommandName(text);
+    if (
+      command &&
+      command !== "cancel" &&
+      !READ_ONLY_DIAGNOSTIC_COMMANDS.has(command) &&
+      ctx.owner?.id
+    ) {
       await clearActiveInteractionSessions({
         userId: ctx.owner.id,
         reason: "slash_command",
@@ -111,6 +136,23 @@ export function createBot() {
     );
   });
 
+  instance.command("trace_export", async (ctx) => {
+    const owner = requireOwner(ctx);
+    const range = parseTraceExportArgs(typeof ctx.match === "string" ? ctx.match : "");
+    const trace = await buildTraceExport({
+      userId: owner.id,
+      hours: range.hours,
+    });
+    await ctx.replyWithDocument(
+      new InputFile(Buffer.from(trace.text, "utf8"), `jarvis_trace_${range.hours}h.md`),
+      {
+        caption: trace.truncated
+          ? `Causal trace: ${trace.turnCount} пользовательских ходов. Достигнут защитный лимит строк.`
+          : `Causal trace: ${trace.turnCount} пользовательских ходов. Команда read-only и не сбрасывает активную настройку.`,
+      },
+    );
+  });
+
   instance.command("apiusage", async (ctx) => {
     const owner = requireOwner(ctx);
     const usage = await buildOpenAiUsageSummary({
@@ -131,6 +173,16 @@ export function createBot() {
   });
 
   return instance;
+}
+
+export function slashCommandName(text: string) {
+  const match = text.trim().match(/^\/([a-z0-9_]+)(?:@[a-z0-9_]+)?(?:\s|$)/i);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+export function isReadOnlyDiagnosticCommand(text: string) {
+  const command = slashCommandName(text);
+  return Boolean(command && READ_ONLY_DIAGNOSTIC_COMMANDS.has(command));
 }
 
 export function getBot() {
