@@ -47,10 +47,9 @@ export function sanitizePlannerTitle(value: string) {
   }
   if (boundaryIndex >= 0) title = title.slice(0, boundaryIndex).trim();
 
-  // Spoken corrections often repeat the final intended event after "нет, не по X, по Y".
-  // Only collapse when that explicit correction marker is present, so ordinary negations
-  // and titles that merely contain commas remain untouched.
-  if (/\bнет\s*,?\s*не\s+по\b/i.test(title)) {
+  // JS \b is ASCII-oriented and is unreliable around Cyrillic words. Use explicit
+  // whitespace/comma boundaries for the spoken correction marker instead.
+  if (/(?:^|[\s,])нет\s*,?\s*не\s+по(?=\s)/i.test(title)) {
     const corrected = title.match(FINAL_CORRECTED_EVENT)?.[1];
     if (corrected) title = corrected.trim();
   }
