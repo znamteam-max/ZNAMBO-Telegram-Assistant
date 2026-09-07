@@ -11,9 +11,9 @@ import { cancelPendingRemindersForPolicy } from "@/db/queries/reminders";
 import { writeAudit } from "@/db/queries/audit";
 import {
   buildRecurringScheduleRule,
-  nextRecurringScheduleOccurrence,
   parseRecurringScheduleFollowup,
   recurringSchedulePresetLabel,
+  resolveRecurringScheduleTiming,
   type RecurringSchedulePreset,
 } from "@/domain/recurringScheduleEdit";
 import {
@@ -131,17 +131,20 @@ export async function handleRecurringScheduleEditTurn(
     now,
     timezone,
   });
-  const nextFireAt = nextRecurringScheduleOccurrence({
+  const intervalMinutes = parsed.intervalMinutes ?? null;
+  const timing = resolveRecurringScheduleTiming({
     rule,
     preset,
     timeLocal: parsed.timeLocal,
+    intervalMinutes,
     after: now,
     timezone,
   });
-  if (!nextFireAt) {
+  if (!timing) {
     await ctx.reply("Не смог безопасно вычислить следующий повтор. Ничего не изменил.");
     return true;
   }
+  const { startsAt, nextFireAt } = timing;
 
   const policies = await listReminderPoliciesForItem(owner.id, session.item.id, 100);
   const recurringPolicies = policies.filter((policy) =>
@@ -149,7 +152,6 @@ export async function handleRecurringScheduleEditTurn(
   );
   const existing =
     recurringPolicies.find((policy) => policy.status === "active") ?? recurringPolicies[0] ?? null;
-  const intervalMinutes = parsed.intervalMinutes ?? null;
   const metadata = {
     configuredFrom: "reminder_schedule_menu",
     mutationSource: "recurring_schedule_edit_session",
@@ -176,7 +178,7 @@ export async function handleRecurringScheduleEditTurn(
         status: "active",
         title: session.item.title,
         policyType: existing.policyType === "long_term" ? "long_term" : "recurring",
-        startsAt: nextFireAt,
+        startsAt,
         endsAt: null,
         nextFireAt,
         recurrenceRule: rule,
@@ -196,7 +198,7 @@ export async function handleRecurringScheduleEditTurn(
       category: session.item.category ?? "recurring",
       policyType: "recurring",
       timezone,
-      startsAt: nextFireAt,
+      startsAt,
       endsAt: null,
       nextFireAt,
       recurrenceRule: rule,
@@ -216,7 +218,7 @@ export async function handleRecurringScheduleEditTurn(
           status: "active",
           title: session.item.title,
           policyType: "recurring",
-          startsAt: nextFireAt,
+          startsAt,
           endsAt: null,
           nextFireAt,
           recurrenceRule: rule,
@@ -240,6 +242,7 @@ export async function handleRecurringScheduleEditTurn(
       policyId: policy.id,
       recurrenceRule: rule,
       intervalMinutes,
+      startsAt: startsAt.toISOString(),
       nextFireAt: nextFireAt.toISOString(),
       parentItemCreated: false,
       targetLocked: true,
