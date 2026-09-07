@@ -59,6 +59,26 @@ export function buildRecurringScheduleRule(params: {
   return `yearly:${local.toFormat("MM-dd")}@${params.timeLocal}`;
 }
 
+export function resolveRecurringScheduleTiming(params: {
+  rule: string;
+  preset: RecurringSchedulePreset;
+  timeLocal: string;
+  intervalMinutes?: number | null;
+  after: Date;
+  timezone: string;
+}) {
+  if (params.preset === "daily" && params.intervalMinutes) {
+    return resolveDailyIntervalTiming({
+      timeLocal: params.timeLocal,
+      intervalMinutes: params.intervalMinutes,
+      after: params.after,
+      timezone: params.timezone,
+    });
+  }
+  const nextFireAt = nextRecurringScheduleOccurrence(params);
+  return nextFireAt ? { startsAt: nextFireAt, nextFireAt } : null;
+}
+
 export function nextRecurringScheduleOccurrence(params: {
   rule: string;
   preset: RecurringSchedulePreset;
@@ -108,6 +128,39 @@ export function recurringSchedulePresetLabel(preset: RecurringSchedulePreset) {
   if (preset === "every_2_weeks") return "раз в 2 недели";
   if (preset === "monthly") return "раз в месяц";
   return "раз в год";
+}
+
+function resolveDailyIntervalTiming(params: {
+  timeLocal: string;
+  intervalMinutes: number;
+  after: Date;
+  timezone: string;
+}) {
+  const afterLocal = DateTime.fromJSDate(params.after, { zone: "utc" }).setZone(params.timezone);
+  const [hour, minute] = params.timeLocal.split(":").map(Number);
+  const baseToday = afterLocal
+    .startOf("day")
+    .set({ hour, minute, second: 0, millisecond: 0 });
+  const endToday = afterLocal.endOf("day").set({ second: 0, millisecond: 0 });
+
+  if (afterLocal < baseToday) {
+    const base = baseToday.toUTC().toJSDate();
+    return { startsAt: base, nextFireAt: base };
+  }
+
+  const elapsedMinutes = Math.floor(afterLocal.diff(baseToday, "minutes").minutes);
+  const steps = Math.floor(elapsedMinutes / params.intervalMinutes) + 1;
+  const sameDayNext = baseToday.plus({ minutes: steps * params.intervalMinutes });
+  if (sameDayNext <= endToday) {
+    return {
+      startsAt: baseToday.toUTC().toJSDate(),
+      nextFireAt: sameDayNext.toUTC().toJSDate(),
+    };
+  }
+
+  const tomorrowBase = baseToday.plus({ days: 1 });
+  const base = tomorrowBase.toUTC().toJSDate();
+  return { startsAt: base, nextFireAt: base };
 }
 
 function parseExplicitClock(text: string) {
