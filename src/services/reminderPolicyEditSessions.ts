@@ -24,6 +24,7 @@ export type ReminderPolicyEditDraft = {
   windowStart?: string;
   windowEnd?: string | null;
   windowEndDayOffset?: number;
+  recurrenceRule?: string;
   stopCondition?: "until_done";
   ackAliases?: string[];
 };
@@ -161,6 +162,7 @@ function parseDraft(value: unknown): ReminderPolicyEditDraft {
     ...(typeof draft.windowEndDayOffset === "number"
       ? { windowEndDayOffset: draft.windowEndDayOffset }
       : {}),
+    ...(typeof draft.recurrenceRule === "string" ? { recurrenceRule: draft.recurrenceRule } : {}),
     ...(draft.stopCondition === "until_done"
       ? { stopCondition: "until_done" as const }
       : {}),
