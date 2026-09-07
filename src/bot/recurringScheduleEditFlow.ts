@@ -11,9 +11,10 @@ import { cancelPendingRemindersForPolicy } from "@/db/queries/reminders";
 import { writeAudit } from "@/db/queries/audit";
 import {
   buildRecurringScheduleRule,
-  nextRecurringScheduleOccurrence,
+  inferRecurringSchedulePresetFromText,
   parseRecurringScheduleFollowup,
   recurringSchedulePresetLabel,
+  resolveRecurringScheduleTiming,
   type RecurringSchedulePreset,
 } from "@/domain/recurringScheduleEdit";
 import {
@@ -43,6 +44,32 @@ export async function startRecurringScheduleEdit(params: {
   itemId: string;
   preset: RecurringSchedulePreset;
 }) {
+  return startRecurringScheduleEditSession({
+    ctx: params.ctx,
+    itemId: params.itemId,
+    section: "schedule",
+    preset: params.preset,
+  });
+}
+
+export async function startRecurringCustomScheduleEdit(params: {
+  ctx: BotContext;
+  itemId: string;
+}) {
+  return startRecurringScheduleEditSession({
+    ctx: params.ctx,
+    itemId: params.itemId,
+    section: "custom",
+    preset: null,
+  });
+}
+
+async function startRecurringScheduleEditSession(params: {
+  ctx: BotContext;
+  itemId: string;
+  section: "schedule" | "custom";
+  preset: RecurringSchedulePreset | null;
+}) {
   const owner = requireOwner(params.ctx);
   const item = await getPlannerItemById(owner.id, params.itemId);
   if (!item || item.status !== "active") {
@@ -52,12 +79,15 @@ export async function startRecurringScheduleEdit(params: {
 
   await clearActiveInteractionSessions({
     userId: owner.id,
-    reason: "recurring_schedule_setup_started",
+    reason:
+      params.section === "custom"
+        ? "recurring_custom_schedule_setup_started"
+        : "recurring_schedule_setup_started",
   });
   const action = await startReminderPolicyEditSession({
     userId: owner.id,
     itemId: item.id,
-    section: "schedule",
+    section: params.section,
     sourceMessageId: params.ctx.dbMessageId,
   });
   if (!action) {
@@ -65,20 +95,25 @@ export async function startRecurringScheduleEdit(params: {
     await params.ctx.reply("Не смог безопасно открыть настройку повторения. Ничего не изменил.");
     return false;
   }
-  await updateReminderPolicyEditSessionDraft({
-    userId: owner.id,
-    actionId: action.id,
-    draft: { recurrenceRule: params.preset },
-  });
+  if (params.preset) {
+    await updateReminderPolicyEditSessionDraft({
+      userId: owner.id,
+      actionId: action.id,
+      draft: { recurrenceRule: params.preset },
+    });
+  }
 
-  await params.ctx.answerCallbackQuery("Жду время");
+  await params.ctx.answerCallbackQuery(params.section === "custom" ? "Жду правило" : "Жду время");
   if (params.ctx.chat?.id) {
     await cleanupPolicyEditorMessages({
       userId: owner.id,
       chatId: String(params.ctx.chat.id),
     }).catch(() => undefined);
   }
-  const prompt = schedulePrompt(item.title, params.preset);
+  const prompt =
+    params.section === "custom"
+      ? customSchedulePrompt(item.title)
+      : schedulePrompt(item.title, params.preset!);
   const sent = await params.ctx.reply(prompt);
   if (params.ctx.chat?.id) {
     await registerBotMessage({
@@ -94,7 +129,7 @@ export async function startRecurringScheduleEdit(params: {
         entityType: "planner_item",
         entityId: item.id,
         details: {
-          flow: "recurring_schedule",
+          flow: params.section === "custom" ? "recurring_custom_schedule" : "recurring_schedule",
           safeErrorMessage: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
         },
       }).catch(() => undefined);
@@ -110,15 +145,23 @@ export async function handleRecurringScheduleEditTurn(
 ) {
   const owner = requireOwner(ctx);
   const session = await getActiveReminderPolicyEditSession({ userId: owner.id }).catch(() => null);
-  if (!session || session.section !== "schedule") return false;
+  if (!session || (session.section !== "schedule" && session.section !== "custom")) return false;
 
-  const preset = session.draft.recurrenceRule as RecurringSchedulePreset | undefined;
-  if (!preset || !SCHEDULE_PRESETS.has(preset)) return false;
+  const preset =
+    session.section === "custom"
+      ? inferRecurringSchedulePresetFromText(text)
+      : (session.draft.recurrenceRule as RecurringSchedulePreset | undefined) ?? null;
+  if (!preset || !SCHEDULE_PRESETS.has(preset)) {
+    await ctx.reply(
+      `Я меняю напоминания именно у «${session.item.title}». Не вижу частоту. Напиши правило целиком, например: «Каждый день с 8:00 каждые 4 часа, пока не отмечу».`,
+    );
+    return true;
+  }
 
   const parsed = parseRecurringScheduleFollowup(text);
   if (!parsed.timeLocal) {
     await ctx.reply(
-      `Я меняю повторение именно у «${session.item.title}». Не вижу времени. Напиши, например: «8:00» или «8:00, повторять каждые 4 часа».`,
+      `Я меняю повторение именно у «${session.item.title}». Не вижу времени. Напиши, например: «8:00» или «Каждый день с 8:00 каждые 4 часа».`,
     );
     return true;
   }
@@ -131,34 +174,43 @@ export async function handleRecurringScheduleEditTurn(
     now,
     timezone,
   });
-  const nextFireAt = nextRecurringScheduleOccurrence({
+  const intervalMinutes = parsed.intervalMinutes ?? null;
+  const timing = resolveRecurringScheduleTiming({
     rule,
     preset,
     timeLocal: parsed.timeLocal,
+    intervalMinutes,
     after: now,
     timezone,
   });
-  if (!nextFireAt) {
+  if (!timing) {
     await ctx.reply("Не смог безопасно вычислить следующий повтор. Ничего не изменил.");
     return true;
   }
+  const { startsAt, nextFireAt } = timing;
 
+  const persistentParent =
+    session.item.kind === "recurring_task" || session.item.metadata?.recurringParentPersistent === true;
+  const stopOnItemComplete = !persistentParent;
   const policies = await listReminderPoliciesForItem(owner.id, session.item.id, 100);
   const recurringPolicies = policies.filter((policy) =>
     ["recurring", "long_term"].includes(policy.policyType),
   );
   const existing =
     recurringPolicies.find((policy) => policy.status === "active") ?? recurringPolicies[0] ?? null;
-  const intervalMinutes = parsed.intervalMinutes ?? null;
   const metadata = {
-    configuredFrom: "reminder_schedule_menu",
+    configuredFrom:
+      session.section === "custom" ? "reminder_custom_menu" : "reminder_schedule_menu",
     mutationSource: "recurring_schedule_edit_session",
     schedulePreset: preset,
     activeWindowStart: parsed.timeLocal,
     activeWindowEnd: intervalMinutes ? "23:59" : null,
-    stopOnItemComplete: false,
-    recurringParentPersistent: true,
+    stopOnItemComplete,
+    stopCondition: stopOnItemComplete ? "until_done" : null,
+    recurringParentPersistent: persistentParent,
+    moveToNextDaySuppressesCurrentWindow: stopOnItemComplete,
   };
+  const requireAck = stopOnItemComplete || Boolean(intervalMinutes) || existing?.requireAck === true;
 
   if (existing) {
     await cancelPendingRemindersForPolicy({
@@ -175,13 +227,14 @@ export async function handleRecurringScheduleEditTurn(
         itemId: session.item.id,
         status: "active",
         title: session.item.title,
-        policyType: existing.policyType === "long_term" ? "long_term" : "recurring",
-        startsAt: nextFireAt,
+        policyType:
+          persistentParent && existing.policyType === "long_term" ? "long_term" : "recurring",
+        startsAt,
         endsAt: null,
         nextFireAt,
         recurrenceRule: rule,
         intervalMinutes,
-        requireAck: intervalMinutes ? true : existing.requireAck,
+        requireAck,
         snoozedUntil: null,
         snoozeScope: null,
         metadata,
@@ -196,12 +249,12 @@ export async function handleRecurringScheduleEditTurn(
       category: session.item.category ?? "recurring",
       policyType: "recurring",
       timezone,
-      startsAt: nextFireAt,
+      startsAt,
       endsAt: null,
       nextFireAt,
       recurrenceRule: rule,
       intervalMinutes,
-      requireAck: Boolean(intervalMinutes),
+      requireAck,
       catchUpMode: "one_immediate_then_resume",
       onWindowEnd: "expire_silently",
       idempotencyKey: `schedule-menu:${session.item.id}:${preset}`,
@@ -216,12 +269,12 @@ export async function handleRecurringScheduleEditTurn(
           status: "active",
           title: session.item.title,
           policyType: "recurring",
-          startsAt: nextFireAt,
+          startsAt,
           endsAt: null,
           nextFireAt,
           recurrenceRule: rule,
           intervalMinutes,
-          requireAck: Boolean(intervalMinutes),
+          requireAck,
           snoozedUntil: null,
           snoozeScope: null,
           metadata,
@@ -240,9 +293,13 @@ export async function handleRecurringScheduleEditTurn(
       policyId: policy.id,
       recurrenceRule: rule,
       intervalMinutes,
+      startsAt: startsAt.toISOString(),
       nextFireAt: nextFireAt.toISOString(),
       parentItemCreated: false,
       targetLocked: true,
+      customRule: session.section === "custom",
+      stopOnItemComplete,
+      recurringParentPersistent: persistentParent,
     },
   }).catch(() => undefined);
 
@@ -259,13 +316,19 @@ export async function handleRecurringScheduleEditTurn(
     [
       "Готово:",
       `• ${session.item.title}`,
-      `• ${recurringSchedulePresetLabel(preset)} в ${parsed.timeLocal}${intervalText}`,
+      `• ${recurringSchedulePresetLabel(preset)} с ${parsed.timeLocal}${intervalText}`,
+      stopOnItemComplete
+        ? "• напоминания привязаны к этой задаче и остановятся, когда она будет выполнена"
+        : "• выполнение отдельного повтора не удалит родительское повторяющееся задание",
       "Новых задач не создавал — изменил напоминания у выбранного пункта.",
     ].join("\n"),
   );
 
   ctx.deterministicTrace = {
-    preRouterIntent: "recurring_schedule_edit_session",
+    preRouterIntent:
+      session.section === "custom"
+        ? "recurring_custom_schedule_edit_session"
+        : "recurring_schedule_edit_session",
     aiRequired: false,
     aiCalled: false,
     aiSucceeded: false,
@@ -279,7 +342,10 @@ export async function handleRecurringScheduleEditTurn(
     errorCode: null,
     safeErrorMessage: null,
     sessionRouting: {
-      handledBy: "recurring_schedule_edit_session",
+      handledBy:
+        session.section === "custom"
+          ? "recurring_custom_schedule_edit_session"
+          : "recurring_schedule_edit_session",
       targetItemId: session.item.id,
       targetItemTitle: session.item.title,
       preset,
@@ -302,6 +368,14 @@ function schedulePrompt(title: string, preset: RecurringSchedulePreset) {
     `Настраиваю повторение у «${title}»: ${label}.`,
     "Во сколько начинать?",
     "Можно одним сообщением: «8:00» или «8:00, повторять каждые 4 часа».",
+  ].join("\n");
+}
+
+function customSchedulePrompt(title: string) {
+  return [
+    `Настраиваю правило именно у «${title}».`,
+    "Опиши частоту, старт и интервал одним сообщением.",
+    "Например: «Каждый день с 8:00 каждые 4 часа, пока не отмечу».",
   ].join("\n");
 }
 

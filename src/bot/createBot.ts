@@ -18,6 +18,7 @@ import {
 import { parseRecurringScheduleCallbackData } from "@/domain/recurringScheduleEdit";
 import {
   handleRecurringScheduleEditTurn,
+  startRecurringCustomScheduleEdit,
   startRecurringScheduleEdit,
 } from "@/bot/recurringScheduleEditFlow";
 import { cleanupAfterCallback } from "@/telegram/messageLifecycle";
@@ -76,7 +77,7 @@ export function createBot() {
     await next();
   });
 
-  // A schedule-menu follow-up is a target-locked edit, not a new natural-language task.
+  // A schedule/custom-menu follow-up is a target-locked edit, not a new natural-language task.
   // Consume it before the global ActionPlan router can turn "каждый день..." into junk items.
   instance.use(async (ctx, next) => {
     const text = ctx.message?.text ?? ctx.editedMessage?.text ?? "";
@@ -127,6 +128,19 @@ export function createBot() {
       reply_markup: stabilityScheduleReminderMenuKeyboard(itemId),
     });
   });
+
+  // Custom recurrence must stay bound to the selected task too. Previously this button
+  // only printed a prompt, so the next text fell into global AI planning and either
+  // created junk items or failed with missing_initial_fire.
+  instance.callbackQuery(
+    /^policy_menu:custom:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+    async (ctx) => {
+      await startRecurringCustomScheduleEdit({
+        ctx,
+        itemId: String(ctx.match?.[1] ?? ""),
+      });
+    },
+  );
 
   // The old generic policy_schedule handler parsed "<uuid>:daily" as the item id,
   // then failed while writing telegram_message_registry. Split callback fields here

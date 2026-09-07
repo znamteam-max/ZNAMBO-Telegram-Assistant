@@ -32,8 +32,31 @@ export function parseRecurringScheduleCallbackData(value: string) {
   return { itemId: match[1], preset };
 }
 
+export function inferRecurringSchedulePresetFromText(text: string): RecurringSchedulePreset | null {
+  const normalized = normalizeRu(text);
+  if (/(?:^|\s)(?:кажд(?:ый|ые)\s+день|ежедневно|ежедневный|daily)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "daily";
+  }
+  if (/(?:^|\s)(?:по\s+будням|в\s+будни|будни|weekdays?)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "weekdays";
+  }
+  if (/(?:^|\s)(?:кажд(?:ую|ой)\s+недел|раз\s+в\s+недел|weekly)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "weekly";
+  }
+  if (/(?:^|\s)(?:раз\s+в\s+2\s+недел|каждые\s+2\s+недел|every\s+2\s+weeks?|biweekly)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "every_2_weeks";
+  }
+  if (/(?:^|\s)(?:кажд(?:ый|ые)\s+месяц|раз\s+в\s+месяц|monthly)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "monthly";
+  }
+  if (/(?:^|\s)(?:кажд(?:ый|ые)\s+год|раз\s+в\s+год|yearly|annual)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "yearly";
+  }
+  return null;
+}
+
 export function parseRecurringScheduleFollowup(text: string) {
-  const normalized = text.toLocaleLowerCase("ru").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+  const normalized = normalizeRu(text);
   const timeLocal = parseExplicitClock(normalized);
   const intervalMinutes = parseExplicitReminderIntervalMinutes(normalized);
   return {
@@ -57,6 +80,26 @@ export function buildRecurringScheduleRule(params: {
   if (params.preset === "every_2_weeks") return `every_2_weeks@${params.timeLocal}`;
   if (params.preset === "monthly") return `monthly_days:${local.day}@${params.timeLocal}`;
   return `yearly:${local.toFormat("MM-dd")}@${params.timeLocal}`;
+}
+
+export function resolveRecurringScheduleTiming(params: {
+  rule: string;
+  preset: RecurringSchedulePreset;
+  timeLocal: string;
+  intervalMinutes?: number | null;
+  after: Date;
+  timezone: string;
+}) {
+  if (params.preset === "daily" && params.intervalMinutes) {
+    return resolveDailyIntervalTiming({
+      timeLocal: params.timeLocal,
+      intervalMinutes: params.intervalMinutes,
+      after: params.after,
+      timezone: params.timezone,
+    });
+  }
+  const nextFireAt = nextRecurringScheduleOccurrence(params);
+  return nextFireAt ? { startsAt: nextFireAt, nextFireAt } : null;
 }
 
 export function nextRecurringScheduleOccurrence(params: {
@@ -110,9 +153,42 @@ export function recurringSchedulePresetLabel(preset: RecurringSchedulePreset) {
   return "раз в год";
 }
 
+function resolveDailyIntervalTiming(params: {
+  timeLocal: string;
+  intervalMinutes: number;
+  after: Date;
+  timezone: string;
+}) {
+  const afterLocal = DateTime.fromJSDate(params.after, { zone: "utc" }).setZone(params.timezone);
+  const [hour, minute] = params.timeLocal.split(":").map(Number);
+  const baseToday = afterLocal
+    .startOf("day")
+    .set({ hour, minute, second: 0, millisecond: 0 });
+  const endToday = afterLocal.endOf("day").set({ second: 0, millisecond: 0 });
+
+  if (afterLocal < baseToday) {
+    const base = baseToday.toUTC().toJSDate();
+    return { startsAt: base, nextFireAt: base };
+  }
+
+  const elapsedMinutes = Math.floor(afterLocal.diff(baseToday, "minutes").minutes);
+  const steps = Math.floor(elapsedMinutes / params.intervalMinutes) + 1;
+  const sameDayNext = baseToday.plus({ minutes: steps * params.intervalMinutes });
+  if (sameDayNext <= endToday) {
+    return {
+      startsAt: baseToday.toUTC().toJSDate(),
+      nextFireAt: sameDayNext.toUTC().toJSDate(),
+    };
+  }
+
+  const tomorrowBase = baseToday.plus({ days: 1 });
+  const base = tomorrowBase.toUTC().toJSDate();
+  return { startsAt: base, nextFireAt: base };
+}
+
 function parseExplicitClock(text: string) {
   const withPreposition = text.match(
-    /(?:^|\s)(?:в|во|к)\s+(\d{1,2})(?:[.:](\d{2}))?\s*(утра|дня|вечера|ночи)?(?=$|\s|[,;.!?])/i,
+    /(?:^|\s)(?:в|во|к|с)\s+(\d{1,2})(?:[.:](\d{2}))?\s*(утра|дня|вечера|ночи)?(?=$|\s|[,;.!?])/i,
   );
   const punctuated = text.match(/(?:^|\s)(\d{1,2})[.:](\d{2})(?=$|\s|[,;.!?])/i);
   const match = withPreposition ?? punctuated;
@@ -125,4 +201,8 @@ function parseExplicitClock(text: string) {
   if ((dayPart === "утра" || dayPart === "ночи") && hour === 12) hour = 0;
   if (hour > 23) return null;
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function normalizeRu(value: string) {
+  return value.toLocaleLowerCase("ru").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
 }

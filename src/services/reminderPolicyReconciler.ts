@@ -19,11 +19,20 @@ import {
   resolvePolicyReconcileTarget,
 } from "@/domain/reminderPolicySchedule";
 import { isTodayUntilDoneReminderPolicy } from "@/domain/todayUntilDoneTask";
+import { logger } from "@/lib/logger";
 
 import { materializeNextPolicyReminder } from "./reminderPolicyEngine";
+import { repairV306RecurringIncident } from "./v306RecurringIncidentRepair";
 
 export async function reconcileActiveReminderPolicies(params?: { now?: Date; limit?: number }) {
   const now = params?.now ?? new Date();
+  try {
+    await repairV306RecurringIncident({ now });
+  } catch (error) {
+    logger.warn("V3.0.6 incident repair failed without blocking policy reconciliation", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   const policies = await listActivePoliciesForReconciliation(params?.limit ?? 200);
   let materialized = 0;
   let advanced = 0;
