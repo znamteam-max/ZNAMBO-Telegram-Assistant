@@ -44,8 +44,11 @@ export async function completePersistentRecurringItemCycle(params: {
   const item = await getPlannerItemById(params.userId, params.itemId);
   if (!item || item.status !== "active") return { handled: false as const, item: null };
 
-  const policies = (await listReminderPoliciesForItem(params.userId, item.id, 100)).filter(
+  const candidatePolicies = (await listReminderPoliciesForItem(params.userId, item.id, 100)).filter(
     (policy) => policy.status === "active" && PERSISTENT_POLICY_TYPES.has(policy.policyType),
+  );
+  const policies = candidatePolicies.filter((policy) =>
+    isPersistentRecurringParent({ itemKind: item.kind, policy }),
   );
   if (item.kind !== "recurring_task" && !policies.length) {
     return { handled: false as const, item };
@@ -123,12 +126,19 @@ export async function acknowledgePersistentRecurringReminder(params: {
 }) {
   const now = params.now ?? new Date();
   const row = await getPolicyForReminder(params.reminderId);
-  if (!row || row.policy.userId !== params.userId || !PERSISTENT_POLICY_TYPES.has(row.policy.policyType)) {
+  if (
+    !row ||
+    row.policy.userId !== params.userId ||
+    !PERSISTENT_POLICY_TYPES.has(row.policy.policyType)
+  ) {
     return { handled: false as const, itemId: row?.policy.itemId ?? null };
   }
   const item = row.policy.itemId
     ? await getPlannerItemById(params.userId, row.policy.itemId)
     : null;
+  if (!isPersistentRecurringParent({ itemKind: item?.kind, policy: row.policy })) {
+    return { handled: false as const, itemId: row.policy.itemId };
+  }
   const timezone = item?.timezone || row.policy.timezone || params.timezone;
 
   await ackReminderForToday({
@@ -195,8 +205,23 @@ export async function acknowledgePersistentRecurringReminder(params: {
   };
 }
 
-export function isPersistentRecurringPolicy(policy: Pick<ReminderPolicy, "policyType"> | null | undefined) {
+export function isPersistentRecurringPolicy(
+  policy: Pick<ReminderPolicy, "policyType"> | null | undefined,
+) {
   return Boolean(policy && PERSISTENT_POLICY_TYPES.has(policy.policyType));
+}
+
+export function isPersistentRecurringParent(params: {
+  itemKind?: string | null;
+  policy?: Pick<ReminderPolicy, "policyType" | "metadata"> | null;
+}) {
+  if (params.itemKind === "recurring_task") return true;
+  const policy = params.policy;
+  if (!policy || !PERSISTENT_POLICY_TYPES.has(policy.policyType)) return false;
+  return (
+    policy.metadata?.recurringParentPersistent === true &&
+    policy.metadata?.stopOnItemComplete !== true
+  );
 }
 
 function nextBaseOccurrenceAfterCurrentCycle(
@@ -222,7 +247,9 @@ function nextBaseOccurrenceAfterCurrentCycle(
       typeof policy.metadata?.activeWindowStart === "string"
         ? policy.metadata.activeWindowStart
         : policy.nextFireAt
-          ? DateTime.fromJSDate(policy.nextFireAt, { zone: "utc" }).setZone(timezone).toFormat("HH:mm")
+          ? DateTime.fromJSDate(policy.nextFireAt, { zone: "utc" })
+              .setZone(timezone)
+              .toFormat("HH:mm")
           : "09:00";
     const next = nextRecurringScheduleOccurrence({
       rule: policy.recurrenceRule ?? "",

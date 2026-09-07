@@ -4,6 +4,7 @@ import {
   cancelPlannerItemWithMetadata,
   getPlannerItemByAnyId,
   restoreCompletedPlannerItem,
+  updatePlannerItemDetails,
 } from "@/db/queries/items";
 import {
   createReminderPolicyIfMissing,
@@ -38,6 +39,7 @@ const JUNK_ITEMS = [
   },
 ] as const;
 const REPAIR_MARKER = "v306_recurring_incident_2026_09_07";
+const ITEM_REPAIR_FLAG = "v306RecurringIncidentRepairDone";
 
 export async function repairV306RecurringIncident(params?: { now?: Date }) {
   const now = params?.now ?? new Date();
@@ -48,88 +50,112 @@ export async function repairV306RecurringIncident(params?: { now?: Date }) {
 
   const changes: string[] = [];
 
-  if (monthly && monthly.userId === ownerId && monthly.title === MONTHLY_TITLE) {
+  if (
+    monthly &&
+    monthly.userId === ownerId &&
+    monthly.title === MONTHLY_TITLE &&
+    monthly.metadata?.[ITEM_REPAIR_FLAG] !== true
+  ) {
+    let activeMonthly = monthly;
     if (monthly.status === "completed") {
       const restored = await restoreCompletedPlannerItem({ userId: ownerId, itemId: monthly.id });
-      if (restored) changes.push("restored_monthly_parent");
-    }
-    const monthlyPolicies = await listReminderPoliciesForItem(ownerId, monthly.id, 100);
-    const existingMonthly =
-      monthlyPolicies.find((policy) =>
-        ["recurring", "long_term"].includes(policy.policyType) &&
-        typeof policy.recurrenceRule === "string" &&
-        /monthly/i.test(policy.recurrenceRule),
-      ) ??
-      monthlyPolicies.find((policy) => ["recurring", "long_term"].includes(policy.policyType)) ??
-      null;
-    const timezone = monthly.timezone || "Europe/Moscow";
-    const recurrenceRule = existingMonthly?.recurrenceRule || "monthly_days:1@09:00";
-    const nextFireAt =
-      nextRecurringOccurrence({ rule: recurrenceRule, after: now, timezone }) ??
-      nextFirstOfMonthAtNine(now, timezone);
-    const alreadyHealthy =
-      existingMonthly?.status === "active" &&
-      existingMonthly.nextFireAt &&
-      existingMonthly.nextFireAt > now &&
-      existingMonthly.metadata?.repairMarker === REPAIR_MARKER;
-
-    if (!alreadyHealthy) {
-      if (existingMonthly) {
-        await cancelPendingRemindersForPolicy({
-          userId: ownerId,
-          policyId: existingMonthly.id,
-          from: new Date(0),
-        });
+      if (restored) {
+        activeMonthly = restored;
+        changes.push("restored_monthly_parent");
       }
-      let policy = existingMonthly
-        ? await updateReminderPolicy({
+    }
+    if (activeMonthly.status === "active") {
+      const monthlyPolicies = await listReminderPoliciesForItem(ownerId, monthly.id, 100);
+      const existingMonthly =
+        monthlyPolicies.find((policy) =>
+          ["recurring", "long_term"].includes(policy.policyType) &&
+          typeof policy.recurrenceRule === "string" &&
+          /monthly/i.test(policy.recurrenceRule),
+        ) ??
+        monthlyPolicies.find((policy) => ["recurring", "long_term"].includes(policy.policyType)) ??
+        null;
+      const timezone = monthly.timezone || "Europe/Moscow";
+      const recurrenceRule = existingMonthly?.recurrenceRule || "monthly_days:1@09:00";
+      const nextFireAt =
+        nextRecurringOccurrence({ rule: recurrenceRule, after: now, timezone }) ??
+        nextFirstOfMonthAtNine(now, timezone);
+      const alreadyHealthy =
+        existingMonthly?.status === "active" &&
+        existingMonthly.nextFireAt &&
+        existingMonthly.nextFireAt > now &&
+        existingMonthly.metadata?.recurringParentPersistent === true &&
+        existingMonthly.metadata?.stopOnItemComplete !== true;
+
+      let policy = existingMonthly;
+      if (!alreadyHealthy) {
+        if (existingMonthly) {
+          await cancelPendingRemindersForPolicy({
             userId: ownerId,
             policyId: existingMonthly.id,
+            from: new Date(0),
+          });
+        }
+        policy = existingMonthly
+          ? await updateReminderPolicy({
+              userId: ownerId,
+              policyId: existingMonthly.id,
+              itemId: monthly.id,
+              status: "active",
+              title: monthly.title,
+              policyType: existingMonthly.policyType === "long_term" ? "long_term" : "recurring",
+              startsAt: existingMonthly.startsAt ?? nextFireAt,
+              endsAt: null,
+              nextFireAt,
+              recurrenceRule,
+              requireAck: true,
+              snoozedUntil: null,
+              snoozeScope: null,
+              metadata: {
+                repairMarker: REPAIR_MARKER,
+                repairedAt: now.toISOString(),
+                recurringParentPersistent: true,
+                stopOnItemComplete: false,
+              },
+            })
+          : null;
+        if (!policy) {
+          policy = await createReminderPolicyIfMissing({
+            userId: ownerId,
             itemId: monthly.id,
-            status: "active",
             title: monthly.title,
-            policyType: existingMonthly.policyType === "long_term" ? "long_term" : "recurring",
-            startsAt: existingMonthly.startsAt ?? nextFireAt,
+            category: monthly.category ?? "recurring",
+            policyType: "long_term",
+            timezone,
+            startsAt: nextFireAt,
             endsAt: null,
             nextFireAt,
-            recurrenceRule,
+            recurrenceRule: "monthly_days:1@09:00",
             requireAck: true,
-            snoozedUntil: null,
-            snoozeScope: null,
+            catchUpMode: "one_immediate_then_resume",
+            onWindowEnd: "expire_silently",
+            idempotencyKey: `${REPAIR_MARKER}:${monthly.id}:monthly`,
             metadata: {
               repairMarker: REPAIR_MARKER,
               repairedAt: now.toISOString(),
               recurringParentPersistent: true,
               stopOnItemComplete: false,
             },
-          })
-        : null;
-      if (!policy) {
-        policy = await createReminderPolicyIfMissing({
+          });
+        }
+        changes.push("reactivated_monthly_policy");
+      }
+      if (policy) {
+        await materializeNextPolicyReminder(policy, policy.nextFireAt ?? nextFireAt, { now });
+        await updatePlannerItemDetails({
           userId: ownerId,
           itemId: monthly.id,
-          title: monthly.title,
-          category: monthly.category ?? "recurring",
-          policyType: "long_term",
-          timezone,
-          startsAt: nextFireAt,
-          endsAt: null,
-          nextFireAt,
-          recurrenceRule: "monthly_days:1@09:00",
-          requireAck: true,
-          catchUpMode: "one_immediate_then_resume",
-          onWindowEnd: "expire_silently",
-          idempotencyKey: `${REPAIR_MARKER}:${monthly.id}:monthly`,
           metadata: {
-            repairMarker: REPAIR_MARKER,
-            repairedAt: now.toISOString(),
+            [ITEM_REPAIR_FLAG]: true,
+            v306RecurringIncidentRepairAt: now.toISOString(),
             recurringParentPersistent: true,
-            stopOnItemComplete: false,
           },
         });
       }
-      await materializeNextPolicyReminder(policy, nextFireAt, { now });
-      changes.push("reactivated_monthly_policy");
     }
   }
 
@@ -152,7 +178,13 @@ export async function repairV306RecurringIncident(params?: { now?: Date }) {
     if (cancelled) changes.push(`cancelled_junk:${item.id}`);
   }
 
-  if (target && target.userId === ownerId && target.title === TARGET_TITLE && target.status === "active") {
+  if (
+    target &&
+    target.userId === ownerId &&
+    target.title === TARGET_TITLE &&
+    target.status === "active" &&
+    target.metadata?.[ITEM_REPAIR_FLAG] !== true
+  ) {
     const timezone = target.timezone || "Europe/Moscow";
     const rule = buildRecurringScheduleRule({
       preset: "daily",
@@ -181,7 +213,10 @@ export async function repairV306RecurringIncident(params?: { now?: Date }) {
         existing.recurrenceRule === rule &&
         existing.intervalMinutes === 240 &&
         existing.metadata?.activeWindowStart === "08:00" &&
-        existing.metadata?.activeWindowEnd === "23:59";
+        existing.metadata?.activeWindowEnd === "23:59" &&
+        existing.metadata?.stopOnItemComplete === true &&
+        existing.metadata?.recurringParentPersistent !== true;
+      let policy = existing;
       if (!alreadyHealthy) {
         if (existing) {
           await cancelPendingRemindersForPolicy({
@@ -197,17 +232,19 @@ export async function repairV306RecurringIncident(params?: { now?: Date }) {
           schedulePreset: "daily",
           activeWindowStart: "08:00",
           activeWindowEnd: "23:59",
-          recurringParentPersistent: true,
-          stopOnItemComplete: false,
+          recurringParentPersistent: false,
+          stopOnItemComplete: true,
+          stopCondition: "until_done",
+          moveToNextDaySuppressesCurrentWindow: true,
         };
-        let policy = existing
+        policy = existing
           ? await updateReminderPolicy({
               userId: ownerId,
               policyId: existing.id,
               itemId: target.id,
               status: "active",
               title: target.title,
-              policyType: existing.policyType === "long_term" ? "long_term" : "recurring",
+              policyType: "recurring",
               startsAt: timing.startsAt,
               endsAt: null,
               nextFireAt: timing.nextFireAt,
@@ -239,8 +276,18 @@ export async function repairV306RecurringIncident(params?: { now?: Date }) {
             metadata,
           });
         }
-        await materializeNextPolicyReminder(policy, timing.nextFireAt, { now });
         changes.push("recovered_target_daily_4h_schedule");
+      }
+      if (policy) {
+        await materializeNextPolicyReminder(policy, policy.nextFireAt ?? timing.nextFireAt, { now });
+        await updatePlannerItemDetails({
+          userId: ownerId,
+          itemId: target.id,
+          metadata: {
+            [ITEM_REPAIR_FLAG]: true,
+            v306RecurringIncidentRepairAt: now.toISOString(),
+          },
+        });
       }
     }
   }

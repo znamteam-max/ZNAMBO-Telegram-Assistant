@@ -32,8 +32,21 @@ export function parseRecurringScheduleCallbackData(value: string) {
   return { itemId: match[1], preset };
 }
 
+export function inferRecurringSchedulePresetFromText(text: string): RecurringSchedulePreset | null {
+  const normalized = normalizeRu(text);
+  if (/\b(?:кажд(?:ый|ые)\s+день|ежедневно|ежедневный|daily)\b/i.test(normalized)) return "daily";
+  if (/\b(?:по\s+будням|в\s+будни|будни|weekdays?)\b/i.test(normalized)) return "weekdays";
+  if (/\b(?:кажд(?:ую|ой)\s+недел|раз\s+в\s+недел|weekly)\b/i.test(normalized)) return "weekly";
+  if (/\b(?:раз\s+в\s+2\s+недел|кажд(?:ые|ые)\s+2\s+недел|every\s+2\s+weeks?|biweekly)\b/i.test(normalized)) {
+    return "every_2_weeks";
+  }
+  if (/\b(?:кажд(?:ый|ые)\s+месяц|раз\s+в\s+месяц|monthly)\b/i.test(normalized)) return "monthly";
+  if (/\b(?:кажд(?:ый|ые)\s+год|раз\s+в\s+год|yearly|annual)\b/i.test(normalized)) return "yearly";
+  return null;
+}
+
 export function parseRecurringScheduleFollowup(text: string) {
-  const normalized = text.toLocaleLowerCase("ru").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+  const normalized = normalizeRu(text);
   const timeLocal = parseExplicitClock(normalized);
   const intervalMinutes = parseExplicitReminderIntervalMinutes(normalized);
   return {
@@ -165,7 +178,7 @@ function resolveDailyIntervalTiming(params: {
 
 function parseExplicitClock(text: string) {
   const withPreposition = text.match(
-    /(?:^|\s)(?:в|во|к)\s+(\d{1,2})(?:[.:](\d{2}))?\s*(утра|дня|вечера|ночи)?(?=$|\s|[,;.!?])/i,
+    /(?:^|\s)(?:в|во|к|с)\s+(\d{1,2})(?:[.:](\d{2}))?\s*(утра|дня|вечера|ночи)?(?=$|\s|[,;.!?])/i,
   );
   const punctuated = text.match(/(?:^|\s)(\d{1,2})[.:](\d{2})(?=$|\s|[,;.!?])/i);
   const match = withPreposition ?? punctuated;
@@ -178,4 +191,8 @@ function parseExplicitClock(text: string) {
   if ((dayPart === "утра" || dayPart === "ночи") && hour === 12) hour = 0;
   if (hour > 23) return null;
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function normalizeRu(value: string) {
+  return value.toLocaleLowerCase("ru").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
 }
