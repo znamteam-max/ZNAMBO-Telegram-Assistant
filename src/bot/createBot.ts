@@ -130,20 +130,20 @@ export function createBot() {
 
   // The old generic policy_schedule handler parsed "<uuid>:daily" as the item id,
   // then failed while writing telegram_message_registry. Split callback fields here
-  // and bind the following text to the exact selected item.
-  instance.callbackQuery(/^policy_schedule:/, async (ctx, next) => {
+  // and bind the following text to the exact selected item. Never fall back to the
+  // legacy handler for this callback family: malformed values are handled fail-closed.
+  instance.callbackQuery(/^policy_schedule:/, async (ctx) => {
     const parsed = parseRecurringScheduleCallbackData(ctx.callbackQuery.data);
     if (!parsed) {
       await ctx.answerCallbackQuery("Некорректное расписание");
       await ctx.reply("Не смог разобрать эту кнопку расписания. Ничего не изменил.");
       return;
     }
-    const handled = await startRecurringScheduleEdit({
+    await startRecurringScheduleEdit({
       ctx,
       itemId: parsed.itemId,
       preset: parsed.preset,
     });
-    if (!handled) await next();
   });
 
   // A recurring parent is persistent. "Done" acknowledges only the current cycle;
