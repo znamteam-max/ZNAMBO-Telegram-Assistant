@@ -171,7 +171,6 @@ export async function handleRecurringScheduleEditTurn(
         status: "active",
         title: session.item.title,
         policyType: existing.policyType === "long_term" ? "long_term" : "recurring",
-        timezone: undefined,
         startsAt: nextFireAt,
         endsAt: null,
         nextFireAt,
@@ -181,7 +180,7 @@ export async function handleRecurringScheduleEditTurn(
         snoozedUntil: null,
         snoozeScope: null,
         metadata,
-      } as Parameters<typeof updateReminderPolicy>[0])
+      })
     : null;
 
   if (!policy) {
