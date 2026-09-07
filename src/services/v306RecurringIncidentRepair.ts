@@ -165,7 +165,7 @@ export async function repairV306RecurringIncident(params?: { now?: Date }) {
       continue;
     }
     await cancelItemReminders(ownerId, item.id);
-    await stopPoliciesForItem(ownerId, item.id, "cancelled");
+    await stopPoliciesForItem(ownerId, item.id);
     const cancelled = await cancelPlannerItemWithMetadata({
       userId: ownerId,
       itemId: item.id,
