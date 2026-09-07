@@ -60,6 +60,11 @@ export async function startRecurringScheduleEdit(params: {
     section: "schedule",
     sourceMessageId: params.ctx.dbMessageId,
   });
+  if (!action) {
+    await params.ctx.answerCallbackQuery("Не удалось открыть настройку");
+    await params.ctx.reply("Не смог безопасно открыть настройку повторения. Ничего не изменил.");
+    return false;
+  }
   await updateReminderPolicyEditSessionDraft({
     userId: owner.id,
     actionId: action.id,
