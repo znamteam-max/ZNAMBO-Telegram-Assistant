@@ -11,6 +11,17 @@ import { callbackReliabilityMiddleware } from "@/bot/callbackReliability";
 import { installFullJournalTelegramRecorder } from "@/telegram/fullJournalRecorder";
 import { cancelStoredActionPlan } from "@/services/actionPlanCommit";
 import { startPendingPlanEditSession } from "@/services/pendingPlanEditSessions";
+import {
+  acknowledgePersistentRecurringReminder,
+  completePersistentRecurringItemCycle,
+} from "@/services/recurringOccurrenceCompletion";
+import { parseRecurringScheduleCallbackData } from "@/domain/recurringScheduleEdit";
+import {
+  handleRecurringScheduleEditTurn,
+  startRecurringScheduleEdit,
+} from "@/bot/recurringScheduleEditFlow";
+import { cleanupAfterCallback } from "@/telegram/messageLifecycle";
+import { refreshDashboardAfterMutation } from "@/telegram/liveDashboard";
 
 import { requireOwner, type BotContext } from "./context";
 import { attachOwner, requireAllowedOwner } from "./authorization";
@@ -65,6 +76,21 @@ export function createBot() {
     await next();
   });
 
+  // A schedule-menu follow-up is a target-locked edit, not a new natural-language task.
+  // Consume it before the global ActionPlan router can turn "каждый день..." into junk items.
+  instance.use(async (ctx, next) => {
+    const text = ctx.message?.text ?? ctx.editedMessage?.text ?? "";
+    if (text && !text.trim().startsWith("/") && ctx.owner?.id) {
+      const handled = await handleRecurringScheduleEditTurn(
+        ctx,
+        text,
+        ctx.owner.timezone,
+      );
+      if (handled) return;
+    }
+    await next();
+  });
+
   // Selecting "edit plan" now creates a durable target lock. The old draft is cancelled
   // immediately, so its stale Save button cannot later commit it. Ambiguous follow-ups
   // such as "18.00" are blocked before the global update_existing_items router.
@@ -100,6 +126,85 @@ export function createBot() {
     await ctx.reply("Как повторять?", {
       reply_markup: stabilityScheduleReminderMenuKeyboard(itemId),
     });
+  });
+
+  // The old generic policy_schedule handler parsed "<uuid>:daily" as the item id,
+  // then failed while writing telegram_message_registry. Split callback fields here
+  // and bind the following text to the exact selected item. Never fall back to the
+  // legacy handler for this callback family: malformed values are handled fail-closed.
+  instance.callbackQuery(/^policy_schedule:/, async (ctx) => {
+    const parsed = parseRecurringScheduleCallbackData(ctx.callbackQuery.data);
+    if (!parsed) {
+      await ctx.answerCallbackQuery("Некорректное расписание");
+      await ctx.reply("Не смог разобрать эту кнопку расписания. Ничего не изменил.");
+      return;
+    }
+    await startRecurringScheduleEdit({
+      ctx,
+      itemId: parsed.itemId,
+      preset: parsed.preset,
+    });
+  });
+
+  // A recurring parent is persistent. "Done" acknowledges only the current cycle;
+  // only an explicit delete/cancel action may remove the parent or its recurrence.
+  instance.callbackQuery(/^done:(.+)$/, async (ctx, next) => {
+    const owner = requireOwner(ctx);
+    const result = await completePersistentRecurringItemCycle({
+      userId: owner.id,
+      itemId: String(ctx.match?.[1] ?? ""),
+      timezone: owner.timezone,
+    });
+    if (!result.handled) {
+      await next();
+      return;
+    }
+    await ctx.answerCallbackQuery("Текущий повтор выполнен");
+    await ctx.reply(
+      `Отметил текущий повтор «${result.item.title}». Само повторяющееся задание осталось активным; удалить его можно только отдельным удалением.`,
+    );
+    if (ctx.chat?.id) {
+      await cleanupAfterCallback({
+        userId: owner.id,
+        chatId: String(ctx.chat.id),
+        messageId: ctx.callbackQuery?.message?.message_id,
+        relatedItemId: result.item.id,
+      }).catch(() => undefined);
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
+  });
+
+  // The same invariant applies when "Выполнено сейчас" is pressed on a reminder card.
+  instance.callbackQuery(/^reminder:ack:(.+)$/, async (ctx, next) => {
+    const owner = requireOwner(ctx);
+    const result = await acknowledgePersistentRecurringReminder({
+      userId: owner.id,
+      reminderId: String(ctx.match?.[1] ?? ""),
+      timezone: owner.timezone,
+    });
+    if (!result.handled) {
+      await next();
+      return;
+    }
+    await ctx.answerCallbackQuery("Текущий повтор выполнен");
+    await ctx.reply("Текущий повтор отметил. Повторяющееся правило осталось активным.");
+    if (ctx.chat?.id) {
+      await cleanupAfterCallback({
+        userId: owner.id,
+        chatId: String(ctx.chat.id),
+        messageId: ctx.callbackQuery?.message?.message_id,
+        relatedItemId: result.itemId,
+      }).catch(() => undefined);
+      await refreshDashboardAfterMutation({
+        userId: owner.id,
+        chatId: ctx.chat.id,
+        timezone: owner.timezone,
+      });
+    }
   });
 
   // Backward-compatible direct alias. This bypasses the natural-language router entirely.
