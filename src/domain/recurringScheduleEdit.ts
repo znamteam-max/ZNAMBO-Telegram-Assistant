@@ -34,14 +34,24 @@ export function parseRecurringScheduleCallbackData(value: string) {
 
 export function inferRecurringSchedulePresetFromText(text: string): RecurringSchedulePreset | null {
   const normalized = normalizeRu(text);
-  if (/\b(?:кажд(?:ый|ые)\s+день|ежедневно|ежедневный|daily)\b/i.test(normalized)) return "daily";
-  if (/\b(?:по\s+будням|в\s+будни|будни|weekdays?)\b/i.test(normalized)) return "weekdays";
-  if (/\b(?:кажд(?:ую|ой)\s+недел|раз\s+в\s+недел|weekly)\b/i.test(normalized)) return "weekly";
-  if (/\b(?:раз\s+в\s+2\s+недел|кажд(?:ые|ые)\s+2\s+недел|every\s+2\s+weeks?|biweekly)\b/i.test(normalized)) {
+  if (/(?:^|\s)(?:кажд(?:ый|ые)\s+день|ежедневно|ежедневный|daily)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "daily";
+  }
+  if (/(?:^|\s)(?:по\s+будням|в\s+будни|будни|weekdays?)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "weekdays";
+  }
+  if (/(?:^|\s)(?:кажд(?:ую|ой)\s+недел|раз\s+в\s+недел|weekly)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "weekly";
+  }
+  if (/(?:^|\s)(?:раз\s+в\s+2\s+недел|каждые\s+2\s+недел|every\s+2\s+weeks?|biweekly)(?=$|\s|[,;.!?])/i.test(normalized)) {
     return "every_2_weeks";
   }
-  if (/\b(?:кажд(?:ый|ые)\s+месяц|раз\s+в\s+месяц|monthly)\b/i.test(normalized)) return "monthly";
-  if (/\b(?:кажд(?:ый|ые)\s+год|раз\s+в\s+год|yearly|annual)\b/i.test(normalized)) return "yearly";
+  if (/(?:^|\s)(?:кажд(?:ый|ые)\s+месяц|раз\s+в\s+месяц|monthly)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "monthly";
+  }
+  if (/(?:^|\s)(?:кажд(?:ый|ые)\s+год|раз\s+в\s+год|yearly|annual)(?=$|\s|[,;.!?])/i.test(normalized)) {
+    return "yearly";
+  }
   return null;
 }
 
