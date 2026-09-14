@@ -77,7 +77,7 @@ export function normalizeTodayUntilDoneTask(params: {
     policyWindowEndLocal,
     endOfDayLocal: "23:59",
     startsAt: untilDone.startsAt,
-    endsAt: untilDone.endsAt,
+    endsAt: untilDone.endsAt ?? endLocal.toUTC().toJSDate(),
     metadata: {
       sourceNormalization: "today_until_done_v2190",
       normalization: "today_until_done",
