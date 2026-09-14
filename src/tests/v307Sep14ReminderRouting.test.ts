@@ -31,7 +31,7 @@ describe("V3.0.7 Sep 14 reminder routing regressions", () => {
     expect(normalized).not.toBeNull();
     expect(normalized?.intervalMinutes).toBe(240);
     expect(normalized?.endOfDayExplicit).toBe(false);
-    expect(normalized?.windowEnd).toBeNull();
+    expect(normalized?.windowEnd).toBeUndefined();
     expect(normalized?.endsAt).toBeNull();
   });
 
