@@ -7,7 +7,7 @@ export type UntilDoneReminderNormalization = {
   stopCondition: "until_done";
   catchUpMode: "one_immediate_then_resume";
   windowStart: string;
-  windowEnd: "23:59" | null;
+  windowEnd: "23:59" | undefined;
   startsAt: Date;
   endsAt: Date | null;
   cadenceExplicit: boolean;
@@ -51,7 +51,7 @@ export function normalizeUntilDoneReminder(params: {
     stopCondition: "until_done",
     catchUpMode: "one_immediate_then_resume",
     windowStart: starts.toFormat("HH:mm"),
-    windowEnd: ends ? "23:59" : null,
+    windowEnd: ends ? "23:59" : undefined,
     startsAt: starts.toUTC().toJSDate(),
     endsAt: ends?.toUTC().toJSDate() ?? null,
     cadenceExplicit: explicitInterval !== null,
