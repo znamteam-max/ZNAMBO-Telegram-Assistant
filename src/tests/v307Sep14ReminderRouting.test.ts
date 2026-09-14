@@ -13,7 +13,7 @@ describe("V3.0.7 Sep 14 reminder routing regressions", () => {
     });
 
     expect(intent).not.toBeNull();
-    expect(intent?.title).toBe("Интервью с андреем рублёвым");
+    expect(intent?.title).toBe("Интервью с Андреем Рублёвым");
     expect(intent?.intervalMinutes).toBe(60);
     expect(intent?.windowStartLocal).toBe("08:43");
     expect(intent?.windowEndLocal).toBe("17:00");
