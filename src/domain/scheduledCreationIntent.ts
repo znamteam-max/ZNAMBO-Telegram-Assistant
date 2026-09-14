@@ -131,10 +131,14 @@ function extractScheduledTitle(text: string) {
     .replace(/(?:^|\s)(?:в|во|к|на)\s+\d{1,2}(?=\s|$|[,.;:!?])/gi, " ")
     .replace(/(?:^|\s)(?:в|во|к|на|с|до)\s*$/i, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^(?:в|во)\s+(?=(?:созвон|встреча|эфир|прием|приём|визит|тренировка|запись)\b)/i, "")
     .trim();
-  return sanitizePlannerTitle(withoutSchedule);
+  const sanitized = sanitizePlannerTitle(withoutSchedule);
+  return sanitized
+    .replace(
+      /^(?:в|во)\s+(?=(?:созвон|встреча|эфир|прием|приём|визит|тренировка|запись)(?:\s|$|[,.;:!?]))/i,
+      "",
+    )
+    .trim();
 }
 
 function inferScheduledKind(title: string): "event" | "training" {
