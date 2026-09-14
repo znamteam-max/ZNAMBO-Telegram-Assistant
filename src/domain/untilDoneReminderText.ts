@@ -7,9 +7,9 @@ export type UntilDoneReminderNormalization = {
   stopCondition: "until_done";
   catchUpMode: "one_immediate_then_resume";
   windowStart: string;
-  windowEnd: "23:59";
+  windowEnd: "23:59" | null;
   startsAt: Date;
-  endsAt: Date;
+  endsAt: Date | null;
   cadenceExplicit: boolean;
   endOfDayExplicit: boolean;
   untilDoneExplicit: boolean;
@@ -38,11 +38,11 @@ export function normalizeUntilDoneReminder(params: {
   const explicitInterval = parseExplicitReminderIntervalMinutes(normalized);
   const intervalMinutes = explicitInterval ?? 60;
   const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
-  let starts = nowLocal.plus({ minutes: 1 }).set({ second: 0, millisecond: 0 });
-  const remainder = starts.minute % 1;
-  if (remainder) starts = starts.plus({ minutes: 1 - remainder });
-  const ends = nowLocal.endOf("day").set({ hour: 23, minute: 59, second: 0, millisecond: 0 });
-  if (starts > ends) return null;
+  const starts = nowLocal.plus({ minutes: 1 }).set({ second: 0, millisecond: 0 });
+  const ends = endOfDayExplicit
+    ? nowLocal.endOf("day").set({ hour: 23, minute: 59, second: 0, millisecond: 0 })
+    : null;
+  if (ends && starts > ends) return null;
 
   return {
     matched: true,
@@ -51,9 +51,9 @@ export function normalizeUntilDoneReminder(params: {
     stopCondition: "until_done",
     catchUpMode: "one_immediate_then_resume",
     windowStart: starts.toFormat("HH:mm"),
-    windowEnd: "23:59",
+    windowEnd: ends ? "23:59" : null,
     startsAt: starts.toUTC().toJSDate(),
-    endsAt: ends.toUTC().toJSDate(),
+    endsAt: ends?.toUTC().toJSDate() ?? null,
     cadenceExplicit: explicitInterval !== null,
     endOfDayExplicit,
     untilDoneExplicit,
@@ -69,7 +69,9 @@ export function formatUntilDoneReminderSummary(params: {
     .toFormat("HH:mm");
   const cadence = formatReminderCadence(params.normalized.intervalMinutes);
   return [
-    `Ок, буду напоминать ${cadence} до конца дня, пока не отметишь выполненным.`,
+    params.normalized.endOfDayExplicit
+      ? `Ок, буду напоминать ${cadence} до конца дня, пока не отметишь выполненным.`
+      : `Ок, буду напоминать ${cadence}, пока не отметишь выполненным.`,
     `Первое напоминание: сегодня ${first}.`,
   ].join("\n");
 }
