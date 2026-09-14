@@ -133,12 +133,16 @@ function extractScheduledTitle(text: string) {
     .replace(/\s+/g, " ")
     .trim();
   const sanitized = sanitizePlannerTitle(withoutSchedule);
-  return sanitized
+  const cleaned = sanitized
     .replace(
       /^(?:в|во)\s+(?=(?:созвон|встреча|эфир|прием|приём|визит|тренировка|запись)(?:\s|$|[,.;:!?]))/i,
       "",
     )
     .trim();
+  if (cleaned !== sanitized && cleaned) {
+    return cleaned[0].toLocaleUpperCase("ru") + cleaned.slice(1);
+  }
+  return cleaned;
 }
 
 function inferScheduledKind(title: string): "event" | "training" {
