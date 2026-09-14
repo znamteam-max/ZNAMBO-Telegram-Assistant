@@ -34,8 +34,13 @@ export function parseScheduledCreationIntent(params: {
   const title = extractScheduledTitle(params.text);
   if (!title || title.length < 2) return null;
 
-  const range = parseRussianTimeRange(params);
-  const dateTime = range ? null : parseRussianDateTime(params);
+  // Parse the event clock only from the event clause. Reminder text can contain words
+  // such as "за два дня"; the generic Russian clock parser also understands "дня" as
+  // a PM day-part marker, so feeding the whole sentence could turn 07:00 into 19:00.
+  const scheduleText = stripReminderClauseForSchedule(params.text);
+  const dateParams = { ...params, text: scheduleText };
+  const range = parseRussianTimeRange(dateParams);
+  const dateTime = range ? null : parseRussianDateTime(dateParams);
   const startLocal = range?.startLocal ?? dateTime?.local ?? null;
   if (!startLocal?.isValid) return null;
   let endLocal = range?.endLocal ?? startLocal.plus({ minutes: defaultDurationMinutes(title) });
@@ -103,10 +108,14 @@ function hasExplicitClock(text: string) {
   return /(?:^|\s)(?:в|во|к|на|с)\s*\d{1,2}(?:[.:]\d{2})?(?:\s|,|$)/i.test(text);
 }
 
-function extractScheduledTitle(text: string) {
-  const main = text
-    .split(/[,.;]\s*(?:напомн|напомин|без\s+(?:напомин|уведом)|уведомл)/i)[0]
+function stripReminderClauseForSchedule(text: string) {
+  return text
+    .split(/[,.;]\s*(?:напомн|напомин|уведомл|без\s+(?:напомин|уведом))/i)[0]
     .trim();
+}
+
+function extractScheduledTitle(text: string) {
+  const main = stripReminderClauseForSchedule(text);
   const withoutSchedule = main
     .replace(/(?:^|\s)(?:сегодня|завтра|послезавтра)(?=\s|$|[,.;:!?])/gi, " ")
     .replace(
@@ -122,6 +131,8 @@ function extractScheduledTitle(text: string) {
     .replace(/(?:^|\s)(?:в|во|к|на)\s+\d{1,2}(?=\s|$|[,.;:!?])/gi, " ")
     .replace(/(?:^|\s)(?:в|во|к|на|с|до)\s*$/i, " ")
     .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:в|во)\s+(?=(?:созвон|встреча|эфир|прием|приём|визит|тренировка|запись)\b)/i, "")
     .trim();
   return sanitizePlannerTitle(withoutSchedule);
 }
