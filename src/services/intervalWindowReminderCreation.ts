@@ -6,11 +6,16 @@ import { localIsoToUtcDate } from "@/domain/dateTime";
 import type { IntervalWindowReminderIntent } from "@/domain/intervalWindowReminderIntent";
 
 import { materializeNextPolicyReminder } from "./reminderPolicyEngine";
+import {
+  createOrUpdateWeeklyTaskReminderFromIntent,
+  formatWeeklyTaskReminderCreationReply,
+} from "./weeklyTaskReminderCreation";
 
 export type IntervalWindowReminderCreationResult = {
   item: PlannerItem;
   policy: ReminderPolicy;
   reminder: Reminder | null;
+  updatedExisting?: boolean;
 };
 
 export async function createIntervalWindowReminderFromIntent(params: {
@@ -19,6 +24,15 @@ export async function createIntervalWindowReminderFromIntent(params: {
   intent: IntervalWindowReminderIntent;
   now: Date;
 }): Promise<IntervalWindowReminderCreationResult> {
+  if ("weeklyTask" in params.intent) {
+    return createOrUpdateWeeklyTaskReminderFromIntent({
+      userId: params.userId,
+      sourceMessageId: params.sourceMessageId,
+      intent: params.intent.weeklyTask,
+      now: params.now,
+    });
+  }
+
   const startsAt = localIsoToUtcDate(params.intent.startsAtLocalIso, params.intent.timezone);
   const endsAt = localIsoToUtcDate(params.intent.endsAtLocalIso, params.intent.timezone);
   const idempotencyScope = params.sourceMessageId ?? params.intent.textHash;
@@ -103,6 +117,18 @@ export function formatIntervalWindowCreationReply(params: {
   result: IntervalWindowReminderCreationResult;
   intent: IntervalWindowReminderIntent;
 }) {
+  if ("weeklyTask" in params.intent) {
+    return formatWeeklyTaskReminderCreationReply({
+      result: {
+        item: params.result.item,
+        policy: params.result.policy,
+        reminder: params.result.reminder,
+        updatedExisting: params.result.updatedExisting ?? false,
+      },
+      intent: params.intent.weeklyTask,
+    });
+  }
+
   return [
     "Добавил:",
     `${formatDateLabel(params.intent)} ${params.intent.windowStartLocal}–${params.intent.windowEndLocal} · ${params.result.item.title}`,
@@ -110,7 +136,7 @@ export function formatIntervalWindowCreationReply(params: {
   ].join("\n");
 }
 
-function formatDateLabel(intent: IntervalWindowReminderIntent) {
+function formatDateLabel(intent: Exclude<IntervalWindowReminderIntent, { weeklyTask: unknown }>) {
   if (intent.dateLabel === "сегодня") return "Сегодня";
   if (intent.dateLabel === "завтра") return "Завтра";
   return intent.dateLocal;

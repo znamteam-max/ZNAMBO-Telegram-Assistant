@@ -36,6 +36,14 @@ export async function runV2220IntervalWindowSmoke(params: {
       textHash: null,
     };
   }
+  if ("weeklyTask" in intent) {
+    return {
+      ok: false,
+      error: "interval_window_smoke_routed_to_weekly_task",
+      smokeRunId,
+      textHash: intent.textHash,
+    };
+  }
 
   const oldTarget = await createManualPlannerItem({
     userId: params.userId,
