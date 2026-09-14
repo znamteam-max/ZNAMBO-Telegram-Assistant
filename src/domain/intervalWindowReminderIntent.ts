@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
 
 import { DateTime } from "luxon";
+import {
+  parseWeeklyTaskReminderIntent,
+  type WeeklyTaskReminderIntent,
+} from "@/domain/weeklyTaskReminderIntent";
 
-export type IntervalWindowReminderIntent = {
+type OneOffIntervalWindowReminderIntent = {
   intent: "create_interval_window_reminder";
   title: string;
   dateLocal: string;
@@ -18,6 +22,21 @@ export type IntervalWindowReminderIntent = {
   reason: "standalone_date_window_cadence_and_object";
   textHash: string;
 };
+
+type WeeklyIntervalTaskReminderIntent = {
+  intent: "create_interval_window_reminder";
+  title: string;
+  timezone: string;
+  requireAck: boolean;
+  source: "weekly_task_reminder_intent";
+  reason: "weekly_task_deadline_and_interval_window";
+  textHash: string;
+  weeklyTask: WeeklyTaskReminderIntent;
+};
+
+export type IntervalWindowReminderIntent =
+  | OneOffIntervalWindowReminderIntent
+  | WeeklyIntervalTaskReminderIntent;
 
 const WEEKDAYS: Record<string, number> = {
   понедельник: 1,
@@ -40,6 +59,23 @@ export function parseStandaloneIntervalWindowReminderIntent(params: {
   timezone: string;
   now: Date;
 }): IntervalWindowReminderIntent | null {
+  const weeklyTask = parseWeeklyTaskReminderIntent({
+    text: params.text,
+    timezone: params.timezone,
+  });
+  if (weeklyTask) {
+    return {
+      intent: "create_interval_window_reminder",
+      title: weeklyTask.title,
+      timezone: weeklyTask.timezone,
+      requireAck: weeklyTask.requireAck,
+      source: "weekly_task_reminder_intent",
+      reason: "weekly_task_deadline_and_interval_window",
+      textHash: hashText(normalize(params.text)),
+      weeklyTask,
+    };
+  }
+
   const displayText = normalizeDisplayText(params.text);
   const normalized = normalize(displayText);
   if (!normalized) return null;
