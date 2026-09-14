@@ -1,19 +1,30 @@
 import { DateTime } from "luxon";
 
-export type UntilDoneReminderNormalization = {
+type UntilDoneReminderCommon = {
   matched: true;
   intervalMinutes: number;
   requireAck: true;
   stopCondition: "until_done";
   catchUpMode: "one_immediate_then_resume";
   windowStart: string;
-  windowEnd: "23:59";
   startsAt: Date;
-  endsAt: Date;
   cadenceExplicit: boolean;
-  endOfDayExplicit: boolean;
   untilDoneExplicit: boolean;
 };
+
+export type UntilDoneReminderNormalization = UntilDoneReminderCommon &
+  (
+    | {
+        endOfDayExplicit: true;
+        windowEnd: "23:59";
+        endsAt: Date;
+      }
+    | {
+        endOfDayExplicit: false;
+        windowEnd: undefined;
+        endsAt: null;
+      }
+  );
 
 export function normalizeUntilDoneReminder(params: {
   text: string;
@@ -38,25 +49,35 @@ export function normalizeUntilDoneReminder(params: {
   const explicitInterval = parseExplicitReminderIntervalMinutes(normalized);
   const intervalMinutes = explicitInterval ?? 60;
   const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
-  let starts = nowLocal.plus({ minutes: 1 }).set({ second: 0, millisecond: 0 });
-  const remainder = starts.minute % 1;
-  if (remainder) starts = starts.plus({ minutes: 1 - remainder });
-  const ends = nowLocal.endOf("day").set({ hour: 23, minute: 59, second: 0, millisecond: 0 });
-  if (starts > ends) return null;
-
-  return {
+  const starts = nowLocal.plus({ minutes: 1 }).set({ second: 0, millisecond: 0 });
+  const common: UntilDoneReminderCommon = {
     matched: true,
     intervalMinutes,
     requireAck: true,
     stopCondition: "until_done",
     catchUpMode: "one_immediate_then_resume",
     windowStart: starts.toFormat("HH:mm"),
-    windowEnd: "23:59",
     startsAt: starts.toUTC().toJSDate(),
-    endsAt: ends.toUTC().toJSDate(),
     cadenceExplicit: explicitInterval !== null,
-    endOfDayExplicit,
     untilDoneExplicit,
+  };
+
+  if (!endOfDayExplicit) {
+    return {
+      ...common,
+      endOfDayExplicit: false,
+      windowEnd: undefined,
+      endsAt: null,
+    };
+  }
+
+  const ends = nowLocal.endOf("day").set({ hour: 23, minute: 59, second: 0, millisecond: 0 });
+  if (starts > ends) return null;
+  return {
+    ...common,
+    endOfDayExplicit: true,
+    windowEnd: "23:59",
+    endsAt: ends.toUTC().toJSDate(),
   };
 }
 
@@ -69,7 +90,9 @@ export function formatUntilDoneReminderSummary(params: {
     .toFormat("HH:mm");
   const cadence = formatReminderCadence(params.normalized.intervalMinutes);
   return [
-    `Ок, буду напоминать ${cadence} до конца дня, пока не отметишь выполненным.`,
+    params.normalized.endOfDayExplicit
+      ? `Ок, буду напоминать ${cadence} до конца дня, пока не отметишь выполненным.`
+      : `Ок, буду напоминать ${cadence}, пока не отметишь выполненным.`,
     `Первое напоминание: сегодня ${first}.`,
   ].join("\n");
 }

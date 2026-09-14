@@ -23,8 +23,20 @@ export function parseBeforeEventReminderSpecs(params: {
   const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
   const candidates: Array<{ fireAt: DateTime; label: string }> = [];
 
-  candidates.push(...parseRelativeDayReminders(normalized, params.eventStartLocal));
-  candidates.push(...parseRelativeCalendarOffsetReminders(normalized, params.eventStartLocal));
+  // A trailing clock can govern several coordinated day offsets:
+  // "за два дня и за день до в 12.00" => both reminders at 12:00.
+  // If that compact form is present, do not also add the generic day candidates at
+  // event-time/default-09:00, otherwise one phrase would create duplicates.
+  const coordinatedDayReminders = parseCoordinatedDayClockReminders(
+    normalized,
+    params.eventStartLocal,
+  );
+  if (coordinatedDayReminders.length) {
+    candidates.push(...coordinatedDayReminders);
+  } else {
+    candidates.push(...parseRelativeDayReminders(normalized, params.eventStartLocal));
+    candidates.push(...parseRelativeCalendarOffsetReminders(normalized, params.eventStartLocal));
+  }
   candidates.push(...parseRelativeOffsetReminders(normalized, params.eventStartLocal));
   if (params.allowAbsoluteTimes) {
     candidates.push(...parseAbsoluteReminderTimes(normalized, params.eventStartLocal));
@@ -86,6 +98,25 @@ export function detectBeforeEventReminderMode(text: string): "add" | "replace" |
   if (/(?:замени|заменить|вместо|оставь\s+только)/i.test(normalized)) return "replace";
   if (/(?:добавь|добавить|еще|ещё)/i.test(normalized)) return "add";
   return "ask";
+}
+
+function parseCoordinatedDayClockReminders(text: string, eventStartLocal: DateTime) {
+  const match = text.match(
+    /за\s+(\d{1,2}|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)\s+(?:день|дня|дней)\s+и\s+за\s+(?:один\s+)?день(?:\s+до)?\s+в\s+(\d{1,2})(?:[.:](\d{2}))?\s*(утра|вечера|дня|ночи)?/iu,
+  );
+  if (!match) return [];
+  const firstDays = parseCalendarAmount(match[1]);
+  if (!firstDays || firstDays <= 1) return [];
+  const minute = Number(match[3] ?? 0);
+  const hour = normalizeHour(Number(match[2]), match[4]);
+  if (!isValidClock(hour, minute)) return [];
+
+  return [firstDays, 1].map((days) => ({
+    fireAt: eventStartLocal
+      .minus({ days })
+      .set({ hour, minute, second: 0, millisecond: 0 }),
+    label: days === 1 ? `за день в ${formatClock(hour, minute)}` : `за ${days} ${dayWord(days)} в ${formatClock(hour, minute)}`,
+  }));
 }
 
 function parseRelativeDayReminders(text: string, eventStartLocal: DateTime) {
@@ -228,7 +259,7 @@ function isRelativeQuantityToken(text: string, tokenStart: number, tokenLength: 
 
 function isDayRelativeClock(text: string, tokenStart: number) {
   const before = text.slice(Math.max(0, tokenStart - 20), tokenStart);
-  return /за\s+(?:один\s+)?день\s+в\s*$/iu.test(before);
+  return /за\s+(?:один\s+)?день\s+(?:до\s+)?в\s*$/iu.test(before);
 }
 
 function formatRelativeOffsetLabel(minutes: number) {
