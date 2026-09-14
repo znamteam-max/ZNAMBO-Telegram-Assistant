@@ -23,6 +23,43 @@ describe("V2.5.3 canonical user timeline", () => {
     expect(timeline.rows.every((row) => row.editable && row.entityRef.id)).toBe(true);
   });
 
+  it("keeps a live interval reminder task in Today until its actual deadline", () => {
+    const rublev = item({
+      id: "rublev",
+      title: "Интервью с Андреем Рублёвым",
+      startAt: new Date("2026-09-14T06:19:00.000Z"),
+      dueAt: new Date("2026-09-14T14:00:00.000Z"),
+      metadata: {
+        intervalWindowReminder: true,
+        windowStartLocal: "09:19",
+        windowEndLocal: "17:00",
+        intervalMinutes: 60,
+      },
+    });
+    const duringWindow = buildUserTimelineViewFromData({
+      timezone: "Europe/Moscow",
+      now: new Date("2026-09-14T06:47:00.000Z"),
+      items: [rublev],
+      policies: [],
+    });
+
+    const duringRow = duringWindow.rows.find((row) => row.entityRef.id === "rublev");
+    expect(duringRow?.dateBucket).toBe("today");
+    expect(duringRow?.classification).toBe("today");
+    expect(duringRow?.item?.startAt).toBeNull();
+    expect(duringRow?.item?.dueAt?.toISOString()).toBe("2026-09-14T14:00:00.000Z");
+    expect(duringWindow.byBucket.overdue).toHaveLength(0);
+    expect(duringWindow.byBucket.unresolvedPast).toHaveLength(0);
+
+    const afterDeadline = buildUserTimelineViewFromData({
+      timezone: "Europe/Moscow",
+      now: new Date("2026-09-14T14:01:00.000Z"),
+      items: [rublev],
+      policies: [],
+    });
+    expect(afterDeadline.byBucket.overdue.map((row) => row.entityRef.id)).toEqual(["rublev"]);
+  });
+
   it("groups campaign policies into one canonical visible row", () => {
     const timeline = buildUserTimelineViewFromData({
       timezone: "Europe/Moscow",

@@ -44,8 +44,8 @@ export function classifyTimelineItem(
         item?.timezone || policy?.timezone || timezone,
       )
     : null;
-  const itemEnd =
-    item?.endAt ?? (item?.startAt ? new Date(item.startAt.getTime() + 60 * 60 * 1000) : null);
+  const eventLike = isEventLikeKind(item?.kind);
+  const itemEnd = item ? getPlannerItemCompletionAnchor(item) : null;
 
   if (
     policy &&
@@ -63,10 +63,11 @@ export function classifyTimelineItem(
   ) {
     return "long_term";
   }
-  if (item?.startAt && itemEnd && item.startAt <= now && itemEnd > now) {
+  if (eventLike && item?.startAt && itemEnd && item.startAt <= now && itemEnd > now) {
     return "now";
   }
   if (
+    eventLike &&
     itemEnd &&
     itemEnd <= now &&
     (item?.metadata?.isExternalCalendarEvent === true ||
@@ -97,13 +98,30 @@ export function getTimelineAnchor(
   timezone: string,
 ): Date | null {
   return (
-    entry.item?.startAt ??
-    entry.item?.dueAt ??
+    (entry.item ? getPlannerItemTimelineAnchor(entry.item) : null) ??
     metadataAnchor(entry, now, timezone) ??
     entry.policy?.nextFireAt ??
     entry.policy?.startsAt ??
     null
   );
+}
+
+export function getPlannerItemTimelineAnchor(item: PlannerItem): Date | null {
+  return isEventLikeKind(item.kind)
+    ? item.startAt ?? item.dueAt ?? null
+    : item.dueAt ?? item.startAt ?? null;
+}
+
+export function getPlannerItemCompletionAnchor(item: PlannerItem): Date | null {
+  if (isEventLikeKind(item.kind)) {
+    return (
+      item.endAt ??
+      (item.startAt ? new Date(item.startAt.getTime() + 60 * 60 * 1000) : null) ??
+      item.dueAt ??
+      null
+    );
+  }
+  return item.dueAt ?? item.endAt ?? item.startAt ?? null;
 }
 
 export function getEffectivePriority(entry: TimelineEntry, now: Date, timezone: string): number {
@@ -183,12 +201,10 @@ function isHidden(item?: PlannerItem | null, policy?: ReminderPolicy | null) {
 
 function entryTime(entry: TimelineEntry) {
   return (
-    (
-      entry.item?.startAt ??
-      entry.item?.dueAt ??
-      entry.policy?.nextFireAt ??
-      entry.policy?.startsAt
-    )?.getTime() ?? Number.MAX_SAFE_INTEGER
+    (entry.item ? getPlannerItemTimelineAnchor(entry.item) : null)?.getTime() ??
+    entry.policy?.nextFireAt?.getTime() ??
+    entry.policy?.startsAt?.getTime() ??
+    Number.MAX_SAFE_INTEGER
   );
 }
 
@@ -205,6 +221,10 @@ function classificationRank(value: TimelineClassification) {
     history: 8,
     hidden: 9,
   }[value];
+}
+
+function isEventLikeKind(kind?: string | null) {
+  return ["event", "training", "tentative_event"].includes(kind ?? "");
 }
 
 function clampPriority(value: number) {

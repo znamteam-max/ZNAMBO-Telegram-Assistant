@@ -90,7 +90,12 @@ export function buildUserTimelineViewFromData(params: {
     policiesByItemId.set(policy.itemId, [...(policiesByItemId.get(policy.itemId) ?? []), policy]);
   }
   const plannerItemsWithDerivedDue = params.items.map((item) =>
-    withTodayUntilDoneDerivedDue(item, policiesByItemId.get(item.id) ?? [], now, params.timezone),
+    withTodayUntilDoneDerivedDue(
+      normalizeTaskReminderWindowForTimeline(item),
+      policiesByItemId.get(item.id) ?? [],
+      now,
+      params.timezone,
+    ),
   );
   const rows: UserTimelineRow[] = [
     ...plannerItemsWithDerivedDue.map((item) => buildItemRow(item, now, params.timezone)),
@@ -165,9 +170,9 @@ function buildItemRow(
     ? "unresolved_past"
     : pastReview
       ? "past_review"
-    : overdue
-      ? "overdue"
-    : classifyTimelineItem({ item }, now, timezone);
+      : overdue
+        ? "overdue"
+        : classifyTimelineItem({ item }, now, timezone);
   const tomorrow =
     !unresolvedPast &&
     !pastReview &&
@@ -224,6 +229,22 @@ function externalEventAsPlannerItem(event: ExternalCalendarEvent): PlannerItem {
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
   };
+}
+
+function normalizeTaskReminderWindowForTimeline(item: PlannerItem): PlannerItem {
+  if (
+    ["event", "training", "tentative_event"].includes(item.kind) ||
+    item.metadata?.intervalWindowReminder !== true ||
+    !item.startAt ||
+    !item.dueAt
+  ) {
+    return item;
+  }
+
+  // For interval reminder tasks, startAt is the reminder-window start, not the
+  // task's due moment. Hiding it from the timeline prevents a 09:19 reminder
+  // window from becoming "overdue" at 09:20 when the real deadline is 17:00.
+  return { ...item, startAt: null };
 }
 
 function withTodayUntilDoneDerivedDue(
