@@ -66,6 +66,23 @@ describe("V3.0.8 weekly task reminder semantics", () => {
     expect(timing.deadline.toISOString()).toBe("2026-09-18T10:00:00.000Z");
   });
 
+  it("rolls both reminder window and deadline to next Friday after the current window ends", () => {
+    const intent = parseWeeklyTaskReminderIntent({
+      text: exactPrompt,
+      timezone: "Europe/Moscow",
+    });
+    if (!intent) throw new Error("Expected intent");
+    const timing = resolveWeeklyTaskCycle({
+      intent,
+      now: new Date("2026-09-18T10:01:00.000Z"),
+    });
+
+    expect(timing.cycleStart.toISOString()).toBe("2026-09-25T05:00:00.000Z");
+    expect(timing.windowEnd.toISOString()).toBe("2026-09-25T10:00:00.000Z");
+    expect(timing.deadline.toISOString()).toBe("2026-09-25T10:00:00.000Z");
+    expect(timing.nextFireAt.toISOString()).toBe("2026-09-25T05:00:00.000Z");
+  });
+
   it("keeps hourly delivery inside Friday 08:00-13:00 and then advances a week", () => {
     const policy = {
       id: "policy",
