@@ -1,19 +1,30 @@
 import { DateTime } from "luxon";
 
-export type UntilDoneReminderNormalization = {
+type UntilDoneReminderCommon = {
   matched: true;
   intervalMinutes: number;
   requireAck: true;
   stopCondition: "until_done";
   catchUpMode: "one_immediate_then_resume";
   windowStart: string;
-  windowEnd: "23:59" | undefined;
   startsAt: Date;
-  endsAt: Date | null;
   cadenceExplicit: boolean;
-  endOfDayExplicit: boolean;
   untilDoneExplicit: boolean;
 };
+
+export type UntilDoneReminderNormalization = UntilDoneReminderCommon &
+  (
+    | {
+        endOfDayExplicit: true;
+        windowEnd: "23:59";
+        endsAt: Date;
+      }
+    | {
+        endOfDayExplicit: false;
+        windowEnd: undefined;
+        endsAt: null;
+      }
+  );
 
 export function normalizeUntilDoneReminder(params: {
   text: string;
@@ -39,24 +50,34 @@ export function normalizeUntilDoneReminder(params: {
   const intervalMinutes = explicitInterval ?? 60;
   const nowLocal = DateTime.fromJSDate(params.now, { zone: "utc" }).setZone(params.timezone);
   const starts = nowLocal.plus({ minutes: 1 }).set({ second: 0, millisecond: 0 });
-  const ends = endOfDayExplicit
-    ? nowLocal.endOf("day").set({ hour: 23, minute: 59, second: 0, millisecond: 0 })
-    : null;
-  if (ends && starts > ends) return null;
-
-  return {
+  const common: UntilDoneReminderCommon = {
     matched: true,
     intervalMinutes,
     requireAck: true,
     stopCondition: "until_done",
     catchUpMode: "one_immediate_then_resume",
     windowStart: starts.toFormat("HH:mm"),
-    windowEnd: ends ? "23:59" : undefined,
     startsAt: starts.toUTC().toJSDate(),
-    endsAt: ends?.toUTC().toJSDate() ?? null,
     cadenceExplicit: explicitInterval !== null,
-    endOfDayExplicit,
     untilDoneExplicit,
+  };
+
+  if (!endOfDayExplicit) {
+    return {
+      ...common,
+      endOfDayExplicit: false,
+      windowEnd: undefined,
+      endsAt: null,
+    };
+  }
+
+  const ends = nowLocal.endOf("day").set({ hour: 23, minute: 59, second: 0, millisecond: 0 });
+  if (starts > ends) return null;
+  return {
+    ...common,
+    endOfDayExplicit: true,
+    windowEnd: "23:59",
+    endsAt: ends.toUTC().toJSDate(),
   };
 }
 
