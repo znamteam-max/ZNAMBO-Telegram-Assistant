@@ -23,6 +23,7 @@ import { logger } from "@/lib/logger";
 
 import { materializeNextPolicyReminder } from "./reminderPolicyEngine";
 import { repairV306RecurringIncident } from "./v306RecurringIncidentRepair";
+import { repairV308WeeklyTaskIncident } from "./v308WeeklyTaskIncidentRepair";
 
 export async function reconcileActiveReminderPolicies(params?: { now?: Date; limit?: number }) {
   const now = params?.now ?? new Date();
@@ -30,6 +31,13 @@ export async function reconcileActiveReminderPolicies(params?: { now?: Date; lim
     await repairV306RecurringIncident({ now });
   } catch (error) {
     logger.warn("V3.0.6 incident repair failed without blocking policy reconciliation", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  try {
+    await repairV308WeeklyTaskIncident({ now });
+  } catch (error) {
+    logger.warn("V3.0.8 weekly-task incident repair failed without blocking policy reconciliation", {
       error: error instanceof Error ? error.message : String(error),
     });
   }
