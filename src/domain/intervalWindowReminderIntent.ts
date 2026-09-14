@@ -40,7 +40,8 @@ export function parseStandaloneIntervalWindowReminderIntent(params: {
   timezone: string;
   now: Date;
 }): IntervalWindowReminderIntent | null {
-  const normalized = normalize(params.text);
+  const displayText = normalizeDisplayText(params.text);
+  const normalized = normalize(displayText);
   if (!normalized) return null;
   const date = parseDateAnchor(normalized, params.timezone, params.now);
   if (!date) return null;
@@ -53,7 +54,7 @@ export function parseStandaloneIntervalWindowReminderIntent(params: {
   const cadence = parseCadence(normalized);
   if (!window || !cadence) return null;
   if (!hasReminderIntent(normalized)) return null;
-  const title = extractTitle(normalized, cadence.index + cadence.raw.length);
+  const title = extractTitle(displayText, cadence.index + cadence.raw.length);
   if (!title) return null;
 
   const startLocal = date.value.set({
@@ -189,7 +190,9 @@ function hasReminderIntent(text: string) {
 }
 
 function extractTitle(text: string, afterCadenceIndex: number) {
-  const reminderTail = text.match(/(?:^|\s)(?:напомни|напоминай|напоминать|пинай|дергай)(?:\s+мне)?(?:\s+про)?\s+(.+)$/);
+  const reminderTail = text.match(
+    /(?:^|\s)(?:напомни|напоминай|напоминать|пинай|дергай)(?:\s+мне)?(?:\s+про)?\s+(.+)$/i,
+  );
   if (reminderTail) {
     const reminderTitle = cleanupTitle(reminderTail[1]);
     if (reminderTitle) return toTitleCase(reminderTitle);
@@ -204,6 +207,8 @@ function cleanupTitle(value: string) {
   return value
     .replace(/^[,.\s]+/g, "")
     .replace(/^(?:мне\s+)?(?:напомни|напоминай|напоминать|пинай|дергай)(?:\s+мне)?\s*/i, "")
+    .replace(/^про\s+/i, "")
+    .replace(/^(?:каждый\s+час|каждые\s+\d{1,3}\s+(?:мин(?:ут|уты|уту)?|час(?:а|ов)?))\s*/i, "")
     .replace(/^про\s+/i, "")
     .replace(/^[,.\s]+/g, "")
     .trim();
@@ -232,6 +237,10 @@ function monthNumber(value: string) {
     "ноября",
     "декабря",
   ].indexOf(value) + 1;
+}
+
+function normalizeDisplayText(text: string) {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function normalize(text: string) {
