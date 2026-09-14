@@ -22,7 +22,7 @@ import {
   acknowledgePolicyReminder,
   materializeNextPolicyReminder,
 } from "@/services/reminderPolicyEngine";
-import type { ReminderPolicy } from "@/db/schema";
+import type { PlannerItem, ReminderPolicy } from "@/db/schema";
 
 const PERSISTENT_POLICY_TYPES = new Set(["recurring", "long_term"]);
 const SCHEDULE_PRESETS = new Set<RecurringSchedulePreset>([
@@ -85,14 +85,21 @@ export async function completePersistentRecurringItemCycle(params: {
     });
   }
 
+  const nextDueAt = resolveRecurringOccurrenceDeadline({
+    item,
+    nextFireAt: earliestNextOccurrence(nextOccurrences),
+    timezone,
+  });
   const updatedItem =
     (await updatePlannerItemDetails({
       userId: params.userId,
       itemId: item.id,
+      ...(nextDueAt ? { dueAt: nextDueAt } : {}),
       metadata: {
         lastOccurrenceCompletedAt: now.toISOString(),
         recurringParentPersistent: true,
         recurringParentCompletionMode: "occurrence_only",
+        ...(nextDueAt ? { nextOccurrenceDeadlineAt: nextDueAt.toISOString() } : {}),
       },
     })) ?? item;
 
@@ -107,6 +114,7 @@ export async function completePersistentRecurringItemCycle(params: {
       parentKeptActive: true,
       policyCount: policies.length,
       nextOccurrences,
+      nextDueAt: nextDueAt?.toISOString() ?? null,
     },
   }).catch(() => undefined);
 
@@ -172,14 +180,19 @@ export async function acknowledgePersistentRecurringReminder(params: {
     if (updatedPolicy) await materializeNextPolicyReminder(updatedPolicy, nextFireAt, { now });
   }
 
+  const nextDueAt = item
+    ? resolveRecurringOccurrenceDeadline({ item, nextFireAt, timezone })
+    : null;
   if (item?.status === "active") {
     await updatePlannerItemDetails({
       userId: params.userId,
       itemId: item.id,
+      ...(nextDueAt ? { dueAt: nextDueAt } : {}),
       metadata: {
         lastOccurrenceCompletedAt: now.toISOString(),
         recurringParentPersistent: true,
         recurringParentCompletionMode: "occurrence_only",
+        ...(nextDueAt ? { nextOccurrenceDeadlineAt: nextDueAt.toISOString() } : {}),
       },
     });
   }
@@ -195,6 +208,7 @@ export async function acknowledgePersistentRecurringReminder(params: {
       operation: "ack_occurrence_only",
       parentKeptActive: true,
       nextFireAt: nextFireAt?.toISOString() ?? null,
+      nextDueAt: nextDueAt?.toISOString() ?? null,
     },
   }).catch(() => undefined);
 
@@ -222,6 +236,36 @@ export function isPersistentRecurringParent(params: {
     policy.metadata?.recurringParentPersistent === true &&
     policy.metadata?.stopOnItemComplete !== true
   );
+}
+
+export function resolveRecurringOccurrenceDeadline(params: {
+  item: Pick<PlannerItem, "metadata">;
+  nextFireAt: Date | null;
+  timezone: string;
+}) {
+  if (!params.nextFireAt) return null;
+  const value = params.item.metadata?.recurringOccurrenceDeadlineTime;
+  if (typeof value !== "string") return null;
+  const match = value.match(/^(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  const nextLocal = DateTime.fromJSDate(params.nextFireAt, { zone: "utc" }).setZone(params.timezone);
+  const deadline = nextLocal
+    .startOf("day")
+    .set({ hour, minute, second: 0, millisecond: 0 });
+  return deadline.toUTC().toJSDate();
+}
+
+function earliestNextOccurrence(
+  occurrences: Array<{ policyId: string; nextFireAt: string | null }>,
+) {
+  const values = occurrences
+    .map((entry) => (entry.nextFireAt ? new Date(entry.nextFireAt) : null))
+    .filter((value): value is Date => Boolean(value && !Number.isNaN(value.getTime())))
+    .sort((left, right) => left.getTime() - right.getTime());
+  return values[0] ?? null;
 }
 
 function nextBaseOccurrenceAfterCurrentCycle(
