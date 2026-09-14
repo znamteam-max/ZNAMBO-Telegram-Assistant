@@ -81,7 +81,7 @@ function extractTaskTitle(text: string) {
   if (quoted?.trim()) return quoted.trim();
 
   const generic = text.match(
-    /(?:создавай\s+)?задач[ау]\s+(.+?)(?=(?:[.!?]\s*)?дедлайн\b|(?:[.!?]\s*)?начинай\s+напоминать\b|$)/i,
+    /(?:создавай\s+)?задач[ау]\s+(.+?)(?=(?:[.!?]\s*)?дедлайн(?:\s|$)|(?:[.!?]\s*)?начинай\s+напоминать(?:\s|$)|$)/i,
   )?.[1];
   if (!generic?.trim()) return null;
   return generic.replace(/[.;,\s]+$/g, "").trim();
@@ -105,7 +105,9 @@ function extractReminderEndClock(text: string) {
   const reminderIndex = text.search(/(?:начинай\s+напоминать|начни\s+напоминать|напоминай)/i);
   if (reminderIndex < 0) return null;
   const reminderClause = text.slice(reminderIndex);
-  const match = reminderClause.match(/\bдо\s*(\d{1,2})(?:[:.](\d{1,2}))?/i);
+  // Do not use JS \b before Cyrillic text: \b is ASCII-word-boundary based and
+  // treats both a space and Cyrillic "д" as non-word characters.
+  const match = reminderClause.match(/(?:^|\s)до\s*(\d{1,2})(?:[:.](\d{1,2}))?/i);
   return match ? formatClock(match[1], match[2]) : null;
 }
 
