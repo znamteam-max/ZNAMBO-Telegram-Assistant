@@ -44,7 +44,7 @@ export function resolveWeeklyTaskCycle(params: {
   const [endHour, endMinute] = parseClock(params.intent.reminderEndLocal);
   const [deadlineHour, deadlineMinute] = parseClock(params.intent.deadlineLocal);
 
-  let daysAhead = (targetWeekday - nowLocal.weekday + 7) % 7;
+  const daysAhead = (targetWeekday - nowLocal.weekday + 7) % 7;
   let cycleStart = nowLocal
     .plus({ days: daysAhead })
     .startOf("day")
@@ -55,14 +55,9 @@ export function resolveWeeklyTaskCycle(params: {
   if (windowEnd < cycleStart) windowEnd = windowEnd.plus({ days: 1 });
 
   if (daysAhead === 0 && nowLocal > windowEnd) {
-    daysAhead = 7;
     cycleStart = cycleStart.plus({ days: 7 });
     windowEnd = windowEnd.plus({ days: 7 });
   }
-
-  const deadline = cycleStart
-    .startOf("day")
-    .set({ hour: deadlineHour, minute: deadlineMinute, second: 0, millisecond: 0 });
 
   let nextFire = cycleStart;
   if (nowLocal >= cycleStart && nowLocal <= windowEnd) {
@@ -77,6 +72,12 @@ export function resolveWeeklyTaskCycle(params: {
       nextFire = cycleStart;
     }
   }
+
+  // Derive the per-occurrence deadline from the final cycle date. The cycle can roll
+  // forward by a week when the current Friday window has already ended.
+  const deadline = cycleStart
+    .startOf("day")
+    .set({ hour: deadlineHour, minute: deadlineMinute, second: 0, millisecond: 0 });
 
   return {
     cycleStart: cycleStart.toUTC().toJSDate(),
